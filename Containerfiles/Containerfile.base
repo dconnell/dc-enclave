@@ -1,0 +1,80 @@
+FROM ubuntu:24.04
+
+# Avoid interactive prompts during apt installs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# PostgreSQL client major version to install (set via setup.sh as POSTGRES_CLIENT_MAJOR)
+ARG PG_CLIENT_MAJOR=18
+
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    wget \
+    openssh-client \
+    ca-certificates \
+    gnupg \
+    zsh \
+    vim \
+    jq \
+    tree \
+    tmux \
+    rsync \
+    ripgrep \
+    fzf \
+    less \
+    unzip \
+    zip \
+    lsof \
+    procps \
+    net-tools \
+    iproute2 \
+    iputils-ping \
+    dnsutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install a PostgreSQL client version that matches host/Postgres.app major where possible.
+RUN apt-get update && \
+        if apt-cache show "postgresql-client-${PG_CLIENT_MAJOR}" >/dev/null 2>&1; then \
+            apt-get install -y "postgresql-client-${PG_CLIENT_MAJOR}"; \
+        else \
+            echo "WARNING: postgresql-client-${PG_CLIENT_MAJOR} unavailable, installing default postgresql-client"; \
+            apt-get install -y postgresql-client; \
+        fi && \
+        rm -rf /var/lib/apt/lists/*
+
+# Install Node.js LTS (required for OpenCode CLI), then install latest OpenCode CLI
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
+    apt-get install -y nodejs && \
+    npm install -g opencode-ai@latest && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create non-root dev user.
+# Some Ubuntu variants already reserve UID 1000, so fall back gracefully.
+RUN if id -u dev >/dev/null 2>&1; then \
+            usermod -s /bin/zsh dev; \
+        elif getent passwd 1000 >/dev/null 2>&1; then \
+            useradd -m -s /bin/zsh dev; \
+        else \
+            useradd -m -s /bin/zsh -u 1000 dev; \
+        fi
+
+# Configure default shell settings for dev user
+RUN cat > /home/dev/.zshrc <<'EOF'
+# Default aliases and shell settings for dev container
+alias ll="ls -la"
+EOF
+
+RUN chown dev:dev /home/dev/.zshrc
+
+# Configure SSH client defaults for dev user
+USER dev
+RUN mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+    printf 'Host github.com\n  StrictHostKeyChecking accept-new\n  IdentityFile ~/.ssh/id_ed25519\n' > ~/.ssh/config && \
+    chmod 600 ~/.ssh/config
+
+# Force git to use SSH instead of HTTPS for github.com
+RUN git config --global url."git@github.com:".insteadOf "https://github.com/"
+
+WORKDIR /workspace
+
+CMD ["sleep", "infinity"]

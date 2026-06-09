@@ -1,0 +1,58 @@
+#!/usr/bin/env zsh
+set -euo pipefail
+
+SCRIPT_DIR="${0:A:h}"
+ROOT_DIR="${SCRIPT_DIR:h}"
+
+SUBCOMMAND="${1:-help}"
+shift 2>/dev/null || true
+
+case "$SUBCOMMAND" in
+  new)
+    exec "$SCRIPT_DIR/new-container.sh" "$@"
+    ;;
+  start)
+    exec "$SCRIPT_DIR/start.sh" "$@"
+    ;;
+  stop)
+    exec "$SCRIPT_DIR/stop.sh" "$@"
+    ;;
+  status|s)
+    exec "$SCRIPT_DIR/status.sh" "$@"
+    ;;
+  shell)
+    exec "$SCRIPT_DIR/shell.sh" "$@"
+    ;;
+  rebuild)
+    exec "$SCRIPT_DIR/rebuild.sh" "$@"
+    ;;
+  rebuild-image)
+    exec "$SCRIPT_DIR/rebuild-image.sh" "$@"
+    ;;
+  clean)
+    exec "$SCRIPT_DIR/clean.sh" "$@"
+    ;;
+  install)
+    exec "$SCRIPT_DIR/install-dotfiles.sh" "$@"
+    ;;
+  help|--help|-h)
+    echo "Usage: dc <command> [args]"
+    echo ""
+    echo "Commands:"
+    echo "  new <name> <type[,type...]> [host:container ...]  Create new project"
+    echo "  start [name]                                      Start project(s)"
+    echo "  stop [name]                                       Stop project(s)"
+    echo "  status                                            Show status"
+    echo "  shell <name> [cmd]                                Open shell or run command"
+    echo "  rebuild <name> [--rotate-keys]                    Destroy and recreate container"
+    echo "  rebuild-image [all|base|nodejs|golang]            Rebuild images"
+    echo "  clean [--dry-run]                                 Remove old image tags"
+    echo "  install <name> <path>                             Install dotfiles"
+    echo "  help                                              Show this help"
+    ;;
+  *)
+    echo "Unknown command: $SUBCOMMAND"
+    echo "Run 'dc help' for usage."
+    exit 1
+    ;;
+esac

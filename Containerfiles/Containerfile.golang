@@ -1,0 +1,30 @@
+FROM dev-base:latest
+
+USER root
+
+# Install Go (arm64 for Apple Silicon)
+ARG GO_VERSION=1.22.5
+RUN wget -q "https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz" && \
+    tar -C /usr/local -xzf "go${GO_VERSION}.linux-arm64.tar.gz" && \
+    rm "go${GO_VERSION}.linux-arm64.tar.gz"
+
+# Install additional build tools
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+USER dev
+
+ENV PATH="$PATH:/usr/local/go/bin"
+ENV GOPATH="/home/dev/go"
+ENV GOBIN="/home/dev/go/bin"
+ENV PATH="$PATH:/home/dev/go/bin"
+
+RUN mkdir -p "$GOPATH"
+
+# Verify
+RUN go version
+
+WORKDIR /workspace
+
+CMD ["sleep", "infinity"]

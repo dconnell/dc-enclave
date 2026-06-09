@@ -1,0 +1,9 @@
+# Personal shell additions — appended to ~/.zshrc by dotfiles install.sh
+# Edit freely; changes apply on next shell session
+
+# Example aliases
+alias gs='git status'
+alias gd='git diff'
+
+# Example: custom prompt
+# PS1='%F{green}%n@%m%f:%F{blue}%~%f$ '

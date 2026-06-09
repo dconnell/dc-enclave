@@ -1,0 +1,20 @@
+# Never commit secrets
+github-token
+*.github-token
+ssh_key
+ssh_key.pub
+.npmrc.local
+.npmrc
+
+# macOS
+.DS_Store
+
+# Secrets directory (symlink or accidental inclusion)
+secrets/
+
+# Generated combined runtime Containerfiles
+Containerfiles/generated/
+
+# Don't include my own generated info
+projects/
+.devcontainer/
