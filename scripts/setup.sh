@@ -135,6 +135,13 @@ EOF
   echo "  Run: source ~/.zshrc"
 fi
 
+if ! grep -q 'dc-complete.zsh' "$ZSHRC" 2>/dev/null; then
+  echo "" >> "$ZSHRC"
+  echo "# dc tab-completion" >> "$ZSHRC"
+  echo "source '$ROOT_DIR/scripts/dc-complete.zsh'" >> "$ZSHRC"
+  echo "✓ Added dc completion to $ZSHRC"
+fi
+
 # Keep alias in sync for users who had the old multi-alias block.
 if grep -q "dev-containers aliases" "$ZSHRC" 2>/dev/null && ! grep -q "alias dc=" "$ZSHRC" 2>/dev/null; then
   echo "alias dc='$ROOT_DIR/scripts/dc'" >> "$ZSHRC"
