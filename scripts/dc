@@ -20,6 +20,9 @@ case "$SUBCOMMAND" in
   status|s)
     exec "$SCRIPT_DIR/status.sh" "$@"
     ;;
+  list|ls)
+    exec "$SCRIPT_DIR/list.sh" "$@"
+    ;;
   shell)
     exec "$SCRIPT_DIR/shell.sh" "$@"
     ;;
@@ -42,7 +45,8 @@ case "$SUBCOMMAND" in
     echo "  new <name> <type[,type...]> [host:container ...]  Create new project"
     echo "  start [name]                                      Start project(s)"
     echo "  stop [name]                                       Stop project(s)"
-    echo "  status                                            Show status"
+    echo "  list                                              List containers and status"
+    echo "  status                                            Show detailed status"
     echo "  shell <name> [cmd]                                Open shell or run command"
     echo "  rebuild <name> [--rotate-keys]                    Destroy and recreate container"
     echo "  rebuild-image [all|base|nodejs|golang]            Rebuild images"
