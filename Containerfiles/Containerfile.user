@@ -41,6 +41,5 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # OpenCode shell installer.
-RUN curl -fsSL https://opencode.ai/install | bash
-
 USER dev
+RUN curl -fsSL https://opencode.ai/install | bash
