@@ -9,7 +9,8 @@
 #   - Uses the same backend abstraction as setup/new/rebuild scripts.
 #   - Rebuilding images does not restart existing containers.
 #   - Run dc rebuild <project> after image rebuild to pick up changes.
-#   - Rebuilds affected combined runtime images from projects/*/config.
+#   - Rebuilds affected shared combined runtime images from projects/*/config.
+#   - Project-scoped overlay images are rebuilt by dc rebuild <project>.
 # =============================================================================
 set -euo pipefail
 setopt null_glob
@@ -29,13 +30,18 @@ source "$BACKEND_LIB"
 
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
-POSTGRES_CLIENT_MAJOR="${POSTGRES_CLIENT_MAJOR:-16}"
+COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
+
+if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
+  echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
+  exit 1
+fi
 
 case "$TARGET" in
   all|base|nodejs|golang)
     ;;
   *)
-    echo "Usage: scripts/rebuild-image.sh [all|base|nodejs|golang]"
+    echo "Usage: dc rebuild-image [all|base|nodejs|golang]"
     exit 1
     ;;
 esac
@@ -58,7 +64,6 @@ echo ""
 echo "Selected backend: $ACTIVE_BACKEND"
 echo "CLI version: $(backend_version)"
 echo "Target: $TARGET"
-echo "PostgreSQL client major (base only): $POSTGRES_CLIENT_MAJOR"
 
 target_affects_types() {
   local project_types="$1"
@@ -76,38 +81,11 @@ target_affects_types() {
   esac
 }
 
-generate_combined_containerfile() {
-  local combined_file="$1"
-  shift
-  local -a types=("$@")
-
-  mkdir -p "${combined_file:h}"
-
-  {
-    echo "FROM dev-base:latest"
-
-    for t in "${types[@]}"; do
-      local source_containerfile="$ROOT_DIR/Containerfiles/Containerfile.$t"
-      if [[ ! -f "$source_containerfile" ]]; then
-        echo "ERROR: Missing source Containerfile: $source_containerfile" >&2
-        exit 1
-      fi
-
-      echo ""
-      echo "# --- begin Containerfile.$t ---"
-      awk 'NR == 1 && $1 == "FROM" { next } $1 == "CMD" { next } { print }' "$source_containerfile"
-      echo "# --- end Containerfile.$t ---"
-    done
-
-    echo ""
-    echo 'CMD ["sleep", "infinity"]'
-  } > "$combined_file"
-}
-
 rebuild_affected_combined_images() {
   local -a project_configs=("$ROOT_DIR"/projects/*/config)
   local -i rebuilt_count=0
   local -i skipped_backend=0
+  local -i skipped_project_mode=0
   typeset -A built_slugs
 
   if [[ ${#project_configs[@]} -eq 0 ]]; then
@@ -121,11 +99,17 @@ rebuild_affected_combined_images() {
 
     local project="${CONTAINER_PROJECT:-${config_file:h:t}}"
     local project_backend="${CONTAINER_BACKEND:-$ACTIVE_BACKEND}"
-    local project_types="${CONTAINER_TYPE:-}"
+    local project_types="${CONTAINER_RUNTIME_TYPES:-${CONTAINER_TYPE:-}}"
+    local project_mode="${CONTAINER_IMAGE_MODE:-shared}"
     local project_image="${CONTAINER_IMAGE:-}"
 
     if [[ "$project_backend" != "$ACTIVE_BACKEND" ]]; then
       ((skipped_backend++))
+      continue
+    fi
+
+    if [[ "$project_mode" != "shared" ]]; then
+      ((skipped_project_mode++))
       continue
     fi
 
@@ -168,8 +152,8 @@ rebuild_affected_combined_images() {
     local combined_image="${project_image:-dev-${type_slug}:latest}"
 
     echo ""
-    echo "--- Building combined image $combined_image (types: ${(j:,:)ordered_types}) ---"
-    generate_combined_containerfile "$combined_containerfile" "${ordered_types[@]}"
+    echo "--- Building shared combined image $combined_image (types: ${(j:,:)ordered_types}) ---"
+    zsh "$COMPOSE_SCRIPT" "$combined_containerfile" "${(j:,:)ordered_types}"
     backend_build_image "$combined_image" "$combined_containerfile" "$ROOT_DIR"
 
     built_slugs[$type_slug]=1
@@ -186,6 +170,10 @@ rebuild_affected_combined_images() {
   if [[ $skipped_backend -gt 0 ]]; then
     echo "Note: skipped $skipped_backend project config(s) with backend different from active backend: $ACTIVE_BACKEND"
   fi
+
+  if [[ $skipped_project_mode -gt 0 ]]; then
+    echo "Note: skipped $skipped_project_mode project-scoped image config(s); rebuild those with 'dc rebuild <project>'."
+  fi
 }
 
 build_base() {
@@ -194,8 +182,7 @@ build_base() {
   backend_build_image \
     "dev-base:latest" \
     "$ROOT_DIR/Containerfiles/Containerfile.base" \
-    "$ROOT_DIR" \
-    --build-arg "PG_CLIENT_MAJOR=$POSTGRES_CLIENT_MAJOR"
+    "$ROOT_DIR"
 }
 
 build_nodejs() {

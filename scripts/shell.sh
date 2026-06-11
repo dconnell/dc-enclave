@@ -34,7 +34,7 @@ fi
 source "$BACKEND_LIB"
 
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'. Run: scripts/new-container.sh $PROJECT <type>"
+  echo "ERROR: No config for '$PROJECT'. Run: dc new $PROJECT <type>"
   exit 1
 fi
 

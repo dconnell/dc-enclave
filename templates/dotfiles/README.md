@@ -4,6 +4,9 @@ Personal configuration for dev containers. The VS Code Dev Containers extension
 clones or copies your dotfiles and runs `install.sh` automatically after container
 creation or rebuild.
 
+This starter template is intentionally config-focused. Use overlay Containerfiles
+for system/tool installation and keep dotfiles for home-directory preferences.
+
 ## Files
 
 | File | Purpose |
@@ -43,6 +46,12 @@ Local path:
 - `install.sh` is idempotent — safe to re-run on every rebuild
 - Existing files are backed up (`.bak`) before being replaced by symlinks
 - zsh additions are guarded by a marker comment to avoid duplicates
+
+## Scope guidance
+
+- Put git/vim/zsh/editor/profile customization in dotfiles
+- Put preferred CLI/system tools in an overlay Containerfile used with `dc new`
+- Keep secrets out of dotfiles and out of overlay Containerfiles
 
 ## Adding more modules
 

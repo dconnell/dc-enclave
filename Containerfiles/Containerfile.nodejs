@@ -7,12 +7,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Install pnpm globally (optional; remove if using npm only)
-RUN npm install -g pnpm
-
 USER dev
 
-# npm and pnpm global bin in PATH
+# npm global bin in PATH
 ENV PATH="/home/dev/.local/bin:$PATH"
 ENV NPM_CONFIG_PREFIX="/home/dev/.npm-global"
 ENV PATH="$NPM_CONFIG_PREFIX/bin:$PATH"

@@ -18,15 +18,13 @@ source "$BACKEND_LIB"
 
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
-POSTGRES_CLIENT_MAJOR="${POSTGRES_CLIENT_MAJOR:-16}"
 
-echo "╔══════════════════════════════════════╗"
-echo "║   dev-containers: host setup         ║"
-echo "╚══════════════════════════════════════╝"
+echo "========================================"
+echo "dev-containers: host setup"
+echo "========================================"
 echo ""
 echo "Selected backend: $ACTIVE_BACKEND"
 echo "CLI version: $(backend_version)"
-echo "PostgreSQL client major: $POSTGRES_CLIENT_MAJOR"
 
 # ── 1. Initialize/check backend runtime ──────────────────────────────────────
 echo ""
@@ -80,14 +78,11 @@ echo ""
 echo "==> Building base container images (this takes a few minutes)..."
 echo ""
 
-BUILD_ARGS=(--build-arg "PG_CLIENT_MAJOR=$POSTGRES_CLIENT_MAJOR")
-
 echo "--- Building dev-base ---"
 backend_build_image \
   "dev-base:latest" \
   "$ROOT_DIR/Containerfiles/Containerfile.base" \
-  "$ROOT_DIR" \
-  "${BUILD_ARGS[@]}"
+  "$ROOT_DIR"
 
 echo ""
 echo "--- Building dev-nodejs ---"
@@ -152,18 +147,17 @@ if grep -q "dev-containers aliases" "$ZSHRC" 2>/dev/null && ! grep -q "alias dc=
 fi
 
 echo ""
-echo "╔══════════════════════════════════════════════════════════╗"
-echo "║  Setup complete!                                         ║"
-echo "║                                                          ║"
-echo "║  Backend: $ACTIVE_BACKEND                                        ║"
+echo "======================================================================"
+echo "Setup complete."
+echo "======================================================================"
+echo "Backend: $ACTIVE_BACKEND"
 if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
-  echo "║  VS Code is optional; non-VS Code shell workflows work.  ║"
+  echo "VS Code is optional; non-VS Code shell workflows work."
 else
-  echo "║  VS Code integration uses terminal profile passthrough.  ║"
+  echo "VS Code integration uses terminal profile passthrough."
 fi
-echo "║                                                          ║"
-echo "║  Next:                                                   ║"
-echo "║   1. source ~/.zshrc                                     ║"
-echo "║   2. dc new <name> nodejs [port:port]                      ║"
-echo "║   3. dc new <name> golang [port:port]                      ║"
-echo "╚══════════════════════════════════════════════════════════╝"
+echo ""
+echo "Next:"
+echo "  1. source ~/.zshrc"
+echo "  2. dc new <name> nodejs [port:port]"
+echo "  3. dc new <name> golang [port:port]"

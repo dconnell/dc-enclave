@@ -21,44 +21,37 @@ If a container's runtime state is ever suspect, `dc rebuild` replaces the contai
 
 The day-to-day interface is the `dc` command with subcommands:
 
-- dc new <name> <type[,type...]> [host:container ...]: create a new isolated container project
+- dc new <name> <type[,type|overlay-path...]> [host:container ...]: create a new isolated container project
+- dc new <name> <type[,type...]> --overlay-containerfile <file> [host:container ...]: same as overlay-path, but explicit (repeat flag for multiple overlay files)
 - dc status: show overall status and per-project details
 - dc start [name]: start one project or all configured projects
 - dc stop [name]: stop one project or all configured projects
 - dc shell <name> [command]: open shell or run one command inside project container
 - dc rebuild <name> [--rotate-keys]: destroy and recreate container from known-good image
-- dc rebuild-image [all|base|nodejs|golang]: rebuild images used by projects
+- dc rebuild-image [all|base|nodejs|golang]: rebuild shared images (project-scoped overlay images are rebuilt by `dc rebuild`)
 - dc clean [--dry-run]: remove old dev-container image tags while keeping latest
 - dc install <name> <path-to-dotfiles>: install or update dotfiles in a running container
 - dc help: show usage information
 
 All subcommands dispatch to scripts under `scripts/`.
 
-## Common Unix tools included in base image
+## Common Tools Included In Base Image
 
-The base image now includes common CLI tools used in local shell workflows, including:
+The base image is intentionally minimal and shared across runtime types. It includes essentials only:
 
-- tree
-- tmux
-- rsync
-- ripgrep (rg)
-- fzf
-- less
-- unzip / zip
-- lsof
-- net-tools
-- iproute2
-- iputils-ping
-- dnsutils
-- PostgreSQL client (psql)
+- git
+- curl
+- wget
+- openssh-client
+- ca-certificates
+- gnupg
+- zsh
+- procps
+- sudo
 
-The base image also includes a default user shell setup for `dev` with `alias ll='ls -la'`. Personal preferences (editor config, git identity, shell aliases) are managed via per-user dotfiles — see the **Personal configuration (dotfiles)** section below.
+The base image also includes default shell setup for `dev` with `alias ll='ls -la'`.
 
-You can verify inside a container with:
-
-```
-dc shell <name> "tree --version && rg --version && psql --version"
-```
+Preferred day-to-day tools (for example `tree`, `rg`, `fzf`, `psql`, custom CLIs) should be layered through a user overlay Containerfile. Personal shell/editor/git preferences remain in dotfiles.
 
 ## Backend selection
 
@@ -84,12 +77,13 @@ dev-containers/
 │   ├── Containerfile.base
 │   ├── Containerfile.nodejs
 │   ├── Containerfile.golang
-│   └── generated/                      # auto-generated for multi-runtime images
+│   └── generated/                      # auto-generated composed files (multi-runtime/project overlays)
 ├── lib/
 │   └── container-backend.sh
 ├── scripts/
 │   ├── dc                               # CLI entry point
 │   ├── setup.sh
+│   ├── compose-containerfile.sh
 │   ├── new-container.sh
 │   ├── start.sh
 │   ├── stop.sh
@@ -134,12 +128,6 @@ Optional: force backend during setup:
 CONTAINER_BACKEND=orbstack scripts/setup.sh
 ```
 
-Optional: pin PostgreSQL client major to match Postgres.app/server major:
-
-```
-POSTGRES_CLIENT_MAJOR=17 scripts/setup.sh
-```
-
 ## Setup of a new repo
 
 Use dc new (alias), not direct script invocation.
@@ -157,11 +145,41 @@ Monorepo with multiple runtimes and multiple ports:
 dc new myapp-monorepo nodejs,golang 3000:3000 5173:5173 8080:8080 9000:9000
 ```
 
+Overlay example (preferred tools baked at image build time):
+
+```
+dc new myapp-monorepo nodejs,golang,../../path/to/Containerfile.username 3000:3000 8080:8080
+```
+
+Starter overlay included in this repo:
+
+```
+dc new myapp-monorepo nodejs,golang,Containerfiles/Containerfile.user 3000:3000 8080:8080
+```
+
+Equivalent explicit flag form:
+
+```
+dc new myapp-monorepo nodejs,golang --overlay-containerfile ../../path/to/Containerfile.username 3000:3000 8080:8080
+```
+
 What type combinations mean:
 
 - nodejs -> use Node.js runtime image
 - golang -> use Go runtime image
-- nodejs,golang -> generate and build a combined image from both Containerfiles
+- nodejs,golang -> generate a project-scoped composed image from both runtime Containerfiles
+- any overlay path token -> include that user overlay fragment in the composed project image
+
+Overlay contract (phase 1):
+
+- Treated as Dockerfile fragments layered after runtime fragments
+- `FROM` and `CMD` are ignored during composition
+- `COPY` and `ADD` are not allowed (to avoid external build-context coupling)
+
+Starter file note:
+
+- `Containerfiles/Containerfile.user` is provided as a default starting point with common convenience tools.
+- Copy and customize it for your own workflow.
 
 After dc new:
 
@@ -197,7 +215,7 @@ Single-container multi-repo workspace:
 docker/orbstack backend:
 
 - dc new generates ~/repos/<project>/.devcontainer/devcontainer.json
-- For multi-runtime types, it points to generated combined Containerfile
+- For multi-runtime and/or overlay projects, it points to a generated composed Containerfile
 - Existing devcontainer.json is not overwritten
 - To attach VS Code to the exact same running container as dc shell, use: Dev Containers: Attach to Running Container... and choose <project>
 - Dev Containers: Reopen in Container may create a separate `vsc-*` container for editor workflows
@@ -283,6 +301,14 @@ dc rebuild-image nodejs   # or: dc rebuild-image golang
 dc rebuild myapp-monorepo
 ```
 
+If your project uses overlay Containerfiles, update the overlay file and run:
+
+```
+dc rebuild myapp-monorepo
+```
+
+`dc rebuild` recomposes and rebuilds project-scoped overlay images before recreating the container.
+
 If you changed multiple Containerfiles and want everything refreshed:
 
 ```
@@ -293,7 +319,8 @@ dc rebuild myapp-monorepo
 Notes:
 
 - `dc rebuild-image` is backend-agnostic (apple/docker/orbstack via `CONTAINER_BACKEND` detection/override).
-- For multi-runtime projects (`nodejs,golang`), it also regenerates/rebuilds affected combined images from `projects/*/config` and `Containerfiles/generated`.
+- It rebuilds shared base/runtime images and legacy shared combined runtime images.
+- Project-scoped overlay images are rebuilt by `dc rebuild <project>` so each project uses current overlay files.
 
 ## Cleaning old dev-container images
 
@@ -355,7 +382,9 @@ Copies the dotfiles directory into the running container and executes its `insta
 
 ### What goes where
 
-- Shared tooling (CLI tools, runtimes) → Containerfiles (baked into image)
+- Shared essentials → `Containerfile.base`
+- Runtime guarantees (Node/Go/etc.) → runtime Containerfiles (`Containerfile.nodejs`, `Containerfile.golang`, ...)
+- Preferred day-to-day tools → user overlay Containerfile(s) layered during `dc new`/`dc rebuild`
 - Project secrets (PAT, SSH key, .npmrc) → `~/.config/dev-containers/<name>/`
 - Personal preferences (git identity, vim, shell) → your dotfiles repo
 
@@ -408,7 +437,7 @@ For this to work, your PostgreSQL instance must allow it:
 - allow container network clients in pg_hba.conf
 - keep auth strict (password/scram), and avoid opening broad CIDRs unnecessarily
 
-If you want version parity with Postgres.app, set POSTGRES_CLIENT_MAJOR during setup as shown above, then verify with:
+If you install PostgreSQL client in your overlay Containerfile, verify with:
 
 ```
 dc shell <name> "psql --version"

@@ -3,9 +3,6 @@ FROM ubuntu:24.04
 # Avoid interactive prompts during apt installs
 ENV DEBIAN_FRONTEND=noninteractive
 
-# PostgreSQL client major version to install (set via setup.sh as POSTGRES_CLIENT_MAJOR)
-ARG PG_CLIENT_MAJOR=18
-
 RUN apt-get update && apt-get install -y \
     git \
     curl \
@@ -14,39 +11,9 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     gnupg \
     zsh \
-    vim \
-    jq \
-    tree \
-    tmux \
-    rsync \
-    ripgrep \
-    fzf \
-    less \
-    unzip \
-    zip \
-    lsof \
     procps \
-    net-tools \
-    iproute2 \
-    iputils-ping \
-    dnsutils \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
-
-# Install a PostgreSQL client version that matches host/Postgres.app major where possible.
-RUN apt-get update && \
-        if apt-cache show "postgresql-client-${PG_CLIENT_MAJOR}" >/dev/null 2>&1; then \
-            apt-get install -y "postgresql-client-${PG_CLIENT_MAJOR}"; \
-        else \
-            echo "WARNING: postgresql-client-${PG_CLIENT_MAJOR} unavailable, installing default postgresql-client"; \
-            apt-get install -y postgresql-client; \
-        fi && \
-        rm -rf /var/lib/apt/lists/*
-
-# Install Node.js LTS (required for OpenCode CLI), then install latest OpenCode CLI
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g opencode-ai@latest && \
-    rm -rf /var/lib/apt/lists/*
 
 # Create non-root dev user.
 # Some Ubuntu variants already reserve UID 1000, so fall back gracefully.
@@ -57,6 +24,10 @@ RUN if id -u dev >/dev/null 2>&1; then \
         else \
             useradd -m -s /bin/zsh -u 1000 dev; \
         fi
+
+# Enable sudo for dev user (password required; no NOPASSWD)
+RUN echo "dev ALL=(ALL) ALL" > /etc/sudoers.d/dev \
+    && chmod 440 /etc/sudoers.d/dev
 
 # Configure default shell settings for dev user
 RUN cat > /home/dev/.zshrc <<'EOF'

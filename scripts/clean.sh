@@ -18,7 +18,7 @@ DRY_RUN=false
 if [[ "${1:-}" == "--dry-run" ]]; then
   DRY_RUN=true
 elif [[ $# -gt 0 ]]; then
-  echo "Usage: scripts/clean.sh [--dry-run]"
+  echo "Usage: dc clean [--dry-run]"
   exit 1
 fi
 

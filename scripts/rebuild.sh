@@ -48,18 +48,36 @@ fi
 source "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
+COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
+
+RUNTIME_TYPES_CSV="${CONTAINER_RUNTIME_TYPES:-${CONTAINER_TYPE:-}}"
+if [[ -z "$RUNTIME_TYPES_CSV" ]]; then
+  echo "ERROR: Missing runtime type configuration in $CONFIG"
+  exit 1
+fi
+
+IMAGE_MODE="${CONTAINER_IMAGE_MODE:-shared}"
+COMPOSED_CONTAINERFILE="${CONTAINER_COMPOSED_CONTAINERFILE:-}"
+
+OVERLAY_FILES=()
+if (( ${+CONTAINER_OVERLAY_FILES} )); then
+  OVERLAY_FILES=("${CONTAINER_OVERLAY_FILES[@]}")
+fi
+
 HAS_NODEJS=false
-if [[ ",${CONTAINER_TYPE}," == *",nodejs,"* ]]; then
+if [[ ",${RUNTIME_TYPES_CSV}," == *",nodejs,"* ]]; then
   HAS_NODEJS=true
 fi
 
-echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║  REBUILDING CONTAINER: $PROJECT"
-$ROTATE_KEYS && echo "║  Mode: ROTATE KEYS (new SSH deploy key will be generated)"
-echo "╚══════════════════════════════════════════════════════════════════╝"
+echo "======================================================================"
+echo "Rebuilding container: $PROJECT"
+$ROTATE_KEYS && echo "Mode: rotate keys (new SSH deploy key will be generated)"
+echo "======================================================================"
 echo ""
 echo "  Container:  $CONTAINER_PROJECT"
 echo "  Image:      $CONTAINER_IMAGE"
+echo "  Image mode: $IMAGE_MODE"
+echo "  Runtime(s): $RUNTIME_TYPES_CSV"
 echo "  Backend:    $ACTIVE_BACKEND"
 echo "  Repos:      $REPOS_DIR (PRESERVED — verify your commits separately)"
 echo ""
@@ -100,10 +118,8 @@ if $ROTATE_KEYS; then
   ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -C "dev-container-${PROJECT}-rotated-$(date +%Y%m%d)" -N "" -q
   chmod 600 "$SSH_KEY_PATH"
   echo ""
-  echo "  ┌─────────────────────────────────────────────────────────────────┐"
-  echo "  │ NEW SSH PUBLIC KEY — Add to GitHub and REMOVE the old one:      │"
-  echo "  │ https://github.com/ORG/REPO/settings/keys                       │"
-  echo "  └─────────────────────────────────────────────────────────────────┘"
+  echo "  New SSH public key - add to GitHub and remove the old one:"
+  echo "  https://github.com/ORG/REPO/settings/keys"
   echo ""
   cat "${SSH_KEY_PATH}.pub"
   echo ""
@@ -114,9 +130,33 @@ else
   echo "==> Step 3: Keeping existing SSH key (use --rotate-keys to regenerate)"
 fi
 
-# ── 4. Recreate container ─────────────────────────────────────────────────────
+CREATE_STEP=4
+START_STEP=5
+
+# ── 4. Rebuild project-scoped image (if needed) ──────────────────────────────
+if [[ "$IMAGE_MODE" == "project" ]]; then
+  CREATE_STEP=5
+  START_STEP=6
+
+  if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
+    echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
+    exit 1
+  fi
+
+  if [[ -z "$COMPOSED_CONTAINERFILE" ]]; then
+    COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${PROJECT}"
+  fi
+
+  echo ""
+  echo "==> Step 4: Rebuilding project-scoped image from runtime + overlays..."
+  zsh "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$RUNTIME_TYPES_CSV" "${OVERLAY_FILES[@]}"
+  backend_build_image "$CONTAINER_IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
+  echo "  ✓ Project image rebuilt: $CONTAINER_IMAGE"
+fi
+
+# ── 5. Recreate container ─────────────────────────────────────────────────────
 echo ""
-echo "==> Step 4: Recreating container from $CONTAINER_IMAGE..."
+echo "==> Step $CREATE_STEP: Recreating container from $CONTAINER_IMAGE..."
 
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
 if $HAS_NODEJS; then
@@ -125,16 +165,26 @@ fi
 
 PORT_ARGS=()
 for p in "${PORTS[@]:-}"; do
-  [[ -n "$p" ]] && PORT_ARGS+=(--publish "$p")
+  [[ -z "$p" ]] && continue
+
+  if [[ "$p" =~ '^[0-9]+:[0-9]+$' ]]; then
+    PORT_ARGS+=(--publish "$p")
+  elif [[ "$p" =~ '^[0-9]+$' ]]; then
+    PORT_ARGS+=(--publish "$p:$p")
+  else
+    echo "ERROR: Invalid port mapping '$p' in project config."
+    echo "  Expected formats: host:container or single port"
+    exit 1
+  fi
 done
 
 backend_create "$PROJECT" "$CONTAINER_IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}"
 
 echo "  ✓ Container created"
 
-# ── 5. Start and re-inject credentials ────────────────────────────────────────
+# ── 6. Start and re-inject credentials ────────────────────────────────────────
 echo ""
-echo "==> Step 5: Starting container and injecting credentials..."
+echo "==> Step $START_STEP: Starting container and injecting credentials..."
 backend_start "$PROJECT"
 sleep 2
 
@@ -149,15 +199,16 @@ backend_exec "$PROJECT" git config --global url."git@github.com:".insteadOf "htt
 echo "  ✓ git configured (SSH insteadOf)"
 
 echo ""
-echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║  Rebuild complete: $PROJECT"
-echo "║"
-echo "║  Remaining manual steps (outside this script):"
-echo "║  [ ] Review git log in $REPOS_DIR for unexpected commits"
-echo "║  [ ] Check 'git diff HEAD~5' for unexpected file changes"
-echo "║  [ ] Consider rotating your GitHub PAT: $TOKEN_FILE"
-$ROTATE_KEYS && echo "║  [ ] Confirm new SSH key is on GitHub and old key is removed"
-echo "║  [ ] Personal config (git identity, editor, shell) → dotfiles"
-echo "║"
-echo "║  Re-enter container:  scripts/shell.sh $PROJECT"
-echo "╚══════════════════════════════════════════════════════════════════╝"
+echo "======================================================================"
+echo "Rebuild complete: $PROJECT"
+echo "======================================================================"
+echo "Remaining manual steps (outside this script):"
+echo "  [ ] Review git log in $REPOS_DIR for unexpected commits"
+echo "  [ ] Check 'git diff HEAD~5' for unexpected file changes"
+echo "  [ ] Consider rotating your GitHub PAT: $TOKEN_FILE"
+$ROTATE_KEYS && echo "  [ ] Confirm new SSH key is on GitHub and old key is removed"
+echo "  [ ] Reapply personal config: dc install $PROJECT <path-to-dotfiles>"
+echo "  [ ] Personal config (git identity, editor, shell) -> dotfiles"
+echo ""
+echo "Re-enter container:"
+echo "  dc shell $PROJECT"

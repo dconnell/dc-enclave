@@ -66,7 +66,7 @@ else
   # Start all projects
   PROJECTS=("$ROOT_DIR"/projects/*/config)
   if [[ ${#PROJECTS[@]} -eq 0 || ! -f "${PROJECTS[1]}" ]]; then
-    echo "No containers configured yet. Run: scripts/new-container.sh <name> <type>"
+    echo "No containers configured yet. Run: dc new <name> <type>"
     exit 0
   fi
 
@@ -78,4 +78,4 @@ else
 fi
 
 echo ""
-echo "Run 'scripts/status.sh' to see running containers."
+echo "Run 'dc status' to see running containers."
