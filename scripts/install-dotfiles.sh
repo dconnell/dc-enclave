@@ -1,34 +1,26 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # =============================================================================
-# install-dotfiles.sh — Install or update dotfiles in a running container
-#
-# Usage:
-#   install-dotfiles.sh <project-name> <path-to-dotfiles>
-#
-# Copies the dotfiles directory into the container and runs its install script.
-# Safe to re-run — idempotent if the install script is idempotent.
-#
-# Example:
-#   dc install myapp ~/.dotfiles
-#   dc install myapp /Users/you/repos/dotfiles
+# install-dotfiles.sh - Install or update dotfiles in a running container
 # =============================================================================
 set -euo pipefail
 
 PROJECT="${1:?Usage: install-dotfiles.sh <project-name> <path-to-dotfiles>}"
 DOTFILES_SRC="${2:?Usage: install-dotfiles.sh <project-name> <path-to-dotfiles>}"
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+source "$ROOT_DIR/lib/common.sh"
+source "$ROOT_DIR/lib/container-backend.sh"
+
 CONFIG="$ROOT_DIR/projects/$PROJECT/config"
-BACKEND_LIB="$ROOT_DIR/lib/container-backend.sh"
-
-if [[ ! -f "$BACKEND_LIB" ]]; then
-  echo "ERROR: Backend library not found at $BACKEND_LIB"
-  exit 1
-fi
-
-source "$BACKEND_LIB"
-
 if [[ ! -f "$CONFIG" ]]; then
   echo "ERROR: No config for '$PROJECT'."
   exit 1
@@ -37,7 +29,10 @@ fi
 source "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 
-DOTFILES_SRC="${DOTFILES_SRC:A}"
+DOTFILES_SRC="$(dc_resolve_path "$DOTFILES_SRC")" || {
+  echo "ERROR: Dotfiles path could not be resolved: $DOTFILES_SRC"
+  exit 1
+}
 
 if [[ ! -d "$DOTFILES_SRC" ]]; then
   echo "ERROR: Dotfiles directory not found: $DOTFILES_SRC"

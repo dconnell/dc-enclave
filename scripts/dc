@@ -1,11 +1,22 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+source "$ROOT_DIR/lib/common.sh"
 
 SUBCOMMAND="${1:-help}"
-shift 2>/dev/null || true
+if [[ $# -gt 0 ]]; then
+  shift
+fi
 
 case "$SUBCOMMAND" in
   new)

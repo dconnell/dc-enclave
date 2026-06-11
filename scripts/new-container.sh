@@ -1,30 +1,18 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # =============================================================================
-# new-container.sh — Create a new isolated development container.
-#
-# Usage:
-#   new-container.sh <project-name> <type[,type...]> [host-port:container-port ...]
-#   new-container.sh <project-name> <type[,type...]> --overlay-containerfile <file> [ports...]
-#
-# Runtime types:
-#   nodejs   — Node.js / npm / frontend runtime
-#   golang   — Go backend runtime
-#
-# Overlay support:
-#   In the type CSV, unknown tokens that resolve to existing files are treated
-#   as overlay Containerfile fragments.
-#
-# Examples:
-#   ./new-container.sh myapp nodejs 3000:3000
-#   ./new-container.sh myapp nodejs,golang 3000:3000 8080:8080
-#   ./new-container.sh myapp nodejs,golang,../../path/to/Containerfile.username
-#   ./new-container.sh myapp nodejs --overlay-containerfile ../../path/to/Containerfile.username
+# new-container.sh - Create a new isolated development container.
 # =============================================================================
 set -euo pipefail
 
 PROJECT="${1:?Usage: new-container.sh <project-name> <type[,type...]> [port:port ...]}"
 TYPE_INPUT="${2:?Specify type(s): nodejs, golang, or nodejs,golang[,overlay-path]}"
 shift 2
+
+if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "ERROR: Invalid project name '$PROJECT'."
+  echo "  Allowed characters: letters, numbers, dot, underscore, hyphen"
+  exit 1
+fi
 
 PORTS=()
 EXTRA_OVERLAYS=()
@@ -45,37 +33,47 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
-BACKEND_LIB="$ROOT_DIR/lib/container-backend.sh"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+source "$ROOT_DIR/lib/common.sh"
+source "$ROOT_DIR/lib/container-backend.sh"
+
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
-
-if [[ ! -f "$BACKEND_LIB" ]]; then
-  echo "ERROR: Backend library not found at $BACKEND_LIB"
-  exit 1
-fi
-
 if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
   exit 1
 fi
 
 TYPE_ORDER=(nodejs golang)
-typeset -A TYPE_SELECTED
-RAW_TYPES=("${(@s:,:)TYPE_INPUT}")
+declare -A TYPE_SELECTED=()
 OVERLAY_FILES=()
 
+IFS=',' read -r -a RAW_TYPES <<< "$TYPE_INPUT"
 for raw_type in "${RAW_TYPES[@]}"; do
   normalized_type="${raw_type//[[:space:]]/}"
 
   case "$normalized_type" in
     nodejs|golang)
-      TYPE_SELECTED[$normalized_type]=1
+      TYPE_SELECTED["$normalized_type"]=1
       ;;
     "")
       ;;
     *)
-      overlay_candidate="${normalized_type:A}"
+      overlay_candidate="$(dc_resolve_path "$normalized_type")" || {
+        echo "ERROR: Unknown type token '$normalized_type'."
+        echo "  Supported runtime types: nodejs, golang"
+        echo "  Or provide an existing overlay Containerfile path."
+        exit 1
+      }
+
       if [[ -f "$overlay_candidate" ]]; then
         OVERLAY_FILES+=("$overlay_candidate")
       else
@@ -89,7 +87,11 @@ for raw_type in "${RAW_TYPES[@]}"; do
 done
 
 for overlay_input in "${EXTRA_OVERLAYS[@]}"; do
-  overlay_candidate="${overlay_input:A}"
+  overlay_candidate="$(dc_resolve_path "$overlay_input")" || {
+    echo "ERROR: Overlay path could not be resolved: $overlay_input"
+    exit 1
+  }
+
   if [[ ! -f "$overlay_candidate" ]]; then
     echo "ERROR: Overlay Containerfile not found: $overlay_candidate"
     exit 1
@@ -97,11 +99,11 @@ for overlay_input in "${EXTRA_OVERLAYS[@]}"; do
   OVERLAY_FILES+=("$overlay_candidate")
 done
 
-typeset -A OVERLAY_SEEN
+declare -A OVERLAY_SEEN=()
 DEDUPED_OVERLAYS=()
 for overlay_file in "${OVERLAY_FILES[@]}"; do
   if [[ -z "${OVERLAY_SEEN[$overlay_file]-}" ]]; then
-    OVERLAY_SEEN[$overlay_file]=1
+    OVERLAY_SEEN["$overlay_file"]=1
     DEDUPED_OVERLAYS+=("$overlay_file")
   fi
 done
@@ -119,7 +121,7 @@ if [[ ${#RUNTIME_TYPES[@]} -eq 0 ]]; then
   exit 1
 fi
 
-RUNTIME_CSV="${(j:,:)RUNTIME_TYPES}"
+RUNTIME_CSV="$(dc_join_by ',' "${RUNTIME_TYPES[@]}")"
 HAS_NODEJS=false
 if [[ -n "${TYPE_SELECTED[nodejs]-}" ]]; then
   HAS_NODEJS=true
@@ -129,8 +131,6 @@ IMAGE_MODE="shared"
 if [[ ${#RUNTIME_TYPES[@]} -gt 1 || ${#OVERLAY_FILES[@]} -gt 0 ]]; then
   IMAGE_MODE="project"
 fi
-
-source "$BACKEND_LIB"
 
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
@@ -152,15 +152,15 @@ fi
 
 COMPOSED_CONTAINERFILE=""
 if [[ "$IMAGE_MODE" == "shared" ]]; then
-  IMAGE="dev-${RUNTIME_TYPES[1]}:latest"
-  DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.${RUNTIME_TYPES[1]}"
+  IMAGE="dev-${RUNTIME_TYPES[0]}:latest"
+  DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.${RUNTIME_TYPES[0]}"
 else
   IMAGE="dev-${PROJECT}:latest"
   COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${PROJECT}"
   DEVCONTAINER_BUILD_FILE="$COMPOSED_CONTAINERFILE"
 
   echo "==> Generating composed Containerfile for project image..."
-  zsh "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$RUNTIME_CSV" "${OVERLAY_FILES[@]}"
+  bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$RUNTIME_CSV" "${OVERLAY_FILES[@]}"
 
   echo "==> Building project-scoped image: $IMAGE"
   backend_build_image "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
@@ -240,13 +240,17 @@ NPMRC_PATH="$SECRET_DIR/.npmrc"
 EOF
 
 if [[ ${#PORTS[@]} -gt 0 ]]; then
-  print -r -- "PORTS=(${(q)PORTS[@]})" >> "$CONFIG_FILE"
+  printf 'PORTS=(' >> "$CONFIG_FILE"
+  printf '%q ' "${PORTS[@]}" >> "$CONFIG_FILE"
+  printf ')\n' >> "$CONFIG_FILE"
 else
   echo "PORTS=()" >> "$CONFIG_FILE"
 fi
 
 if [[ ${#OVERLAY_FILES[@]} -gt 0 ]]; then
-  print -r -- "CONTAINER_OVERLAY_FILES=(${(q)OVERLAY_FILES[@]})" >> "$CONFIG_FILE"
+  printf 'CONTAINER_OVERLAY_FILES=(' >> "$CONFIG_FILE"
+  printf '%q ' "${OVERLAY_FILES[@]}" >> "$CONFIG_FILE"
+  printf ')\n' >> "$CONFIG_FILE"
 else
   echo "CONTAINER_OVERLAY_FILES=()" >> "$CONFIG_FILE"
 fi
@@ -263,12 +267,12 @@ FORWARD_PORTS=()
 for port_mapping in "${PORTS[@]}"; do
   [[ -z "$port_mapping" ]] && continue
 
-  if [[ "$port_mapping" =~ '^[0-9]+:[0-9]+$' ]]; then
+  if [[ "$port_mapping" =~ ^[0-9]+:[0-9]+$ ]]; then
     host_port="${port_mapping%%:*}"
     container_port="${port_mapping##*:}"
     PORT_ARGS+=(--publish "$host_port:$container_port")
     FORWARD_PORTS+=("$container_port")
-  elif [[ "$port_mapping" =~ '^[0-9]+$' ]]; then
+  elif [[ "$port_mapping" =~ ^[0-9]+$ ]]; then
     PORT_ARGS+=(--publish "$port_mapping:$port_mapping")
     FORWARD_PORTS+=("$port_mapping")
   else
@@ -300,7 +304,7 @@ if $DOCKER_COMPATIBLE; then
   DEVCONTAINER_FILE="$DEVCONTAINER_DIR/devcontainer.json"
 
   if [[ -f "$DEVCONTAINER_FILE" ]]; then
-    echo "  ✓ $DEVCONTAINER_FILE already exists — not overwritten."
+    echo "  ✓ $DEVCONTAINER_FILE already exists - not overwritten."
     echo "  Update it manually if you want to use this container recipe:"
     echo "    Containerfile: $DEVCONTAINER_BUILD_FILE"
   else
@@ -376,10 +380,10 @@ EOF
     echo "  ✓ Created $VSCODE_SETTINGS"
     echo "  All VS Code terminal tabs will open inside the container."
   else
-    echo "  ✓ $VSCODE_SETTINGS already exists — not overwritten."
+    echo "  ✓ $VSCODE_SETTINGS already exists - not overwritten."
     echo "  Add this manually if needed:"
     echo '    "terminal.integrated.defaultProfile.osx": "dev-container"'
-    echo '    "terminal.integrated.profiles.osx": { "dev-container": { "path": "/bin/zsh", "args": ["-c", "'"$ROOT_DIR/scripts/shell.sh $PROJECT"'"] } }'
+    echo "    \"terminal.integrated.profiles.osx\": { \"dev-container\": { \"path\": \"/bin/zsh\", \"args\": [\"-c\", \"$ROOT_DIR/scripts/shell.sh $PROJECT\"] } }"
   fi
 fi
 
@@ -399,7 +403,6 @@ else
 fi
 echo ""
 echo "Commands:"
-echo "  source ~/.zshrc"
 echo "  dc shell $PROJECT"
 echo "  dc stop $PROJECT"
 echo "  dc start $PROJECT"

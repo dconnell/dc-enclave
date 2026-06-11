@@ -1,10 +1,25 @@
 # dev-containers
 
-Isolated development containers for macOS with one shared shell-script codebase and three supported backends:
+Isolated development containers for macOS, Linux, and WSL2 with one shared Bash codebase and five supported backends:
 
-- apple/container
-- Docker Desktop
-- OrbStack (docker CLI path)
+- apple/container (macOS)
+- Docker Desktop (macOS, Linux, WSL2)
+- OrbStack (macOS)
+- Podman (macOS, Linux, WSL2)
+
+## Requirements
+
+- **Bash 4+** — all scripts require Bash 4 or later
+  - macOS: `brew install bash` (macOS ships bash 3.2)
+  - Linux: included by default on most distros
+  - WSL2: included by default
+- One container backend installed and running (see Backend selection below)
+
+Podman support policy:
+
+- dev-containers supports the latest stable Podman release only
+- tested baseline at migration: Podman 5.2.x
+- if you hit Podman behavior differences on older releases, upgrade Podman first
 
 ## Isolation design
 
@@ -60,14 +75,24 @@ Set CONTAINER_BACKEND to one of:
 - apple
 - docker
 - orbstack
+- podman
 
 If not set, detection order is:
 
 1. docker context name contains orbstack
 2. apple/container CLI available
 3. docker CLI available
+4. podman CLI available
 
 Selected backend is stored per project in projects/<name>/config.
+
+### Platform-specific notes
+
+**macOS + Podman**: Podman runs in a VM on macOS. Run `podman machine start` before using dev-containers, or let `setup.sh` start it for you.
+
+**Linux + Podman**: Podman runs rootless with no daemon. Works out of the box on most distros (`apt install podman`, `dnf install podman`).
+
+**WSL2**: Docker Desktop's WSL2 integration makes `docker` available inside WSL2. Podman can be installed natively inside WSL2 (`apt install podman`). For best bind-mount performance, keep repos inside the WSL2 filesystem (`~/repos/`) rather than on the Windows mount (`/mnt/c/`).
 
 ## Repository layout
 
@@ -79,9 +104,12 @@ dev-containers/
 │   ├── Containerfile.golang
 │   └── generated/                      # auto-generated composed files (multi-runtime/project overlays)
 ├── lib/
-│   └── container-backend.sh
+│   ├── common.sh                       # bash 4+ version guard, shared helpers
+│   ├── platform.sh                     # OS detection, path helpers
+│   └── container-backend.sh            # backend abstraction
 ├── scripts/
 │   ├── dc                               # CLI entry point
+│   ├── dc-complete.bash                 # bash tab completion
 │   ├── setup.sh
 │   ├── compose-containerfile.sh
 │   ├── new-container.sh
@@ -92,7 +120,8 @@ dev-containers/
 │   ├── rebuild.sh
 │   ├── rebuild-image.sh
 │   ├── install-dotfiles.sh
-│   └── clean.sh
+│   ├── clean.sh
+│   └── list.sh
 ├── templates/
 │   └── dotfiles/                       # starter dotfiles repo (fork for personal config)
 └── projects/
@@ -107,25 +136,40 @@ Host-side paths:
 
 ## Initial setup
 
-1. Ensure one backend is installed and running:
+1. Ensure Bash 4+ is installed:
 
-- apple/container, or
-- Docker Desktop, or
-- OrbStack
+```
+bash --version
+```
 
-2. Initialize repository and aliases:
+macOS users: if version is 3.x, run `brew install bash`.
+
+2. Ensure one backend is installed and running:
+
+- apple/container (macOS), or
+- Docker Desktop (macOS, Linux, WSL2), or
+- OrbStack (macOS), or
+- Podman (macOS, Linux, WSL2)
+
+3. Initialize repository and aliases:
 
 ```
 cd ~/dev-containers
-chmod +x scripts/*.sh
+chmod +x scripts/*.sh scripts/dc
 scripts/setup.sh
-source ~/.zshrc
+```
+
+4. Reload your shell profile:
+
+```
+source ~/.bashrc    # Linux, WSL2
+source ~/.bash_profile    # macOS
 ```
 
 Optional: force backend during setup:
 
 ```
-CONTAINER_BACKEND=orbstack scripts/setup.sh
+CONTAINER_BACKEND=podman scripts/setup.sh
 ```
 
 ## Setup of a new repo
@@ -212,7 +256,7 @@ Single-container multi-repo workspace:
 
 ## VS Code behavior by backend
 
-docker/orbstack backend:
+docker/orbstack/podman backends:
 
 - dc new generates ~/repos/<project>/.devcontainer/devcontainer.json
 - For multi-runtime and/or overlay projects, it points to a generated composed Containerfile
@@ -252,7 +296,7 @@ dc stop myapp-monorepo
 
 ## Daily usage example with VS Code Dev Containers
 
-For docker/orbstack backends:
+For docker/orbstack/podman backends:
 
 1. Open project folder:
 
@@ -318,7 +362,7 @@ dc rebuild myapp-monorepo
 
 Notes:
 
-- `dc rebuild-image` is backend-agnostic (apple/docker/orbstack via `CONTAINER_BACKEND` detection/override).
+- `dc rebuild-image` is backend-agnostic (apple/docker/orbstack/podman via `CONTAINER_BACKEND` detection/override).
 - It rebuilds shared base/runtime images and legacy shared combined runtime images.
 - Project-scoped overlay images are rebuilt by `dc rebuild <project>` so each project uses current overlay files.
 
@@ -338,7 +382,7 @@ dc clean --dry-run
 
 Safety and scope:
 
-- `dc clean` is backend-agnostic and uses the active backend (apple/docker/orbstack).
+- `dc clean` is backend-agnostic and uses the active backend (apple/docker/orbstack/podman).
 - It only targets managed image repositories that match the dev-container naming pattern (`dev-*`) discovered from built-ins and `projects/*/config`.
 - It preserves all `:latest` tags and removes only other tags for those managed repos.
 - It does not remove unrelated images (for example VS Code `vsc-*` images).
@@ -378,7 +422,7 @@ The Dev Containers extension clones or copies your dotfiles and runs the install
 dc install myapp ~/.dotfiles
 ```
 
-Copies the dotfiles directory into the running container and executes its `install.sh`. Safe to re-run — idempotent if your install script is. This works with all backends (apple, docker, orbstack) and is the only option for the apple/container backend since it doesn't use the Dev Containers extension.
+Copies the dotfiles directory into the running container and executes its `install.sh`. Safe to re-run — idempotent if your install script is. This works with all backends and is the only option for the apple/container backend since it doesn't use the Dev Containers extension.
 
 ### What goes where
 
@@ -394,16 +438,24 @@ See `templates/dotfiles/` in this repo for a ready-to-fork example.
 
 ## Troubleshooting
 
+Bash version too old:
+
+```
+bash --version
+# if < 4.0 on macOS:
+brew install bash
+```
+
 No backend detected:
 
-- install apple/container, Docker Desktop, or OrbStack
+- install apple/container, Docker Desktop, OrbStack, or Podman
 - rerun scripts/setup.sh
 
 Need specific backend:
 
 ```
 CONTAINER_BACKEND=apple scripts/setup.sh
-CONTAINER_BACKEND=docker dc new myapp nodejs 3000:3000
+CONTAINER_BACKEND=podman dc new myapp nodejs 3000:3000
 ```
 
 devcontainer.json or settings.json not overwritten:
@@ -421,15 +473,43 @@ SSH auth issues:
 - verify ~/.config/dev-containers/<name>/ssh_key and github-token
 - restart with dc start or recreate with dc rebuild
 
+Podman on macOS not starting:
+
+```
+podman machine start
+```
+
+## Smoke tests
+
+Run the lightweight command smoke suite (requires a configured backend and at least one sample project where applicable):
+
+```
+tests/smoke.sh
+```
+
+Optional backend override:
+
+```
+CONTAINER_BACKEND=podman tests/smoke.sh
+```
+
 ## Connecting to host PostgreSQL securely
 
 You do not need SSH tunneling for normal local development. A normal connection string is enough.
 
-For docker/orbstack backends, use host.docker.internal as host:
+For docker/orbstack backends, use `host.docker.internal` as host:
 
 ```
 postgresql://<user>:<password>@host.docker.internal:5432/<db>
 ```
+
+For podman backend, use `host.containers.internal`:
+
+```
+postgresql://<user>:<password>@host.containers.internal:5432/<db>
+```
+
+Note: `dc new` configures podman containers with `host.docker.internal` as an alias, so either hostname works with podman.
 
 For this to work, your PostgreSQL instance must allow it:
 

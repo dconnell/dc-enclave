@@ -1,41 +1,33 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # =============================================================================
-# rebuild-image.sh — Rebuild dev-container images without recreating containers
-#
-# Usage:
-#   rebuild-image.sh [all|base|nodejs|golang]
-#
-# Notes:
-#   - Uses the same backend abstraction as setup/new/rebuild scripts.
-#   - Rebuilding images does not restart existing containers.
-#   - Run dc rebuild <project> after image rebuild to pick up changes.
-#   - Rebuilds affected shared combined runtime images from projects/*/config.
-#   - Project-scoped overlay images are rebuilt by dc rebuild <project>.
+# rebuild-image.sh - Rebuild dev-container images without recreating containers
 # =============================================================================
 set -euo pipefail
-setopt null_glob
+shopt -s nullglob
 
 TARGET="${1:-all}"
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
-BACKEND_LIB="$ROOT_DIR/lib/container-backend.sh"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [[ ! -f "$BACKEND_LIB" ]]; then
-  echo "ERROR: Backend library not found at $BACKEND_LIB"
-  exit 1
-fi
+source "$ROOT_DIR/lib/common.sh"
+source "$ROOT_DIR/lib/container-backend.sh"
 
-source "$BACKEND_LIB"
-
-backend_use "${CONTAINER_BACKEND:-}"
-ACTIVE_BACKEND="$(backend_name)"
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
-
 if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
   exit 1
 fi
+
+backend_use "${CONTAINER_BACKEND:-}"
+ACTIVE_BACKEND="$(backend_name)"
 
 case "$TARGET" in
   all|base|nodejs|golang)
@@ -46,19 +38,32 @@ case "$TARGET" in
     ;;
 esac
 
-if [[ "$ACTIVE_BACKEND" == "apple" ]]; then
-  echo "==> Starting apple/container system daemon..."
-  backend_system_start 2>/dev/null && echo "✓ Daemon started" || echo "  (already running or not needed)"
-else
-  echo "==> Checking Docker-compatible runtime availability..."
-  if backend_system_start 2>/dev/null; then
-    echo "✓ Docker engine is reachable"
-  else
-    echo "✗ ERROR: Docker engine is not reachable."
-    echo "  Start Docker Desktop or OrbStack and retry."
-    exit 1
-  fi
-fi
+case "$ACTIVE_BACKEND" in
+  apple)
+    echo "==> Starting apple/container system daemon..."
+    backend_system_start 2>/dev/null && echo "✓ Daemon started" || echo "  (already running or not needed)"
+    ;;
+  docker|orbstack)
+    echo "==> Checking Docker-compatible runtime availability..."
+    if backend_system_start 2>/dev/null; then
+      echo "✓ Docker engine is reachable"
+    else
+      echo "✗ ERROR: Docker engine is not reachable."
+      echo "  Start Docker Desktop or OrbStack and retry."
+      exit 1
+    fi
+    ;;
+  podman)
+    echo "==> Checking Podman runtime availability..."
+    if backend_system_start 2>/dev/null; then
+      echo "✓ Podman runtime is reachable"
+    else
+      echo "✗ ERROR: Podman runtime is not reachable."
+      echo "  Start Podman (for macOS: podman machine start) and retry."
+      exit 1
+    fi
+    ;;
+esac
 
 echo ""
 echo "Selected backend: $ACTIVE_BACKEND"
@@ -83,10 +88,10 @@ target_affects_types() {
 
 rebuild_affected_combined_images() {
   local -a project_configs=("$ROOT_DIR"/projects/*/config)
-  local -i rebuilt_count=0
-  local -i skipped_backend=0
-  local -i skipped_project_mode=0
-  typeset -A built_slugs
+  local rebuilt_count=0
+  local skipped_backend=0
+  local skipped_project_mode=0
+  local -A built_slugs=()
 
   if [[ ${#project_configs[@]} -eq 0 ]]; then
     echo ""
@@ -97,19 +102,18 @@ rebuild_affected_combined_images() {
   for config_file in "${project_configs[@]}"; do
     source "$config_file"
 
-    local project="${CONTAINER_PROJECT:-${config_file:h:t}}"
     local project_backend="${CONTAINER_BACKEND:-$ACTIVE_BACKEND}"
     local project_types="${CONTAINER_RUNTIME_TYPES:-${CONTAINER_TYPE:-}}"
     local project_mode="${CONTAINER_IMAGE_MODE:-shared}"
     local project_image="${CONTAINER_IMAGE:-}"
 
     if [[ "$project_backend" != "$ACTIVE_BACKEND" ]]; then
-      ((skipped_backend++))
+      skipped_backend=$((skipped_backend + 1))
       continue
     fi
 
     if [[ "$project_mode" != "shared" ]]; then
-      ((skipped_project_mode++))
+      skipped_project_mode=$((skipped_project_mode + 1))
       continue
     fi
 
@@ -121,14 +125,17 @@ rebuild_affected_combined_images() {
       continue
     fi
 
-    local -a raw_types=("${(@s:,:)project_types}")
+    local -a raw_types=()
+    IFS=',' read -r -a raw_types <<< "$project_types"
+
+    local -A selected_types=()
     local -a ordered_types=()
-    typeset -A selected_types
+
     for raw_type in "${raw_types[@]}"; do
       local normalized_type="${raw_type//[[:space:]]/}"
       case "$normalized_type" in
         nodejs|golang)
-          selected_types[$normalized_type]=1
+          selected_types["$normalized_type"]=1
           ;;
       esac
     done
@@ -143,21 +150,24 @@ rebuild_affected_combined_images() {
       continue
     fi
 
-    local type_slug="${(j:-:)ordered_types}"
+    local type_slug=""
+    type_slug="$(dc_join_by '-' "${ordered_types[@]}")"
     if [[ -n "${built_slugs[$type_slug]-}" ]]; then
       continue
     fi
 
     local combined_containerfile="$ROOT_DIR/Containerfiles/generated/Containerfile.$type_slug"
     local combined_image="${project_image:-dev-${type_slug}:latest}"
+    local ordered_csv=""
+    ordered_csv="$(dc_join_by ',' "${ordered_types[@]}")"
 
     echo ""
-    echo "--- Building shared combined image $combined_image (types: ${(j:,:)ordered_types}) ---"
-    zsh "$COMPOSE_SCRIPT" "$combined_containerfile" "${(j:,:)ordered_types}"
+    echo "--- Building shared combined image $combined_image (types: $ordered_csv) ---"
+    bash "$COMPOSE_SCRIPT" "$combined_containerfile" "$ordered_csv"
     backend_build_image "$combined_image" "$combined_containerfile" "$ROOT_DIR"
 
-    built_slugs[$type_slug]=1
-    ((rebuilt_count++))
+    built_slugs["$type_slug"]=1
+    rebuilt_count=$((rebuilt_count + 1))
   done
 
   echo ""

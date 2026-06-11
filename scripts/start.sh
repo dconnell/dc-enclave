@@ -1,24 +1,22 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # =============================================================================
-# start.sh — Start one or all dev containers
-#
-# Usage:
-#   start.sh                  # start all containers defined in projects/
-#   start.sh <project-name>   # start a specific container
+# start.sh - Start one or all dev containers
 # =============================================================================
 set -euo pipefail
-setopt null_glob
+shopt -s nullglob
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
-BACKEND_LIB="$ROOT_DIR/lib/container-backend.sh"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [[ ! -f "$BACKEND_LIB" ]]; then
-  echo "ERROR: Backend library not found at $BACKEND_LIB"
-  exit 1
-fi
-
-source "$BACKEND_LIB"
+source "$ROOT_DIR/lib/common.sh"
+source "$ROOT_DIR/lib/container-backend.sh"
 
 _start_container() {
   local project="$1"
@@ -31,21 +29,19 @@ _start_container() {
 
   source "$config"
   backend_use "${CONTAINER_BACKEND:-}" || return 1
-  local active_backend
+
+  local active_backend=""
   active_backend="$(backend_name)"
 
-  # Check if already running
   if backend_is_running "$project"; then
-    echo "  ✓ $project — already running ($active_backend)"
+    echo "  ✓ $project - already running ($active_backend)"
     return 0
   fi
 
-  echo "  → Starting $project on $active_backend..."
+  echo "  -> Starting $project on $active_backend..."
   backend_start "$project"
 
-  # Re-inject SSH key on start (persists in VM but good practice after rebuild)
-  if [[ -f "$SSH_KEY_PATH" ]]; then
-    # Only inject if key isn't already present (avoids redundant writes)
+  if [[ -n "${SSH_KEY_PATH:-}" ]] && [[ -f "$SSH_KEY_PATH" ]]; then
     if ! backend_exec "$project" test -f ~/.ssh/id_ed25519 2>/dev/null; then
       backend_exec "$project" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
       backend_exec_stdin "$project" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY_PATH"
@@ -54,25 +50,23 @@ _start_container() {
     fi
   fi
 
-  echo "  ✓ $project — started"
+  echo "  ✓ $project - started"
 }
 
 if [[ $# -gt 0 ]]; then
-  # Start specific container(s)
   for project in "$@"; do
     _start_container "$project"
   done
 else
-  # Start all projects
   PROJECTS=("$ROOT_DIR"/projects/*/config)
-  if [[ ${#PROJECTS[@]} -eq 0 || ! -f "${PROJECTS[1]}" ]]; then
+  if [[ ${#PROJECTS[@]} -eq 0 ]]; then
     echo "No containers configured yet. Run: dc new <name> <type>"
     exit 0
   fi
 
   echo "Starting all containers..."
   for config_file in "${PROJECTS[@]}"; do
-    project="${${config_file:h}:t}"
+    project="$(basename "$(dirname "$config_file")")"
     _start_container "$project"
   done
 fi

@@ -1,20 +1,22 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # =============================================================================
-# setup.sh — One-time host setup for dev-containers
-# Run once after cloning this repo.
+# setup.sh - One-time host setup for dev-containers
 # =============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
-BACKEND_LIB="$ROOT_DIR/lib/container-backend.sh"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [[ ! -f "$BACKEND_LIB" ]]; then
-  echo "✗ ERROR: Backend library not found at $BACKEND_LIB"
-  exit 1
-fi
-
-source "$BACKEND_LIB"
+source "$ROOT_DIR/lib/common.sh"
+source "$ROOT_DIR/lib/platform.sh"
+source "$ROOT_DIR/lib/container-backend.sh"
 
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
@@ -26,23 +28,36 @@ echo ""
 echo "Selected backend: $ACTIVE_BACKEND"
 echo "CLI version: $(backend_version)"
 
-# ── 1. Initialize/check backend runtime ──────────────────────────────────────
+# Initialize backend runtime when needed.
 echo ""
-if [[ "$ACTIVE_BACKEND" == "apple" ]]; then
-  echo "==> Starting apple/container system daemon..."
-  backend_system_start 2>/dev/null && echo "✓ Daemon started" || echo "  (already running or not needed)"
-else
-  echo "==> Checking Docker-compatible runtime availability..."
-  if backend_system_start 2>/dev/null; then
-    echo "✓ Docker engine is reachable"
-  else
-    echo "✗ ERROR: Docker engine is not reachable."
-    echo "  Start Docker Desktop or OrbStack and rerun setup."
-    exit 1
-  fi
-fi
+case "$ACTIVE_BACKEND" in
+  apple)
+    echo "==> Starting apple/container system daemon..."
+    backend_system_start 2>/dev/null && echo "✓ Daemon started" || echo "  (already running or not needed)"
+    ;;
+  docker|orbstack)
+    echo "==> Checking Docker-compatible runtime availability..."
+    if backend_system_start 2>/dev/null; then
+      echo "✓ Docker engine is reachable"
+    else
+      echo "✗ ERROR: Docker engine is not reachable."
+      echo "  Start Docker Desktop or OrbStack and rerun setup."
+      exit 1
+    fi
+    ;;
+  podman)
+    echo "==> Checking Podman runtime availability..."
+    if backend_system_start 2>/dev/null; then
+      echo "✓ Podman runtime is reachable"
+    else
+      echo "✗ ERROR: Podman runtime is not reachable."
+      echo "  Start Podman (for macOS: podman machine start) and rerun setup."
+      exit 1
+    fi
+    ;;
+esac
 
-# ── 2. Create host directory structure ───────────────────────────────────────
+# Create host directories.
 echo ""
 echo "==> Creating host directories..."
 
@@ -57,7 +72,7 @@ for dir in "${DIRS[@]}"; do
   echo "  ✓ $dir"
 done
 
-# ── 3. Create global .gitignore for secrets ──────────────────────────────────
+# Create global gitignore for secrets.
 GLOBAL_GITIGNORE="$HOME/.gitignore_global"
 if ! grep -q "dev-containers secrets" "$GLOBAL_GITIGNORE" 2>/dev/null; then
   cat >> "$GLOBAL_GITIGNORE" <<'EOF'
@@ -73,7 +88,7 @@ EOF
   echo "✓ Updated global .gitignore at $GLOBAL_GITIGNORE"
 fi
 
-# ── 4. Build base images ─────────────────────────────────────────────────────
+# Build base images.
 echo ""
 echo "==> Building base container images (this takes a few minutes)..."
 echo ""
@@ -98,7 +113,7 @@ backend_build_image \
   "$ROOT_DIR/Containerfiles/Containerfile.golang" \
   "$ROOT_DIR"
 
-# ── 5. Optional VS Code Dev Containers extension check ──────────────────────
+# Optional VS Code extension check for Docker-compatible backends.
 if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   echo ""
   echo "==> Optional check: VS Code Dev Containers extension"
@@ -116,34 +131,29 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   fi
 fi
 
-# ── 6. Add shell alias ──────────────────────────────────────────────────────
-ZSHRC="$HOME/.zshrc"
-if ! grep -q "dev-containers alias" "$ZSHRC" 2>/dev/null; then
-  cat >> "$ZSHRC" <<EOF
+# Add alias + completion to the right bash profile.
+PROFILE_FILE="$(platform_bash_profile)"
+touch "$PROFILE_FILE"
 
-# ── dev-containers alias ────────────────────────────────────────
-alias dc='$ROOT_DIR/scripts/dc'
-# ────────────────────────────────────────────────────────────────
-EOF
+ALIAS_LINE="alias dc='$ROOT_DIR/scripts/dc'"
+if ! grep -Fq "$ALIAS_LINE" "$PROFILE_FILE"; then
+  {
+    echo ""
+    echo "# dev-containers alias"
+    echo "$ALIAS_LINE"
+  } >> "$PROFILE_FILE"
   echo ""
-  echo "✓ Added dc alias to $ZSHRC"
-  echo "  Run: source ~/.zshrc"
+  echo "✓ Added dc alias to $PROFILE_FILE"
 fi
 
-if ! grep -q 'dc-complete.zsh' "$ZSHRC" 2>/dev/null; then
-  echo "" >> "$ZSHRC"
-  echo "# dc tab-completion" >> "$ZSHRC"
-  echo "source '$ROOT_DIR/scripts/dc-complete.zsh'" >> "$ZSHRC"
-  echo "✓ Added dc completion to $ZSHRC"
-fi
-
-# Keep alias in sync for users who had the old multi-alias block.
-if grep -q "dev-containers aliases" "$ZSHRC" 2>/dev/null && ! grep -q "alias dc=" "$ZSHRC" 2>/dev/null; then
-  echo "alias dc='$ROOT_DIR/scripts/dc'" >> "$ZSHRC"
-  echo ""
-  echo "✓ Added dc alias to $ZSHRC"
-  echo "  You can remove the old dcnew/dcstart/etc aliases from $ZSHRC"
-  echo "  Run: source ~/.zshrc"
+COMPLETION_LINE="source '$ROOT_DIR/scripts/dc-complete.bash'"
+if ! grep -Fq "$COMPLETION_LINE" "$PROFILE_FILE"; then
+  {
+    echo ""
+    echo "# dev-containers completion"
+    echo "$COMPLETION_LINE"
+  } >> "$PROFILE_FILE"
+  echo "✓ Added dc completion to $PROFILE_FILE"
 fi
 
 echo ""
@@ -158,6 +168,6 @@ else
 fi
 echo ""
 echo "Next:"
-echo "  1. source ~/.zshrc"
+echo "  1. source $PROFILE_FILE"
 echo "  2. dc new <name> nodejs [port:port]"
 echo "  3. dc new <name> golang [port:port]"

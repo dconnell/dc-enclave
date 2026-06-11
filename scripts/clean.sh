@@ -1,18 +1,9 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # =============================================================================
-# clean.sh — Remove old dev-container image tags, keep latest tags only
-#
-# Usage:
-#   clean.sh [--dry-run]
-#
-# Notes:
-#   - Backend-agnostic via lib/container-backend.sh
-#   - Only touches managed dev-container image repositories (dev-*)
-#   - Keeps <repo>:latest, removes other tags for managed repos
-#   - Does not delete unrelated images
+# clean.sh - Remove old dev-container image tags, keep latest tags only
 # =============================================================================
 set -euo pipefail
-setopt null_glob
+shopt -s nullglob
 
 DRY_RUN=false
 if [[ "${1:-}" == "--dry-run" ]]; then
@@ -22,29 +13,41 @@ elif [[ $# -gt 0 ]]; then
   exit 1
 fi
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
-BACKEND_LIB="$ROOT_DIR/lib/container-backend.sh"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [[ ! -f "$BACKEND_LIB" ]]; then
-  echo "ERROR: Backend library not found at $BACKEND_LIB"
-  exit 1
-fi
-
-source "$BACKEND_LIB"
+source "$ROOT_DIR/lib/common.sh"
+source "$ROOT_DIR/lib/container-backend.sh"
 
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 
-if [[ "$ACTIVE_BACKEND" == "apple" ]]; then
-  backend_system_start 2>/dev/null || true
-else
-  if ! backend_system_start 2>/dev/null; then
-    echo "ERROR: Docker-compatible runtime is not reachable."
-    echo "Start Docker Desktop or OrbStack and retry."
-    exit 1
-  fi
-fi
+case "$ACTIVE_BACKEND" in
+  apple)
+    backend_system_start 2>/dev/null || true
+    ;;
+  docker|orbstack)
+    if ! backend_system_start 2>/dev/null; then
+      echo "ERROR: Docker-compatible runtime is not reachable."
+      echo "Start Docker Desktop or OrbStack and retry."
+      exit 1
+    fi
+    ;;
+  podman)
+    if ! backend_system_start 2>/dev/null; then
+      echo "ERROR: Podman runtime is not reachable."
+      echo "Start Podman (for macOS: podman machine start) and retry."
+      exit 1
+    fi
+    ;;
+esac
 
 is_managed_repo() {
   local repo="$1"
@@ -57,7 +60,8 @@ is_managed_combined_repo() {
   [[ "$repo" == "dev-base" || "$repo" == "dev-nodejs" || "$repo" == "dev-golang" ]] && return 1
 
   local slug="${repo#dev-}"
-  local -a parts=("${(@s:-:)slug}")
+  local -a parts=()
+  IFS='-' read -r -a parts <<< "$slug"
   [[ ${#parts[@]} -ge 2 ]] || return 1
 
   for part in "${parts[@]}"; do
@@ -73,22 +77,19 @@ is_managed_combined_repo() {
   return 0
 }
 
-typeset -A MANAGED_REPOS
+declare -A MANAGED_REPOS=()
 add_managed_repo() {
   local repo="$1"
-  [[ -z "$repo" ]] && return
-  [[ "$repo" == "<none>" ]] && return
+  [[ -z "$repo" || "$repo" == "<none>" ]] && return
   if is_managed_repo "$repo"; then
-    MANAGED_REPOS[$repo]=1
+    MANAGED_REPOS["$repo"]=1
   fi
 }
 
-# Standard image repos built by setup/rebuild-image.
 add_managed_repo "dev-base"
 add_managed_repo "dev-nodejs"
 add_managed_repo "dev-golang"
 
-# Add per-project image repos for combined or custom dev-* image names.
 for config_file in "$ROOT_DIR"/projects/*/config; do
   source "$config_file"
   image_ref="${CONTAINER_IMAGE:-}"
@@ -96,15 +97,13 @@ for config_file in "$ROOT_DIR"/projects/*/config; do
   add_managed_repo "${image_ref%%:*}"
 done
 
-# Add generated combined runtime repos from Containerfiles/generated.
 for generated_file in "$ROOT_DIR"/Containerfiles/generated/Containerfile.*; do
-  slug="${generated_file:t}"
+  slug="$(basename "$generated_file")"
   slug="${slug#Containerfile.}"
   [[ -z "$slug" ]] && continue
   add_managed_repo "dev-$slug"
 done
 
-# Fallback: include image repos that match known combined runtime naming.
 while IFS=$'\t' read -r repo tag image_id; do
   [[ -z "$repo" || "$repo" == "<none>" ]] && continue
   if is_managed_combined_repo "$repo"; then
@@ -117,8 +116,8 @@ if [[ ${#MANAGED_REPOS[@]} -eq 0 ]]; then
   exit 0
 fi
 
-typeset -a REMOVE_REFS
-typeset -A SEEN_REFS
+REMOVE_REFS=()
+declare -A SEEN_REFS=()
 while IFS=$'\t' read -r repo tag image_id; do
   [[ -z "$repo" || -z "$tag" || -z "$image_id" ]] && continue
   [[ -z "${MANAGED_REPOS[$repo]-}" ]] && continue
@@ -127,7 +126,7 @@ while IFS=$'\t' read -r repo tag image_id; do
     ref="$repo:$tag"
     if [[ -z "${SEEN_REFS[$ref]-}" ]]; then
       REMOVE_REFS+=("$ref")
-      SEEN_REFS[$ref]=1
+      SEEN_REFS["$ref"]=1
     fi
   fi
 done < <(backend_list_images)
@@ -137,10 +136,15 @@ if [[ ${#REMOVE_REFS[@]} -eq 0 ]]; then
   exit 0
 fi
 
-refs=("${(@o)REMOVE_REFS}")
+IFS=$'\n' refs=($(printf '%s\n' "${REMOVE_REFS[@]}" | sort))
+unset IFS
+
+managed_repo_names=("${!MANAGED_REPOS[@]}")
+IFS=$'\n' managed_repo_names=($(printf '%s\n' "${managed_repo_names[@]}" | sort))
+unset IFS
 
 echo "Active backend: $ACTIVE_BACKEND"
-echo "Managed repos: ${(@k)MANAGED_REPOS}"
+echo "Managed repos: ${managed_repo_names[*]}"
 echo ""
 echo "The following managed image tags will be removed (latest tags are preserved):"
 for ref in "${refs[@]}"; do

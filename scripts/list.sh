@@ -1,22 +1,24 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 set -euo pipefail
-setopt null_glob
+shopt -s nullglob
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
-BACKEND_LIB="$ROOT_DIR/lib/container-backend.sh"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [[ ! -f "$BACKEND_LIB" ]]; then
-  echo "ERROR: Backend library not found at $BACKEND_LIB"
-  exit 1
-fi
+source "$ROOT_DIR/lib/common.sh"
+source "$ROOT_DIR/lib/container-backend.sh"
 
-source "$BACKEND_LIB"
 backend_use "${CONTAINER_BACKEND:-}"
 DEFAULT_BACKEND="$(backend_name)"
 
 PROJECTS=("$ROOT_DIR"/projects/*/config)
-
 if [[ ${#PROJECTS[@]} -eq 0 ]]; then
   echo "No projects found."
   exit 0
@@ -26,7 +28,7 @@ printf "%-24s %-12s %s\n" "NAME" "STATUS" "TYPE"
 
 for config_file in "${PROJECTS[@]}"; do
   source "$config_file"
-  project="${CONTAINER_PROJECT}"
+  project="${CONTAINER_PROJECT:-$(basename "$(dirname "$config_file")")}"
   project_backend="${CONTAINER_BACKEND:-$DEFAULT_BACKEND}"
 
   if backend_use "$project_backend" 2>/dev/null; then
@@ -41,5 +43,6 @@ for config_file in "${PROJECTS[@]}"; do
     state="unknown"
   fi
 
-  printf "%-24s %-12s %s\n" "$project" "$state" "$CONTAINER_TYPE"
+  type_value="${CONTAINER_TYPE:-${CONTAINER_RUNTIME_TYPES:-unknown}}"
+  printf "%-24s %-12s %s\n" "$project" "$state" "$type_value"
 done

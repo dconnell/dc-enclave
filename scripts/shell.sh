@@ -1,19 +1,12 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # =============================================================================
-# shell.sh — Open an interactive shell in a dev container
-#
-# Usage:
-#   shell.sh <project-name>
-#   shell.sh <project-name> <command>   # run a specific command instead
-#
-# Examples:
-#   shell.sh myapp-frontend
-#   shell.sh myapp-backend "go test ./..."
+# shell.sh - Open an interactive shell in a dev container
 # =============================================================================
 set -euo pipefail
 
 PROJECT="${1:?Usage: shell.sh <project-name> [command]}"
 shift
+
 HAS_COMMAND=false
 COMMAND=""
 if [[ $# -gt 0 ]]; then
@@ -21,18 +14,20 @@ if [[ $# -gt 0 ]]; then
   COMMAND="$*"
 fi
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+source "$ROOT_DIR/lib/common.sh"
+source "$ROOT_DIR/lib/container-backend.sh"
+
 CONFIG="$ROOT_DIR/projects/$PROJECT/config"
-BACKEND_LIB="$ROOT_DIR/lib/container-backend.sh"
-
-if [[ ! -f "$BACKEND_LIB" ]]; then
-  echo "ERROR: Backend library not found at $BACKEND_LIB"
-  exit 1
-fi
-
-source "$BACKEND_LIB"
-
 if [[ ! -f "$CONFIG" ]]; then
   echo "ERROR: No config for '$PROJECT'. Run: dc new $PROJECT <type>"
   exit 1
@@ -42,15 +37,13 @@ source "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 
-# Start if not running
 if ! backend_is_running "$PROJECT"; then
-  echo "  Container '$PROJECT' is not running — starting it..."
+  echo "  Container '$PROJECT' is not running - starting it..."
   "$SCRIPT_DIR/start.sh" "$PROJECT"
 fi
 
-# Load GITHUB_TOKEN from secrets into the exec environment
 GITHUB_TOKEN=""
-if [[ -f "$TOKEN_FILE" ]]; then
+if [[ -n "${TOKEN_FILE:-}" ]] && [[ -f "$TOKEN_FILE" ]]; then
   GITHUB_TOKEN="$(awk '
     $0 !~ /^#/ &&
     $0 !~ /^ghp_REPLACE_ME/ &&
@@ -65,8 +58,12 @@ fi
 
 echo "  Entering container: $PROJECT"
 echo "  Backend: $ACTIVE_BACKEND"
-echo "  Workspace: /workspace (→ $REPOS_DIR on host)"
-[[ -n "$GITHUB_TOKEN" ]] && echo "  GITHUB_TOKEN: set" || echo "  GITHUB_TOKEN: NOT SET (edit $TOKEN_FILE)"
+echo "  Workspace: /workspace (-> $REPOS_DIR on host)"
+if [[ -n "$GITHUB_TOKEN" ]]; then
+  echo "  GITHUB_TOKEN: set"
+else
+  echo "  GITHUB_TOKEN: NOT SET (edit ${TOKEN_FILE:-token file})"
+fi
 echo ""
 
 if $HAS_COMMAND; then

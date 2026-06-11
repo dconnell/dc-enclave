@@ -1,33 +1,49 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 # =============================================================================
-# compose-containerfile.sh — Compose runtime Containerfiles plus optional user
+# compose-containerfile.sh - Compose runtime Containerfiles plus optional user
 # overlay fragments into one generated Containerfile.
-#
-# Usage:
-#   compose-containerfile.sh <output-file> <runtime-types-csv> [overlay-file ...]
-#
-# Example:
-#   compose-containerfile.sh \
-#     Containerfiles/generated/Containerfile.myproj \
-#     nodejs,golang \
-#     /Users/you/.config/dev-containers/Containerfile.username
 # =============================================================================
 set -euo pipefail
+
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+source "$ROOT_DIR/lib/common.sh"
 
 if [[ $# -lt 2 ]]; then
   echo "Usage: compose-containerfile.sh <output-file> <runtime-types-csv> [overlay-file ...]"
   exit 1
 fi
 
-OUTPUT_FILE="${1:A}"
+OUTPUT_FILE_RAW="$1"
 RUNTIME_INPUT="$2"
 shift 2
 
-SCRIPT_DIR="${0:A:h}"
-ROOT_DIR="${SCRIPT_DIR:h}"
+if [[ "$OUTPUT_FILE_RAW" == /* ]]; then
+  OUTPUT_FILE="$OUTPUT_FILE_RAW"
+else
+  OUTPUT_FILE="$PWD/$OUTPUT_FILE_RAW"
+fi
+
+OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
+mkdir -p "$OUTPUT_DIR"
+OUTPUT_DIR="$(cd -P "$OUTPUT_DIR" && pwd)"
+OUTPUT_FILE="$OUTPUT_DIR/$(basename "$OUTPUT_FILE")"
 
 TYPE_ORDER=(nodejs golang)
-typeset -A TYPE_SELECTED
+declare -A TYPE_SELECTED=()
+
+display_name() {
+  local file_path="$1"
+  printf '%s' "$(basename "$file_path")"
+}
 
 emit_fragment() {
   local fragment_file="$1"
@@ -53,12 +69,12 @@ validate_overlay_file() {
   fi
 }
 
-RAW_TYPES=("${(@s:,:)RUNTIME_INPUT}")
+IFS=',' read -r -a RAW_TYPES <<< "$RUNTIME_INPUT"
 for raw_type in "${RAW_TYPES[@]}"; do
   normalized_type="${raw_type//[[:space:]]/}"
   case "$normalized_type" in
     nodejs|golang)
-      TYPE_SELECTED[$normalized_type]=1
+      TYPE_SELECTED["$normalized_type"]=1
       ;;
     "")
       ;;
@@ -84,7 +100,12 @@ fi
 OVERLAY_FILES=()
 for overlay_input in "$@"; do
   [[ -z "$overlay_input" ]] && continue
-  overlay_file="${overlay_input:A}"
+
+  overlay_file="$(dc_resolve_path "$overlay_input")" || {
+    echo "ERROR: Overlay path could not be resolved: $overlay_input"
+    exit 1
+  }
+
   if [[ ! -f "$overlay_file" ]]; then
     echo "ERROR: Overlay Containerfile not found: $overlay_file"
     exit 1
@@ -93,8 +114,6 @@ for overlay_input in "$@"; do
   validate_overlay_file "$overlay_file"
   OVERLAY_FILES+=("$overlay_file")
 done
-
-mkdir -p "${OUTPUT_FILE:h}"
 
 {
   echo "FROM dev-base:latest"
@@ -110,7 +129,7 @@ mkdir -p "${OUTPUT_FILE:h}"
   done
 
   for overlay_file in "${OVERLAY_FILES[@]}"; do
-    emit_fragment "$overlay_file" "overlay:${overlay_file:t}"
+    emit_fragment "$overlay_file" "overlay:$(display_name "$overlay_file")"
   done
 
   echo ""
