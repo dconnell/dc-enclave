@@ -26,14 +26,22 @@ run_check() {
 
 run_check "dc help" "$DC_BIN" help
 
-if "$DC_BIN" list >/dev/null 2>&1; then
+if [[ -n "${CONTAINER_BACKEND:-}" ]]; then
   echo "==> backend-dependent checks"
-  echo "  ✓ backend reachable"
+  echo "  backend override: $CONTAINER_BACKEND"
+  run_check "dc list" "$DC_BIN" list
   run_check "dc status" "$DC_BIN" status
   run_check "dc clean --dry-run" "$DC_BIN" clean --dry-run
 else
-  echo "==> backend-dependent checks"
-  echo "  - skipped (no supported backend detected or runtime unavailable)"
+  if "$DC_BIN" list >/dev/null 2>&1; then
+    echo "==> backend-dependent checks"
+    echo "  ✓ backend reachable"
+    run_check "dc status" "$DC_BIN" status
+    run_check "dc clean --dry-run" "$DC_BIN" clean --dry-run
+  else
+    echo "==> backend-dependent checks"
+    echo "  - skipped (no supported backend detected or runtime unavailable)"
+  fi
 fi
 
 echo ""

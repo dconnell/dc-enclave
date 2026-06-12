@@ -43,6 +43,17 @@ case "$ACTIVE_BACKEND" in
     echo "==> Starting apple/container system daemon..."
     backend_system_start 2>/dev/null && echo "✓ Daemon started" || echo "  (already running or not needed)"
     ;;
+  colima)
+    echo "==> Checking Colima runtime availability..."
+    if backend_system_start; then
+      echo "✓ Colima Docker runtime is reachable"
+    else
+      echo "✗ ERROR: Colima runtime is not reachable."
+      echo "  Ensure Colima uses Docker runtime and Docker context points to Colima."
+      echo "  Try: colima start --runtime docker && docker context use colima"
+      exit 1
+    fi
+    ;;
   docker|orbstack)
     echo "==> Checking Docker-compatible runtime availability..."
     if backend_system_start 2>/dev/null; then

@@ -33,6 +33,26 @@ _start_container() {
   local active_backend=""
   active_backend="$(backend_name)"
 
+  if ! backend_system_start >/dev/null 2>&1; then
+    echo "  ✗ $project - backend unavailable ($active_backend)"
+    case "$active_backend" in
+      colima)
+        echo "    Ensure Colima uses Docker runtime and Docker context points to Colima."
+        echo "    Try: colima start --runtime docker && docker context use colima"
+        ;;
+      docker|orbstack)
+        echo "    Start Docker Desktop or OrbStack and retry."
+        ;;
+      podman)
+        echo "    Start Podman (for macOS: podman machine start) and retry."
+        ;;
+      apple)
+        echo "    Start apple/container daemon and retry."
+        ;;
+    esac
+    return 1
+  fi
+
   if backend_is_running "$project"; then
     echo "  ✓ $project - already running ($active_backend)"
     return 0

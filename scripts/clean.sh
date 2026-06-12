@@ -33,6 +33,14 @@ case "$ACTIVE_BACKEND" in
   apple)
     backend_system_start 2>/dev/null || true
     ;;
+  colima)
+    if ! backend_system_start; then
+      echo "ERROR: Colima runtime is not reachable."
+      echo "Ensure Colima uses Docker runtime and Docker context points to Colima."
+      echo "Try: colima start --runtime docker && docker context use colima"
+      exit 1
+    fi
+    ;;
   docker|orbstack)
     if ! backend_system_start 2>/dev/null; then
       echo "ERROR: Docker-compatible runtime is not reachable."

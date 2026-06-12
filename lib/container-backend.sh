@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared backend abstraction for apple/container, Docker, OrbStack, and Podman.
+# Shared backend abstraction for apple/container, Docker, OrbStack, Colima, and Podman.
 
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
   _dc_backend_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,6 +34,9 @@ _backend_normalize() {
     orbstack|orb)
       printf '%s\n' "orbstack"
       ;;
+    colima)
+      printf '%s\n' "colima"
+      ;;
     podman|podman-desktop)
       printf '%s\n' "podman"
       ;;
@@ -53,6 +56,9 @@ _backend_cli_available() {
     docker|orbstack)
       command -v docker >/dev/null 2>&1
       ;;
+    colima)
+      _backend_colima_cli_available && command -v docker >/dev/null 2>&1
+      ;;
     podman)
       command -v podman >/dev/null 2>&1
       ;;
@@ -62,13 +68,80 @@ _backend_cli_available() {
   esac
 }
 
+_backend_colima_cli_available() {
+  command -v colima >/dev/null 2>&1
+}
+
+_backend_docker_context_name() {
+  docker context show 2>/dev/null || true
+}
+
+_backend_docker_context_host() {
+  local context="$1"
+  docker context inspect "$context" --format '{{ (index .Endpoints "docker").Host }}' 2>/dev/null || true
+}
+
+_backend_context_is_orbstack() {
+  local context="$1"
+  [[ "${context,,}" == *"orbstack"* ]]
+}
+
+_backend_context_is_colima() {
+  local context="$1"
+  local context_lower="${context,,}"
+
+  if [[ "$context_lower" == *"colima"* ]]; then
+    return 0
+  fi
+
+  if [[ -z "$context" ]]; then
+    return 1
+  fi
+
+  local docker_host=""
+  docker_host="$(_backend_docker_context_host "$context")"
+  docker_host="${docker_host,,}"
+
+  [[ "$docker_host" == *"/.colima/"* || "$docker_host" == *"colima"* ]]
+}
+
+_backend_colima_context_active() {
+  local context=""
+  context="$(_backend_docker_context_name)"
+  _backend_context_is_colima "$context"
+}
+
+_backend_colima_runtime() {
+  local status=""
+  status="$(colima status 2>/dev/null || true)"
+  [[ -n "$status" ]] || return 1
+
+  local runtime=""
+  runtime="$(printf '%s\n' "$status" | awk -F':' '
+    tolower($1) ~ /runtime/ {
+      value=$2
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      print tolower(value)
+      exit
+    }
+  ')"
+
+  [[ -n "$runtime" ]] || return 1
+  printf '%s\n' "$runtime"
+}
+
 _backend_detect_auto() {
   local docker_context=""
 
   if command -v docker >/dev/null 2>&1; then
-    docker_context="$(docker context show 2>/dev/null || true)"
-    if [[ "${docker_context,,}" == *"orbstack"* ]]; then
+    docker_context="$(_backend_docker_context_name)"
+    if _backend_context_is_orbstack "$docker_context"; then
       printf '%s\n' "orbstack"
+      return 0
+    fi
+
+    if _backend_context_is_colima "$docker_context"; then
+      printf '%s\n' "colima"
       return 0
     fi
   fi
@@ -89,7 +162,7 @@ _backend_detect_auto() {
   fi
 
   echo "ERROR: No supported container backend found." >&2
-  echo "  Install apple/container, Docker Desktop, OrbStack, or Podman." >&2
+  echo "  Install apple/container, Docker Desktop, OrbStack, Colima, or Podman." >&2
   return 1
 }
 
@@ -100,7 +173,7 @@ _backend_set_cli() {
     apple)
       _DC_CLI="container"
       ;;
-    docker|orbstack)
+    docker|orbstack|colima)
       _DC_CLI="docker"
       ;;
     podman)
@@ -123,10 +196,51 @@ _backend_warn_missing_cli() {
     docker|orbstack)
       echo "  Missing command: docker" >&2
       ;;
+    colima)
+      if ! _backend_colima_cli_available; then
+        echo "  Missing command: colima" >&2
+      fi
+      if ! command -v docker >/dev/null 2>&1; then
+        echo "  Missing command: docker" >&2
+      fi
+      echo "  Install on macOS/Linux (Homebrew): brew install colima docker" >&2
+      ;;
     podman)
       echo "  Missing command: podman" >&2
       ;;
   esac
+}
+
+_backend_require_colima_context() {
+  local context=""
+  context="$(_backend_docker_context_name)"
+
+  if _backend_context_is_colima "$context"; then
+    return 0
+  fi
+
+  echo "ERROR: Colima backend requires an active Colima Docker context." >&2
+  if [[ -n "$context" ]]; then
+    echo "  Current Docker context: $context" >&2
+  fi
+  echo "  Docker context is managed by Docker CLI configuration." >&2
+  echo "  Run: colima start" >&2
+  echo "  Or: docker context use colima" >&2
+  return 1
+}
+
+_backend_require_colima_docker_runtime() {
+  local runtime=""
+  runtime="$(_backend_colima_runtime 2>/dev/null || true)"
+
+  if [[ -n "$runtime" && "$runtime" != "docker" ]]; then
+    echo "ERROR: Colima backend requires Colima runtime 'docker'." >&2
+    echo "  Current Colima runtime: $runtime" >&2
+    echo "  Recreate/start with Docker runtime: colima stop && colima start --runtime docker" >&2
+    return 1
+  fi
+
+  return 0
 }
 
 _backend_podman_supports_host_gateway() {
@@ -151,7 +265,7 @@ backend_use() {
   if [[ -n "$requested" ]]; then
     if ! selected="$(_backend_normalize "$requested")"; then
       echo "ERROR: Unsupported CONTAINER_BACKEND '$requested'." >&2
-      echo "  Supported values: apple, docker, orbstack, podman" >&2
+      echo "  Supported values: apple, colima, docker, orbstack, podman" >&2
       return 1
     fi
   else
@@ -185,6 +299,10 @@ backend_cli() {
     _backend_set_cli "$DEV_CONTAINERS_BACKEND" || return 1
   fi
 
+  if [[ "$DEV_CONTAINERS_BACKEND" == "colima" ]]; then
+    _backend_require_colima_context || return 1
+  fi
+
   printf '%s\n' "$_DC_CLI"
 }
 
@@ -194,7 +312,7 @@ backend_is_docker_compatible() {
     backend="$(backend_name)" || return 1
   fi
 
-  [[ "$backend" == "docker" || "$backend" == "orbstack" || "$backend" == "podman" ]]
+  [[ "$backend" == "docker" || "$backend" == "orbstack" || "$backend" == "colima" || "$backend" == "podman" ]]
 }
 
 backend_version() {
@@ -204,6 +322,16 @@ backend_version() {
       ;;
     docker|orbstack)
       docker --version 2>/dev/null || echo "docker version unknown"
+      ;;
+    colima)
+      local colima_version=""
+      local docker_version=""
+
+      colima_version="$(colima version 2>/dev/null | awk 'NR == 1 { print; exit }')"
+      [[ -n "$colima_version" ]] || colima_version="colima version unknown"
+      docker_version="$(docker --version 2>/dev/null || echo "docker version unknown")"
+
+      printf '%s (%s)\n' "$colima_version" "$docker_version"
       ;;
     podman)
       podman --version 2>/dev/null || echo "podman version unknown"
@@ -218,6 +346,30 @@ backend_system_start() {
       ;;
     docker|orbstack)
       docker info >/dev/null
+      ;;
+    colima)
+      if ! _backend_colima_cli_available; then
+        echo "ERROR: Colima backend selected but 'colima' command is unavailable." >&2
+        echo "  Install: brew install colima docker" >&2
+        return 1
+      fi
+
+      if ! _backend_colima_context_active || ! docker info >/dev/null 2>&1; then
+        colima start >/dev/null 2>&1 || true
+      fi
+
+      _backend_require_colima_context || return 1
+
+      if ! docker info >/dev/null 2>&1; then
+        if ! _backend_require_colima_docker_runtime; then
+          return 1
+        fi
+        echo "ERROR: Colima is not reachable via Docker CLI." >&2
+        echo "  Try: colima start" >&2
+        return 1
+      fi
+
+      _backend_require_colima_docker_runtime || return 1
       ;;
     podman)
       if podman info >/dev/null 2>&1; then
@@ -247,6 +399,12 @@ backend_system_info() {
     docker|orbstack)
       docker info
       ;;
+    colima)
+      colima status
+      echo "---"
+      _backend_require_colima_context || return 1
+      docker info
+      ;;
     podman)
       podman info
       ;;
@@ -263,7 +421,7 @@ backend_build_image() {
     apple)
       container build --tag "$tag" --file "$file" "$@" "$context"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" build --tag "$tag" --file "$file" "$@" "$context"
       ;;
   esac
@@ -280,7 +438,7 @@ backend_list_images() {
         container image ls 2>/dev/null | awk 'NR > 1 {print $1 "\t" $2 "\t" $3}'
       fi
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" image ls --format '{{.Repository}}\t{{.Tag}}\t{{.ID}}'
       ;;
   esac
@@ -293,7 +451,7 @@ backend_remove_image() {
     apple)
       container image rm "$image_ref" >/dev/null 2>&1 || container rmi "$image_ref" >/dev/null 2>&1
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" image rm "$image_ref" >/dev/null
       ;;
   esac
@@ -304,7 +462,7 @@ backend_list_running() {
     apple)
       container ps
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" ps
       ;;
   esac
@@ -315,7 +473,7 @@ backend_list_all() {
     apple)
       container ps -a
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" ps -a
       ;;
   esac
@@ -328,7 +486,7 @@ backend_exists() {
     apple)
       container ps -a 2>/dev/null | awk '{print $1}' | grep -Fxq "$name"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" ps -a --format '{{.Names}}' 2>/dev/null | grep -Fxq "$name"
       ;;
   esac
@@ -341,7 +499,7 @@ backend_is_running() {
     apple)
       container ps 2>/dev/null | awk '{print $1}' | grep -Fxq "$name"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" ps --format '{{.Names}}' 2>/dev/null | grep -Fxq "$name"
       ;;
   esac
@@ -369,7 +527,7 @@ backend_create() {
     apple)
       container create --name "$name" "${create_args[@]}" "$image"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" create --name "$name" "${create_args[@]}" "$image" >/dev/null
       ;;
   esac
@@ -382,7 +540,7 @@ backend_start() {
     apple)
       container start "$name"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" start "$name" >/dev/null
       ;;
   esac
@@ -395,7 +553,7 @@ backend_stop() {
     apple)
       container stop "$name"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" stop "$name" >/dev/null
       ;;
   esac
@@ -408,7 +566,7 @@ backend_delete() {
     apple)
       container delete "$name"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" rm -f "$name" >/dev/null
       ;;
   esac
@@ -422,7 +580,7 @@ backend_exec() {
     apple)
       container exec "$name" "$@"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" exec "$name" "$@"
       ;;
   esac
@@ -436,7 +594,7 @@ backend_exec_stdin() {
     apple)
       container exec -i "$name" "$@"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" exec -i "$name" "$@"
       ;;
   esac
@@ -462,7 +620,7 @@ backend_exec_interactive() {
     apple)
       container exec -it "${exec_args[@]}" "$name" "${command[@]}"
       ;;
-    docker|orbstack|podman)
+    docker|orbstack|colima|podman)
       "$(backend_cli)" exec -it "${exec_args[@]}" "$name" "${command[@]}"
       ;;
   esac

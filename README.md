@@ -5,6 +5,7 @@ Isolated development containers for macOS, Linux, and WSL2 with one shared Bash 
 - apple/container (macOS)
 - Docker Desktop (macOS, Linux, WSL2)
 - OrbStack (macOS)
+- Colima (macOS, Linux)
 - Podman (macOS, Linux, WSL2)
 
 ## Requirements
@@ -20,6 +21,12 @@ Podman support policy:
 - dev-containers supports the latest stable Podman release only
 - tested baseline at migration: Podman 5.2.x
 - if you hit Podman behavior differences on older releases, upgrade Podman first
+
+Colima support policy:
+
+- dev-containers supports the latest stable Colima release only
+- use Colima with Docker runtime (`colima start --runtime docker`)
+- if Colima is running with a non-Docker runtime (for example containerd), switch back to Docker runtime before using dev-containers
 
 ## Isolation design
 
@@ -74,6 +81,7 @@ Preferred day-to-day tools (for example `tree`, `rg`, `fzf`, `psql`, custom CLIs
 Set CONTAINER_BACKEND to one of:
 
 - apple
+- colima
 - docker
 - orbstack
 - podman
@@ -81,13 +89,24 @@ Set CONTAINER_BACKEND to one of:
 If not set, detection order is:
 
 1. docker context name contains orbstack
-2. apple/container CLI available
-3. docker CLI available
-4. podman CLI available
+2. docker context points to Colima
+3. apple/container CLI available
+4. docker CLI available
+5. podman CLI available
+
+Docker context notes:
+
+- Docker context is a Docker CLI concept (`docker context ...`), not a dev-containers-specific setting
+- dev-containers reads the active context to distinguish OrbStack/Colima from generic Docker
+- when forcing `CONTAINER_BACKEND=colima`, dev-containers requires a Colima Docker context and will fail fast if the active context is not Colima
 
 Selected backend is stored per project in `~/.config/dev-containers/<name>/config`.
 
 ### Platform-specific notes
+
+**macOS + Colima**: Install with `brew install colima docker`, then run `colima start --runtime docker`. Colima usually auto-activates its Docker context; if needed, run `docker context use colima`.
+
+**Linux + Colima**: Install Colima and Docker CLI, then run `colima start --runtime docker`. Ensure virtualization support is available (for example KVM access where required by your distro setup).
 
 **macOS + Podman**: Podman runs in a VM on macOS. Run `podman machine start` before using dev-containers, or let `setup.sh` start it for you.
 
@@ -148,6 +167,7 @@ macOS users: if version is 3.x, run `brew install bash`.
 - apple/container (macOS), or
 - Docker Desktop (macOS, Linux, WSL2), or
 - OrbStack (macOS), or
+- Colima (macOS, Linux), or
 - Podman (macOS, Linux, WSL2)
 
 3. Initialize repository and aliases:
@@ -169,6 +189,7 @@ Optional: force backend during setup:
 
 ```
 CONTAINER_BACKEND=podman scripts/setup.sh
+CONTAINER_BACKEND=colima scripts/setup.sh
 ```
 
 ## Setup of a new repo
@@ -256,7 +277,7 @@ Single-container multi-repo workspace:
 
 ## VS Code behavior by backend
 
-docker/orbstack/podman backends:
+docker/orbstack/colima/podman backends:
 
 - dc new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json
 - For multi-runtime and/or overlay projects, it points to a generated composed Containerfile
@@ -296,7 +317,7 @@ dc stop myapp-monorepo
 
 ## Daily usage example with VS Code Dev Containers
 
-For docker/orbstack/podman backends:
+For docker/orbstack/colima/podman backends:
 
 1. Open project folder:
 
@@ -362,7 +383,7 @@ dc rebuild myapp-monorepo
 
 Notes:
 
-- `dc rebuild-image` is backend-agnostic (apple/docker/orbstack/podman via `CONTAINER_BACKEND` detection/override).
+- `dc rebuild-image` is backend-agnostic (apple/colima/docker/orbstack/podman via `CONTAINER_BACKEND` detection/override).
 - It rebuilds shared base/runtime images and legacy shared combined runtime images.
 - Project-scoped overlay images are rebuilt by `dc rebuild <project>` so each project uses current overlay files.
 
@@ -382,7 +403,7 @@ dc clean --dry-run
 
 Safety and scope:
 
-- `dc clean` is backend-agnostic and uses the active backend (apple/docker/orbstack/podman).
+- `dc clean` is backend-agnostic and uses the active backend (apple/colima/docker/orbstack/podman).
 - It only targets managed image repositories that match the dev-container naming pattern (`dev-*`) discovered from built-ins and `~/.config/dev-containers/*/config`.
 - It preserves all `:latest` tags and removes only other tags for those managed repos.
 - It does not remove unrelated images (for example VS Code `vsc-*` images).
@@ -448,14 +469,28 @@ brew install bash
 
 No backend detected:
 
-- install apple/container, Docker Desktop, OrbStack, or Podman
+- install apple/container, Docker Desktop, OrbStack, Colima, or Podman
 - rerun scripts/setup.sh
 
 Need specific backend:
 
 ```
 CONTAINER_BACKEND=apple scripts/setup.sh
+CONTAINER_BACKEND=colima scripts/setup.sh
 CONTAINER_BACKEND=podman dc new myapp nodejs 3000:3000
+```
+
+Colima backend issues:
+
+```
+# start Colima with the required runtime
+colima start --runtime docker
+
+# ensure Docker CLI is using Colima context
+docker context use colima
+
+# verify status and runtime
+colima status
 ```
 
 devcontainer.json or settings.json not overwritten:
@@ -491,13 +526,14 @@ Optional backend override:
 
 ```
 CONTAINER_BACKEND=podman tests/smoke.sh
+CONTAINER_BACKEND=colima tests/smoke.sh
 ```
 
 ## Connecting to host PostgreSQL securely
 
 You do not need SSH tunneling for normal local development. A normal connection string is enough.
 
-For docker/orbstack backends, use `host.docker.internal` as host:
+For docker/orbstack/colima backends, use `host.docker.internal` as host:
 
 ```
 postgresql://<user>:<password>@host.docker.internal:5432/<db>
