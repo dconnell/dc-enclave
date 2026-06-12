@@ -36,7 +36,7 @@ echo "Containers (active backend):"
 backend_list_all 2>/dev/null || echo "  (none)"
 echo ""
 
-PROJECTS=("$ROOT_DIR"/projects/*/config)
+PROJECTS=("$HOME"/.config/dev-containers/*/config)
 if [[ ${#PROJECTS[@]} -gt 0 ]]; then
   echo "Project details:"
   for config_file in "${PROJECTS[@]}"; do

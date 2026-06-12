@@ -18,7 +18,7 @@ source "$ROOT_DIR/lib/container-backend.sh"
 backend_use "${CONTAINER_BACKEND:-}"
 DEFAULT_BACKEND="$(backend_name)"
 
-PROJECTS=("$ROOT_DIR"/projects/*/config)
+PROJECTS=("$HOME"/.config/dev-containers/*/config)
 if [[ ${#PROJECTS[@]} -eq 0 ]]; then
   echo "No projects found."
   exit 0

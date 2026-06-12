@@ -87,7 +87,7 @@ target_affects_types() {
 }
 
 rebuild_affected_combined_images() {
-  local -a project_configs=("$ROOT_DIR"/projects/*/config)
+  local -a project_configs=("$HOME"/.config/dev-containers/*/config)
   local rebuilt_count=0
   local skipped_backend=0
   local skipped_project_mode=0

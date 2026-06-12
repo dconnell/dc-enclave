@@ -90,7 +90,7 @@ add_managed_repo "dev-base"
 add_managed_repo "dev-nodejs"
 add_managed_repo "dev-golang"
 
-for config_file in "$ROOT_DIR"/projects/*/config; do
+for config_file in "$HOME"/.config/dev-containers/*/config; do
   source "$config_file"
   image_ref="${CONTAINER_IMAGE:-}"
   [[ -z "$image_ref" ]] && continue

@@ -57,14 +57,30 @@ case "$ACTIVE_BACKEND" in
     ;;
 esac
 
-# Create host directories.
+REPOS_DIR_PROMPT="${DC_REPOS_DIR:-$HOME/repos}"
+echo ""
+echo "==> Repos directory"
+echo "  Current: $REPOS_DIR_PROMPT"
+read -r -p "  Enter base repos directory [$REPOS_DIR_PROMPT]: " repos_dir_input
+if [[ -n "$repos_dir_input" ]]; then
+  REPOS_DIR_PROMPT="$repos_dir_input"
+fi
+
+if [[ "$REPOS_DIR_PROMPT" == "~" || "$REPOS_DIR_PROMPT" == "~/"* ]]; then
+  REPOS_DIR_PROMPT="$HOME${REPOS_DIR_PROMPT#\~}"
+elif [[ "$REPOS_DIR_PROMPT" != /* ]]; then
+  REPOS_DIR_PROMPT="$PWD/$REPOS_DIR_PROMPT"
+fi
+
+mkdir -p "$REPOS_DIR_PROMPT"
+REPOS_DIR_PROMPT="$(cd -P "$REPOS_DIR_PROMPT" && pwd)"
+echo "  ✓ $REPOS_DIR_PROMPT"
+
 echo ""
 echo "==> Creating host directories..."
 
 DIRS=(
-  "$HOME/repos"
   "$HOME/.config/dev-containers"
-  "$ROOT_DIR/projects"
 )
 
 for dir in "${DIRS[@]}"; do
@@ -154,6 +170,31 @@ if ! grep -Fq "$COMPLETION_LINE" "$PROFILE_FILE"; then
     echo "$COMPLETION_LINE"
   } >> "$PROFILE_FILE"
   echo "✓ Added dc completion to $PROFILE_FILE"
+fi
+
+REPOS_DIR_EXPORT_LINE="export DC_REPOS_DIR=\"$REPOS_DIR_PROMPT\""
+if grep -Eq "^(export[[:space:]]+)?DC_REPOS_DIR=" "$PROFILE_FILE" 2>/dev/null; then
+  tmp_profile="$(mktemp)"
+  awk -v line="$REPOS_DIR_EXPORT_LINE" '
+    /^(export[[:space:]]+)?DC_REPOS_DIR=/ {
+      if (!updated) {
+        print line
+        updated=1
+      }
+      next
+    }
+    { print }
+  ' "$PROFILE_FILE" > "$tmp_profile"
+  cat "$tmp_profile" > "$PROFILE_FILE"
+  rm -f "$tmp_profile"
+  echo "✓ Updated DC_REPOS_DIR in $PROFILE_FILE"
+else
+  {
+    echo ""
+    echo "# dev-containers repos directory"
+    echo "$REPOS_DIR_EXPORT_LINE"
+  } >> "$PROFILE_FILE"
+  echo "✓ Added DC_REPOS_DIR to $PROFILE_FILE"
 fi
 
 echo ""

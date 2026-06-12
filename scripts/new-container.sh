@@ -16,14 +16,23 @@ fi
 
 PORTS=()
 EXTRA_OVERLAYS=()
+REPO_PATH_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --overlay-containerfile)
-      if [[ $# -lt 2 ]]; then
+      if [[ $# -lt 2 || "$2" == --* ]]; then
         echo "ERROR: --overlay-containerfile requires a file path argument"
         exit 1
       fi
       EXTRA_OVERLAYS+=("$2")
+      shift 2
+      ;;
+    --repo-path)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        echo "ERROR: --repo-path requires a path argument"
+        exit 1
+      fi
+      REPO_PATH_OVERRIDE="$2"
       shift 2
       ;;
     *)
@@ -132,6 +141,35 @@ if [[ ${#RUNTIME_TYPES[@]} -gt 1 || ${#OVERLAY_FILES[@]} -gt 0 ]]; then
   IMAGE_MODE="project"
 fi
 
+PORT_ARGS=()
+FORWARD_PORTS=()
+for port_mapping in "${PORTS[@]}"; do
+  [[ -z "$port_mapping" ]] && continue
+
+  if [[ "$port_mapping" =~ ^[0-9]+:[0-9]+$ ]]; then
+    host_port="${port_mapping%%:*}"
+    container_port="${port_mapping##*:}"
+    PORT_ARGS+=(--publish "$host_port:$container_port")
+    FORWARD_PORTS+=("$container_port")
+  elif [[ "$port_mapping" =~ ^[0-9]+$ ]]; then
+    PORT_ARGS+=(--publish "$port_mapping:$port_mapping")
+    FORWARD_PORTS+=("$port_mapping")
+  else
+    echo "ERROR: Invalid port mapping '$port_mapping'. Use host:container (e.g., 5173:5173)."
+    exit 1
+  fi
+done
+
+SECRET_DIR="$HOME/.config/dev-containers/$PROJECT"
+CONFIG_FILE="$HOME/.config/dev-containers/$PROJECT/config"
+CONFIG_FILE_DISPLAY="~/.config/dev-containers/$PROJECT/config"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+  echo "ERROR: Project '$PROJECT' already exists (config: $CONFIG_FILE_DISPLAY)"
+  echo "Choose a different name or remove the existing project config."
+  exit 1
+fi
+
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 DOCKER_COMPATIBLE=false
@@ -139,16 +177,33 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   DOCKER_COMPATIBLE=true
 fi
 
-SECRET_DIR="$HOME/.config/dev-containers/$PROJECT"
-REPOS_DIR="$HOME/repos/$PROJECT"
-PROJECT_CONFIG_DIR="$ROOT_DIR/projects/$PROJECT"
-CONFIG_FILE="$PROJECT_CONFIG_DIR/config"
-
 if backend_exists "$PROJECT"; then
   echo "ERROR: Container '$PROJECT' already exists."
-  echo "  To rebuild: dc rebuild $PROJECT"
+  echo "To rebuild: dc rebuild $PROJECT"
   exit 1
 fi
+
+if [[ -n "$REPO_PATH_OVERRIDE" ]]; then
+  repo_target="$REPO_PATH_OVERRIDE"
+else
+  repo_target="${DC_REPOS_DIR:-$HOME/repos}/$PROJECT"
+fi
+
+if [[ "$repo_target" == "~" || "$repo_target" == "~/"* ]]; then
+  repo_target="$HOME${repo_target#\~}"
+elif [[ "$repo_target" != /* ]]; then
+  repo_target="$PWD/$repo_target"
+fi
+
+mkdir -p "$repo_target"
+REPOS_DIR="$(dc_resolve_path "$repo_target")" || {
+  if [[ -n "$REPO_PATH_OVERRIDE" ]]; then
+    echo "ERROR: --repo-path could not be resolved: $REPO_PATH_OVERRIDE"
+  else
+    echo "ERROR: Default repo path could not be resolved: $repo_target"
+  fi
+  exit 1
+}
 
 COMPOSED_CONTAINERFILE=""
 if [[ "$IMAGE_MODE" == "shared" ]]; then
@@ -175,7 +230,7 @@ fi
 echo "======================================================================"
 echo ""
 
-mkdir -p "$SECRET_DIR" "$REPOS_DIR" "$PROJECT_CONFIG_DIR"
+mkdir -p "$SECRET_DIR" "$REPOS_DIR"
 chmod 700 "$SECRET_DIR"
 echo "✓ Directories created"
 echo "  Repos mount: $REPOS_DIR"
@@ -261,25 +316,6 @@ VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
 if $HAS_NODEJS; then
   VOLUME_ARGS+=(--volume "$SECRET_DIR/.npmrc:/home/dev/.npmrc:ro")
 fi
-
-PORT_ARGS=()
-FORWARD_PORTS=()
-for port_mapping in "${PORTS[@]}"; do
-  [[ -z "$port_mapping" ]] && continue
-
-  if [[ "$port_mapping" =~ ^[0-9]+:[0-9]+$ ]]; then
-    host_port="${port_mapping%%:*}"
-    container_port="${port_mapping##*:}"
-    PORT_ARGS+=(--publish "$host_port:$container_port")
-    FORWARD_PORTS+=("$container_port")
-  elif [[ "$port_mapping" =~ ^[0-9]+$ ]]; then
-    PORT_ARGS+=(--publish "$port_mapping:$port_mapping")
-    FORWARD_PORTS+=("$port_mapping")
-  else
-    echo "ERROR: Invalid port mapping '$port_mapping'. Use host:container (e.g., 5173:5173)."
-    exit 1
-  fi
-done
 
 echo ""
 echo "==> Creating container from image: $IMAGE"
@@ -397,9 +433,9 @@ echo "  [ ] Add SSH public key to GitHub Deploy Keys for your repos"
 echo "  [ ] Set up dotfiles in VS Code settings for personal config"
 echo "      (see README: Personal configuration / dotfiles)"
 if $DOCKER_COMPATIBLE; then
-  echo "  [ ] (Optional) Open ~/repos/$PROJECT in VS Code Dev Containers"
+  echo "  [ ] (Optional) Open $REPOS_DIR in VS Code Dev Containers"
 else
-  echo "  [ ] Open ~/repos/$PROJECT in VS Code (terminals auto-connect)"
+  echo "  [ ] Open $REPOS_DIR in VS Code (terminals auto-connect)"
 fi
 echo ""
 echo "Commands:"

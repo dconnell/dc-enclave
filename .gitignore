@@ -18,3 +18,5 @@ Containerfiles/generated/
 # Don't include my own generated info
 projects/
 .devcontainer/
+
+plans

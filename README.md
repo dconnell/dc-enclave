@@ -28,7 +28,7 @@ Each project container is set up with its own credentials and runtime state so p
 - Per-project GitHub PAT — store a fine-grained, repo-scoped token (no admin) in `~/.config/dev-containers/<name>/github-token`
 - Per-project SSH deploy key — add a dedicated key pair under `~/.config/dev-containers/<name>/`
 - Per-project .npmrc — place a Node-specific config alongside the other secrets for Node projects
-- Host-mounted workspace — code lives at `~/repos/<project>` on your machine and is bind-mounted to `/workspace` inside the container
+- Host-mounted workspace — code lives at `${DC_REPOS_DIR:-$HOME/repos}/<project>` on your machine and is bind-mounted to `/workspace` inside the container
 
 If a container's runtime state is ever suspect, `dc rebuild` replaces the container from a known-good image without touching your host repos.
 
@@ -37,7 +37,8 @@ If a container's runtime state is ever suspect, `dc rebuild` replaces the contai
 The day-to-day interface is the `dc` command with subcommands:
 
 - dc new <name> <type[,type|overlay-path...]> [host:container ...]: create a new isolated container project
-- dc new <name> <type[,type...]> --overlay-containerfile <file> [host:container ...]: same as overlay-path, but explicit (repeat flag for multiple overlay files)
+- dc new <name> <type[,type|overlay-path...]> [--repo-path <path>] [host:container ...]: override host mount path for this project
+- dc new <name> <type[,type...]> [--repo-path <path>] [--overlay-containerfile <file> ...] [host:container ...]: with overlay files (repeat flag for multiple)
 - dc status: show overall status and per-project details
 - dc start [name]: start one project or all configured projects
 - dc stop [name]: stop one project or all configured projects
@@ -84,7 +85,7 @@ If not set, detection order is:
 3. docker CLI available
 4. podman CLI available
 
-Selected backend is stored per project in projects/<name>/config.
+Selected backend is stored per project in `~/.config/dev-containers/<name>/config`.
 
 ### Platform-specific notes
 
@@ -92,7 +93,7 @@ Selected backend is stored per project in projects/<name>/config.
 
 **Linux + Podman**: Podman runs rootless with no daemon. Works out of the box on most distros (`apt install podman`, `dnf install podman`).
 
-**WSL2**: Docker Desktop's WSL2 integration makes `docker` available inside WSL2. Podman can be installed natively inside WSL2 (`apt install podman`). For best bind-mount performance, keep repos inside the WSL2 filesystem (`~/repos/`) rather than on the Windows mount (`/mnt/c/`).
+**WSL2**: Docker Desktop's WSL2 integration makes `docker` available inside WSL2. Podman can be installed natively inside WSL2 (`apt install podman`). For best bind-mount performance, keep repos inside the WSL2 filesystem (`${DC_REPOS_DIR:-$HOME/repos}/`) rather than on the Windows mount (`/mnt/c/`).
 
 ## Repository layout
 
@@ -124,15 +125,13 @@ dev-containers/
 │   └── list.sh
 ├── templates/
 │   └── dotfiles/                       # starter dotfiles repo (fork for personal config)
-└── projects/
-    └── <name>/config
 ```
 
 Host-side paths:
 
-- code: ~/repos/<project>
+- code: ${DC_REPOS_DIR:-$HOME/repos}/<project>
 - secrets: ~/.config/dev-containers/<project>
-- per-project config: <repo>/projects/<project>/config
+- per-project config: ~/.config/dev-containers/<project>/config
 
 ## Initial setup
 
@@ -181,6 +180,7 @@ Single runtime examples:
 ```
 dc new myapp-frontend nodejs 3000:3000 5173:5173
 dc new myapp-backend golang 8080:8080 9000:9000
+dc new work-api golang --repo-path ~/code/company/api 8080:8080
 ```
 
 Monorepo with multiple runtimes and multiple ports:
@@ -229,7 +229,7 @@ After dc new:
 
 1. Edit ~/.config/dev-containers/<name>/github-token
 2. Add ~/.config/dev-containers/<name>/ssh_key.pub as GitHub Deploy Key
-3. Clone repo(s) into ~/repos/<name>
+3. Clone repo(s) into ${DC_REPOS_DIR:-$HOME/repos}/<name>
 
 Port mapping notes:
 
@@ -241,7 +241,7 @@ Port mapping notes:
 
 Monorepo:
 
-- One container, one workspace tree (example: ~/repos/myapp-monorepo)
+- One container, one workspace tree (example: ${DC_REPOS_DIR:-$HOME/repos}/myapp-monorepo)
 - Can combine runtimes with dc new ... nodejs,golang ...
 
 Multi-repo with separate trust boundaries:
@@ -251,14 +251,14 @@ Multi-repo with separate trust boundaries:
 Single-container multi-repo workspace:
 
 - Put all repos under one host folder for that container
-- Example: ~/repos/project-fe/frontend-app, ~/repos/project-fe/shared-ui, ~/repos/project-fe/api-client
+- Example: ${DC_REPOS_DIR:-$HOME/repos}/project-fe/frontend-app, ${DC_REPOS_DIR:-$HOME/repos}/project-fe/shared-ui, ${DC_REPOS_DIR:-$HOME/repos}/project-fe/api-client
 - All appear in container under /workspace
 
 ## VS Code behavior by backend
 
 docker/orbstack/podman backends:
 
-- dc new generates ~/repos/<project>/.devcontainer/devcontainer.json
+- dc new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json
 - For multi-runtime and/or overlay projects, it points to a generated composed Containerfile
 - Existing devcontainer.json is not overwritten
 - To attach VS Code to the exact same running container as dc shell, use: Dev Containers: Attach to Running Container... and choose <project>
@@ -266,7 +266,7 @@ docker/orbstack/podman backends:
 
 apple backend:
 
-- dc new generates ~/repos/<project>/.vscode/settings.json
+- dc new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.vscode/settings.json
 - Integrated terminal profile routes through dc shell
 - Existing settings.json is not overwritten
 
@@ -301,7 +301,7 @@ For docker/orbstack/podman backends:
 1. Open project folder:
 
 ```
-code ~/repos/myapp-monorepo
+code ${DC_REPOS_DIR:-$HOME/repos}/myapp-monorepo
 ```
 
 2. Run: Dev Containers: Reopen in Container
@@ -383,7 +383,7 @@ dc clean --dry-run
 Safety and scope:
 
 - `dc clean` is backend-agnostic and uses the active backend (apple/docker/orbstack/podman).
-- It only targets managed image repositories that match the dev-container naming pattern (`dev-*`) discovered from built-ins and `projects/*/config`.
+- It only targets managed image repositories that match the dev-container naming pattern (`dev-*`) discovered from built-ins and `~/.config/dev-containers/*/config`.
 - It preserves all `:latest` tags and removes only other tags for those managed repos.
 - It does not remove unrelated images (for example VS Code `vsc-*` images).
 - If an old tag is still referenced by a container, it is skipped (no force delete).
@@ -465,7 +465,7 @@ devcontainer.json or settings.json not overwritten:
 
 Changed ports:
 
-- update projects/<name>/config
+- update ~/.config/dev-containers/<name>/config
 - run dc rebuild <name>
 
 SSH auth issues:

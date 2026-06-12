@@ -20,7 +20,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
-CONFIG="$ROOT_DIR/projects/$PROJECT/config"
+CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
   echo "ERROR: No config for '$PROJECT'."
   exit 1

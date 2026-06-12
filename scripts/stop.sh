@@ -20,7 +20,7 @@ source "$ROOT_DIR/lib/container-backend.sh"
 
 _stop_container() {
   local project="$1"
-  local config="$ROOT_DIR/projects/$project/config"
+  local config="$HOME/.config/dev-containers/$project/config"
 
   if [[ ! -f "$config" ]]; then
     echo "✗ No config found for '$project' at $config"
@@ -47,7 +47,7 @@ if [[ $# -gt 0 ]]; then
     _stop_container "$project"
   done
 else
-  PROJECTS=("$ROOT_DIR"/projects/*/config)
+  PROJECTS=("$HOME"/.config/dev-containers/*/config)
   if [[ ${#PROJECTS[@]} -eq 0 ]]; then
     echo "No containers configured."
     exit 0
