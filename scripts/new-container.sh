@@ -177,6 +177,27 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   DOCKER_COMPATIBLE=true
 fi
 
+if ! backend_image_exists "dev-base:latest"; then
+  echo "ERROR: Base image 'dev-base:latest' not found on backend '$ACTIVE_BACKEND'."
+  echo "  Run setup first: CONTAINER_BACKEND=$ACTIVE_BACKEND scripts/setup.sh"
+  exit 1
+fi
+
+MISSING_IMAGES=()
+for runtime_type in "${RUNTIME_TYPES[@]}"; do
+  if ! backend_image_exists "dev-${runtime_type}:latest"; then
+    MISSING_IMAGES+=("dev-${runtime_type}:latest")
+  fi
+done
+if [[ ${#MISSING_IMAGES[@]} -gt 0 ]]; then
+  echo "ERROR: Required runtime image(s) not found on backend '$ACTIVE_BACKEND':"
+  for missing in "${MISSING_IMAGES[@]}"; do
+    echo "  - $missing"
+  done
+  echo "  Run setup first: CONTAINER_BACKEND=$ACTIVE_BACKEND scripts/setup.sh"
+  exit 1
+fi
+
 if backend_exists "$PROJECT"; then
   echo "ERROR: Container '$PROJECT' already exists."
   echo "To rebuild: dc rebuild $PROJECT"

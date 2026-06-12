@@ -427,6 +427,25 @@ backend_build_image() {
   esac
 }
 
+backend_image_exists() {
+  local tag="$1"
+
+  case "$(backend_name)" in
+    apple)
+      if container image ls --format '{{.Repository}}:{{.Tag}}' >/dev/null 2>&1; then
+        container image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -Fxq "$tag"
+      elif container images --format '{{.Repository}}:{{.Tag}}' >/dev/null 2>&1; then
+        container images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -Fxq "$tag"
+      else
+        container image ls 2>/dev/null | awk '{print $1 ":" $2}' | grep -Fxq "$tag"
+      fi
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -Fxq "$tag"
+      ;;
+  esac
+}
+
 backend_list_images() {
   case "$(backend_name)" in
     apple)

@@ -154,6 +154,15 @@ Host-side paths:
 
 ## Initial setup
 
+**Important**: `setup.sh` builds base images (dev-base, dev-nodejs, dev-golang) into the selected backend's image store. Each container backend maintains its own separate image store. If you want to use multiple backends, you must run `setup.sh` once per backend:
+
+```
+CONTAINER_BACKEND=docker scripts/setup.sh
+CONTAINER_BACKEND=colima scripts/setup.sh
+```
+
+Images built on one backend are not visible to another. `dc new` will check that the required images exist on the active backend and fail early if setup has not been run for that backend.
+
 1. Ensure Bash 4+ is installed:
 
 ```
