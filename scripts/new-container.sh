@@ -35,6 +35,22 @@ while [[ $# -gt 0 ]]; do
       REPO_PATH_OVERRIDE="$2"
       shift 2
       ;;
+    --cpus)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        echo "ERROR: --cpus requires a value (e.g. 2, 1.5)"
+        exit 1
+      fi
+      CONTAINER_CPUS="$2"
+      shift 2
+      ;;
+    --memory)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        echo "ERROR: --memory requires a value (e.g. 4g, 512m)"
+        exit 1
+      fi
+      CONTAINER_MEMORY="$2"
+      shift 2
+      ;;
     *)
       PORTS+=("$1")
       shift
@@ -245,6 +261,9 @@ fi
 echo "======================================================================"
 echo "Creating container: $PROJECT"
 echo "Runtime(s): $RUNTIME_CSV | Image: $IMAGE | Backend: $ACTIVE_BACKEND"
+if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
+  echo "Resources: ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
+fi
 if [[ ${#OVERLAY_FILES[@]} -gt 0 ]]; then
   echo "Overlay Containerfiles: ${#OVERLAY_FILES[@]}"
 fi
@@ -308,6 +327,8 @@ CONTAINER_IMAGE="$IMAGE"
 CONTAINER_IMAGE_MODE="$IMAGE_MODE"
 CONTAINER_BACKEND="$ACTIVE_BACKEND"
 CONTAINER_COMPOSED_CONTAINERFILE="$COMPOSED_CONTAINERFILE"
+CONTAINER_CPUS="${CONTAINER_CPUS:-}"
+CONTAINER_MEMORY="${CONTAINER_MEMORY:-}"
 REPOS_DIR="$REPOS_DIR"
 SECRET_DIR="$SECRET_DIR"
 SSH_KEY_PATH="$SECRET_DIR/ssh_key"
@@ -333,6 +354,14 @@ fi
 
 echo "✓ Config saved: $CONFIG_FILE"
 
+RESOURCE_ARGS=()
+if [[ -n "${CONTAINER_CPUS:-}" ]]; then
+  RESOURCE_ARGS+=(--cpus "$CONTAINER_CPUS")
+fi
+if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
+  RESOURCE_ARGS+=(--memory "$CONTAINER_MEMORY")
+fi
+
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
 if $HAS_NODEJS; then
   VOLUME_ARGS+=(--volume "$SECRET_DIR/.npmrc:/home/dev/.npmrc:ro")
@@ -340,7 +369,7 @@ fi
 
 echo ""
 echo "==> Creating container from image: $IMAGE"
-backend_create "$PROJECT" "$IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}"
+backend_create "$PROJECT" "$IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}"
 
 echo ""
 echo "==> Starting container for initial SSH key injection..."

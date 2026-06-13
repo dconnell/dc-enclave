@@ -44,7 +44,7 @@ If a container's runtime state is ever suspect, `dc rebuild` replaces the contai
 The day-to-day interface is the `dc` command with subcommands:
 
 - dc new <name> <type[,type|overlay-path...]> [host:container ...]: create a new isolated container project
-- dc new <name> <type[,type|overlay-path...]> [--repo-path <path>] [host:container ...]: override host mount path for this project
+- dc new <name> <type[,type|overlay-path...]> [--repo-path <path>] [--cpus <N>] [--memory <val>] [host:container ...]: with resource limits
 - dc new <name> <type[,type...]> [--repo-path <path>] [--overlay-containerfile <file> ...] [host:container ...]: with overlay files (repeat flag for multiple)
 - dc status: show overall status and per-project details
 - dc start [name]: start one project or all configured projects
@@ -150,7 +150,7 @@ Host-side paths:
 
 - code: ${DC_REPOS_DIR:-$HOME/repos}/<project>
 - secrets: ~/.config/dev-containers/<project>
-- per-project config: ~/.config/dev-containers/<project>/config
+- per-project config: ~/.config/dev-containers/<project>/config (backend, image, ports, resource limits, secrets paths)
 
 ## Initial setup
 
@@ -237,6 +237,12 @@ Equivalent explicit flag form:
 dc new myapp-monorepo nodejs,golang --overlay-containerfile ../../path/to/Containerfile.username 3000:3000 8080:8080
 ```
 
+With resource limits:
+
+```
+dc new myapp-backend golang --cpus 2 --memory 4g 8080:8080
+```
+
 What type combinations mean:
 
 - nodejs -> use Node.js runtime image
@@ -266,6 +272,33 @@ Port mapping notes:
 - Format is host-port:container-port
 - Multiple mappings are supported in one dc new command
 - Example: 3000:3000 5173:5173 8080:8080
+
+## CPU and memory limits
+
+All five backends support per-container CPU and memory limits. Set them at creation time or change them in the config file and rebuild.
+
+Set limits at creation:
+
+```
+dc new myapp nodejs --cpus 2 --memory 4g 3000:3000
+```
+
+Omit both flags to use backend defaults (typically unrestricted).
+
+Change limits on an existing project:
+
+1. Edit `~/.config/dev-containers/<name>/config`
+2. Update `CONTAINER_CPUS` and/or `CONTAINER_MEMORY`
+3. Run `dc rebuild <name>`
+
+Resource limits are applied at container creation time. Changes to the config file take effect only after `dc rebuild` — `dc start` simply starts the existing container with its existing limits.
+
+Config keys:
+
+- `CONTAINER_CPUS` — number of CPUs (e.g. `2`, `1.5`). Empty = backend default.
+- `CONTAINER_MEMORY` — memory limit with suffix (e.g. `4g`, `512m`). Empty = backend default.
+
+All backends use the same flag syntax (`--cpus`, `--memory`). No backend-specific configuration is needed.
 
 ## Monorepo and multi-repo patterns
 
@@ -507,7 +540,7 @@ devcontainer.json or settings.json not overwritten:
 - expected behavior to avoid clobbering local config
 - update file manually if needed
 
-Changed ports:
+Changed ports or resource limits:
 
 - update ~/.config/dev-containers/<name>/config
 - run dc rebuild <name>

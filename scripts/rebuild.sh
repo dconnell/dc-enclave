@@ -75,6 +75,9 @@ echo "  Image mode: $IMAGE_MODE"
 echo "  Runtime(s): $RUNTIME_TYPES_CSV"
 echo "  Backend:    $ACTIVE_BACKEND"
 echo "  Repos:      ${REPOS_DIR:-unknown} (PRESERVED - verify your commits separately)"
+if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
+  echo "  Resources:  ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
+fi
 echo ""
 
 echo "This will DESTROY the container '$PROJECT' and recreate it."
@@ -179,7 +182,15 @@ if declare -p PORTS >/dev/null 2>&1; then
   done
 fi
 
-backend_create "$PROJECT" "$CONTAINER_IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}"
+RESOURCE_ARGS=()
+if [[ -n "${CONTAINER_CPUS:-}" ]]; then
+  RESOURCE_ARGS+=(--cpus "$CONTAINER_CPUS")
+fi
+if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
+  RESOURCE_ARGS+=(--memory "$CONTAINER_MEMORY")
+fi
+
+backend_create "$PROJECT" "$CONTAINER_IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}"
 echo "  ✓ Container created"
 
 echo ""

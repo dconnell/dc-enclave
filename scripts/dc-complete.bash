@@ -68,11 +68,14 @@ _dc_complete() {
         COMPREPLY=( $(compgen -f -- "$cur") )
         return 0
       fi
+      if [[ "$prev" == "--cpus" || "$prev" == "--memory" ]]; then
+        return 0
+      fi
       if [[ $COMP_CWORD -eq 3 ]]; then
         COMPREPLY=( $(compgen -W "$(_dc_types)" -- "$cur") )
         return 0
       fi
-      COMPREPLY=( $(compgen -W "--repo-path --overlay-containerfile" -- "$cur") )
+      COMPREPLY=( $(compgen -W "--repo-path --overlay-containerfile --cpus --memory" -- "$cur") )
       ;;
     start|stop|shell|rebuild|install)
       if [[ $COMP_CWORD -eq 2 ]]; then
