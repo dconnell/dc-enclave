@@ -199,15 +199,25 @@ echo ""
 echo "======================================================================"
 echo "Rebuild complete: $PROJECT"
 echo "======================================================================"
-echo "Remaining manual steps (outside this script):"
-echo "  [ ] Review git log in $REPOS_DIR for unexpected commits"
-echo "  [ ] Check 'git diff HEAD~5' for unexpected file changes"
-echo "  [ ] Consider rotating your GitHub PAT: $TOKEN_FILE"
-if $ROTATE_KEYS; then
-  echo "  [ ] Confirm new SSH key is on GitHub and old key is removed"
-fi
-echo "  [ ] Reapply personal config: dc install $PROJECT <path-to-dotfiles>"
-echo "  [ ] Personal config (git identity, editor, shell) -> dotfiles"
 echo ""
-echo "Re-enter container:"
-echo "  dc shell $PROJECT"
+echo "  Container recreated from $CONTAINER_IMAGE ($IMAGE_MODE mode)"
+echo "  Runtime(s): $RUNTIME_TYPES_CSV"
+if [[ "$IMAGE_MODE" == "project" ]]; then
+  echo "  Project image was rebuilt with current overlay files."
+elif [[ "$IMAGE_MODE" == "shared" ]]; then
+  echo "  Note: shared image was not updated. To update it: dc rebuild-image <target>"
+fi
+echo ""
+echo "Host repos ($REPOS_DIR) are untouched — container state was wiped."
+if $ROTATE_KEYS; then
+  echo "SSH deploy key rotated — confirm new key is on GitHub and old key is removed."
+fi
+echo ""
+echo "Next steps:"
+echo "  [ ] dc install $PROJECT <path-to-dotfiles>   # reapply personal config"
+echo "  [ ] dc shell $PROJECT                        # re-enter container"
+echo ""
+echo "Good habits after any rebuild:"
+echo "  [ ] Quick sanity check: git log and git diff in $REPOS_DIR look right"
+echo "  [ ] Rotate your GitHub PAT if it's due: $TOKEN_FILE"
+echo "  [ ] Keep dotfiles current so customizations survive the next rebuild"
