@@ -8,6 +8,10 @@ Isolated development containers for macOS, Linux, and WSL2 with one shared Bash 
 - Colima (macOS, Linux)
 - Podman (macOS, Linux, WSL2)
 
+## Goal
+
+**dev-containers** standardizes per-project containerized development environments from a shared Bash codebase. After one-time setup, `dc new` creates an isolated workspace for any repo while letting each developer use their preferred backend, tools, and dotfiles through overlay Containerfiles. Teams share the same base and runtime definitions, and projects can optionally keep separate credentials and runtime state. If an environment is compromised or drifts, you can regenerate it quickly with `dc rebuild`, then audit repos and rotate access tokens.
+
 ## Requirements
 
 - **Bash 4+** — all scripts require Bash 4 or later
@@ -57,6 +61,31 @@ The day-to-day interface is the `dc` command with subcommands:
 - dc help: show usage information
 
 All subcommands dispatch to scripts under `scripts/`.
+
+## Why dev-containers?
+
+If you are already comfortable with Docker, Podman, or apple/container CLIs, `dc` still saves work by orchestrating repetitive setup and recovery steps consistently across projects and machines.
+
+What `dc` adds beyond raw backend commands:
+
+- project bootstrap from shared base/runtime definitions plus optional overlay Containerfiles
+- persisted per-project configuration in `~/.config/dev-containers/<name>/config`
+- consistent mounts, ports, and resource limit handling across backends
+- optional per-project credential layout for PAT/SSH key/.npmrc with repeatable rebuild flows
+- one-command rebuild and key-rotation workflows for incident response
+
+The table below intentionally focuses on the high-leverage commands where `dc` saves the most effort. It is not a complete mapping of every subcommand. Docker, OrbStack, and Colima are grouped because they share the Docker CLI.
+
+| `dc` command | docker / orbstack / colima | podman | apple/container |
+|---|---|---|---|
+| `dc new myapp nodejs 3000:3000` | Compose Containerfile layers, run `docker build`, `docker create` (mounts/ports/limits), and `docker start`; then set up project config, keys, and editor files | Same flow with `podman` | Same flow with `container` |
+| `dc new ...` (with overlay) | Merge runtime and overlay fragments (composition rules), then build/create/start | Same flow | Same flow |
+| `dc rebuild myapp` | `docker rm -f myapp`, then recreate with the original `docker create` flags and `docker start` | Same flow with `podman` | `container delete myapp`, then recreate and start |
+| `dc rebuild myapp --rotate-keys` | Rebuild flow plus SSH key regeneration and deploy-key rotation | Same flow | Same flow |
+| `dc clean` | `docker image ls` + remove non-`latest` tags for managed repos | Same flow with `podman image ls/rm` | Same flow with `container image ls/rm` |
+| `dc install myapp ~/.dotfiles` | Stream dotfiles via `tar` + `docker exec`, run `install.sh`, then remove temp files | Same flow with `podman` | Same flow with `container exec` |
+
+`dc new`, `dc rebuild`, and `dc rebuild --rotate-keys` are the biggest differentiators: repeatable orchestration for container creation, recovery, and security response without retyping fragile backend-specific command sequences. `dc clean` and `dc install` reduce ongoing maintenance overhead once projects are up and running.
 
 ## Common Tools Included In Base Image
 
