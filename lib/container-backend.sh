@@ -111,6 +111,31 @@ _backend_colima_context_active() {
   _backend_context_is_colima "$context"
 }
 
+_backend_use_orbstack_context() {
+  local ctx
+  ctx="$(docker context ls --format '{{.Name}}' 2>/dev/null \
+    | awk 'tolower($0) ~ /orbstack/ {print; exit}')"
+  if [[ -z "$ctx" ]]; then
+    echo "ERROR: OrbStack backend requires an OrbStack Docker context." >&2
+    echo "  Install OrbStack or create a Docker context pointing to it." >&2
+    return 1
+  fi
+  export DOCKER_CONTEXT="$ctx"
+}
+
+_backend_use_colima_context() {
+  local ctx
+  ctx="$(docker context ls --format '{{.Name}}' 2>/dev/null \
+    | awk 'tolower($0) ~ /colima/ {print; exit}')"
+  if [[ -z "$ctx" ]]; then
+    echo "ERROR: Colima backend requires a Colima Docker context." >&2
+    echo "  Run: colima start" >&2
+    echo "  Or: docker context use colima" >&2
+    return 1
+  fi
+  export DOCKER_CONTEXT="$ctx"
+}
+
 _backend_colima_runtime() {
   local status=""
   status="$(colima status 2>/dev/null || true)"
@@ -283,6 +308,18 @@ backend_use() {
 
   DEV_CONTAINERS_BACKEND="$selected"
   export DEV_CONTAINERS_BACKEND
+
+  case "$selected" in
+    colima)
+      _backend_use_colima_context || return 1
+      ;;
+    orbstack)
+      _backend_use_orbstack_context || return 1
+      ;;
+    *)
+      unset DOCKER_CONTEXT
+      ;;
+  esac
 }
 
 backend_name() {
