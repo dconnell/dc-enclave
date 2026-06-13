@@ -44,9 +44,10 @@ backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 
-RUNTIME_TYPES_CSV="${CONTAINER_RUNTIME_TYPES:-${CONTAINER_TYPE:-}}"
-if [[ -z "$RUNTIME_TYPES_CSV" ]]; then
-  echo "ERROR: Missing runtime type configuration in $CONFIG"
+OVERLAY_SCOPES_CSV="${CONTAINER_OVERLAY_SCOPES:-}"
+if [[ -z "$OVERLAY_SCOPES_CSV" ]]; then
+  echo "ERROR: Missing CONTAINER_OVERLAY_SCOPES in $CONFIG"
+  echo "Recreate the project with: dc new <name> <scope[,scope...]>"
   exit 1
 fi
 
@@ -56,9 +57,11 @@ OVERLAY_FILES=()
 if declare -p CONTAINER_OVERLAY_FILES >/dev/null 2>&1; then
   OVERLAY_FILES=("${CONTAINER_OVERLAY_FILES[@]}")
 fi
+AUTO_OVERLAYS_TEAM="${CONTAINER_AUTO_OVERLAYS_TEAM:-1}"
+AUTO_OVERLAYS_USER="${CONTAINER_AUTO_OVERLAYS_USER:-1}"
 
 HAS_NODEJS=false
-if [[ ",$RUNTIME_TYPES_CSV," == *",nodejs,"* ]]; then
+if [[ ",$OVERLAY_SCOPES_CSV," == *",nodejs,"* ]]; then
   HAS_NODEJS=true
 fi
 
@@ -72,8 +75,9 @@ echo ""
 echo "  Container:  ${CONTAINER_PROJECT:-$PROJECT}"
 echo "  Image:      ${CONTAINER_IMAGE:-unknown}"
 echo "  Image mode: $IMAGE_MODE"
-echo "  Runtime(s): $RUNTIME_TYPES_CSV"
+echo "  Overlay scope(s): $OVERLAY_SCOPES_CSV"
 echo "  Backend:    $ACTIVE_BACKEND"
+echo "  Auto layers: team=$AUTO_OVERLAYS_TEAM user=$AUTO_OVERLAYS_USER"
 echo "  Repos:      ${REPOS_DIR:-unknown} (PRESERVED - verify your commits separately)"
 if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
   echo "  Resources:  ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
@@ -150,9 +154,17 @@ if [[ "$IMAGE_MODE" == "project" ]]; then
     COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${PROJECT}"
   fi
 
+  COMPOSE_ARGS=()
+  if [[ "$AUTO_OVERLAYS_TEAM" == "0" ]]; then
+    COMPOSE_ARGS+=(--no-team)
+  fi
+  if [[ "$AUTO_OVERLAYS_USER" == "0" ]]; then
+    COMPOSE_ARGS+=(--no-user)
+  fi
+
   echo ""
-  echo "==> Step 4: Rebuilding project-scoped image from runtime + overlays..."
-  bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$RUNTIME_TYPES_CSV" "${OVERLAY_FILES[@]}"
+  echo "==> Step 4: Rebuilding overlay-scoped project image from selected scopes + overlays..."
+  bash "$COMPOSE_SCRIPT" "${COMPOSE_ARGS[@]}" "$COMPOSED_CONTAINERFILE" "$OVERLAY_SCOPES_CSV" "${OVERLAY_FILES[@]}"
   backend_build_image "$CONTAINER_IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
   echo "  ✓ Project image rebuilt: $CONTAINER_IMAGE"
 fi
@@ -212,11 +224,11 @@ echo "Rebuild complete: $PROJECT"
 echo "======================================================================"
 echo ""
 echo "  Container recreated from $CONTAINER_IMAGE ($IMAGE_MODE mode)"
-echo "  Runtime(s): $RUNTIME_TYPES_CSV"
+echo "  Overlay scope(s): $OVERLAY_SCOPES_CSV"
 if [[ "$IMAGE_MODE" == "project" ]]; then
   echo "  Project image was rebuilt with current overlay files."
 elif [[ "$IMAGE_MODE" == "shared" ]]; then
-  echo "  Note: shared image was not updated. To update it: dc rebuild-image <target>"
+  echo "  Note: base image was not updated. To update it: dc rebuild-image <target>"
 fi
 echo ""
 echo "Host repos ($REPOS_DIR) are untouched — container state was wiped."

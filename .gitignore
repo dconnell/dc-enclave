@@ -12,7 +12,7 @@ ssh_key.pub
 # Secrets directory (symlink or accidental inclusion)
 secrets/
 
-# Generated combined runtime Containerfiles
+# Generated composed Containerfiles
 Containerfiles/generated/
 
 # Don't include my own generated info

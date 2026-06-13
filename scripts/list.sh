@@ -24,7 +24,7 @@ if [[ ${#PROJECTS[@]} -eq 0 ]]; then
   exit 0
 fi
 
-printf "%-24s %-12s %-10s %s\n" "NAME" "STATUS" "BACKEND" "TYPE"
+printf "%-24s %-12s %-10s %s\n" "NAME" "STATUS" "BACKEND" "SCOPES"
 
 for config_file in "${PROJECTS[@]}"; do
   source "$config_file"
@@ -43,6 +43,6 @@ for config_file in "${PROJECTS[@]}"; do
     state="unknown"
   fi
 
-  type_value="${CONTAINER_TYPE:-${CONTAINER_RUNTIME_TYPES:-unknown}}"
-  printf "%-24s %-12s %-10s %s\n" "$project" "$state" "$project_backend" "$type_value"
+  scope_value="${CONTAINER_OVERLAY_SCOPES:-unknown}"
+  printf "%-24s %-12s %-10s %s\n" "$project" "$state" "$project_backend" "$scope_value"
 done

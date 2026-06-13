@@ -65,7 +65,7 @@ is_managed_repo() {
 is_managed_combined_repo() {
   local repo="$1"
   [[ "$repo" == dev-* ]] || return 1
-  [[ "$repo" == "dev-base" || "$repo" == "dev-nodejs" || "$repo" == "dev-golang" ]] && return 1
+  [[ "$repo" == "dev-base" ]] && return 1
 
   local slug="${repo#dev-}"
   local -a parts=()
@@ -95,8 +95,6 @@ add_managed_repo() {
 }
 
 add_managed_repo "dev-base"
-add_managed_repo "dev-nodejs"
-add_managed_repo "dev-golang"
 
 for config_file in "$HOME"/.config/dev-containers/*/config; do
   source "$config_file"

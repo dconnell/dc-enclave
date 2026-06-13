@@ -10,7 +10,7 @@ Isolated development containers for macOS, Linux, and WSL2 with one shared Bash 
 
 ## Goal
 
-**dev-containers** standardizes per-project containerized development environments from a shared Bash codebase. After one-time setup, `dc new` creates an isolated workspace for any repo while letting each developer use their preferred backend, tools, and dotfiles through overlay Containerfiles. Teams share the same base and runtime definitions, and projects can optionally keep separate credentials and runtime state. If an environment is compromised or drifts, you can regenerate it quickly with `dc rebuild`, then audit repos and rotate access tokens.
+**dev-containers** standardizes per-project containerized development environments from a shared Bash codebase. After one-time setup, `dc new` creates an isolated workspace for any repo while letting each developer use their preferred backend, tools, and dotfiles through overlay Containerfiles. Teams share the same base image and overlay model, and projects can optionally keep separate credentials and container state. If an environment is compromised or drifts, you can regenerate it quickly with `dc rebuild`, then audit repos and rotate access tokens.
 
 ## Requirements
 
@@ -34,33 +34,107 @@ Colima support policy:
 
 ## Isolation design
 
-Each project container is set up with its own credentials and runtime state so projects stay independent:
+Each project container is set up with its own credentials and container state so projects stay independent:
 
 - Per-project GitHub PAT — store a fine-grained, repo-scoped token (no admin) in `~/.config/dev-containers/<name>/github-token`
 - Per-project SSH deploy key — add a dedicated key pair under `~/.config/dev-containers/<name>/`
 - Per-project .npmrc — place a Node-specific config alongside the other secrets for Node projects
 - Host-mounted workspace — code lives at `${DC_REPOS_DIR:-$HOME/repos}/<project>` on your machine and is bind-mounted to `/workspace` inside the container
 
-If a container's runtime state is ever suspect, `dc rebuild` replaces the container from a known-good image without touching your host repos.
+If a container's state is ever suspect, `dc rebuild` replaces the container from a known-good image without touching your host repos.
 
 ## Command reference
 
-The day-to-day interface is the `dc` command with subcommands:
+The day-to-day interface is the `dc` command with subcommands. All subcommands dispatch to scripts under `scripts/`.
 
-- dc new <name> <type[,type|overlay-path...]> [host:container ...]: create a new isolated container project
-- dc new <name> <type[,type|overlay-path...]> [--repo-path <path>] [--cpus <N>] [--memory <val>] [host:container ...]: with resource limits
-- dc new <name> <type[,type...]> [--repo-path <path>] [--overlay-containerfile <file> ...] [host:container ...]: with overlay files (repeat flag for multiple)
-- dc status: show overall status and per-project details
-- dc start [name]: start one project or all configured projects
-- dc stop [name]: stop one project or all configured projects
-- dc shell <name> [command]: open shell or run one command inside project container
-- dc rebuild <name> [--rotate-keys]: destroy and recreate container from known-good image
-- dc rebuild-image [all|base|nodejs|golang]: rebuild shared images (project-scoped overlay images are rebuilt by `dc rebuild`)
-- dc clean [--dry-run]: remove old dev-container image tags while keeping latest
-- dc install <name> <path-to-dotfiles>: install or update dotfiles in a running container
-- dc help: show usage information
+| Command | Description |
+|---|---|
+| `dc new` (forms below) | Create a new isolated container project |
+| `dc status` | Show overall status and per-project details |
+| `dc start [name]` | Start one project or all configured projects |
+| `dc stop [name]` | Stop one project or all configured projects |
+| `dc shell <name> [command]` | Open a shell or run one command inside a project container |
+| `dc rebuild <name> [--rotate-keys]` | Destroy and recreate container from a known-good image |
+| `dc rebuild-image [all\|base]` | Rebuild shared base image (project-scoped overlay images are rebuilt by `dc rebuild`) |
+| `dc clean [--dry-run]` | Remove old dev-container image tags while keeping latest |
+| `dc install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
+| `dc help` | Show usage information |
 
-All subcommands dispatch to scripts under `scripts/`.
+`<scope>` values in `dc new` are overlay scopes used for deterministic auto-layer ordering (`all`, `nodejs`, `golang`). They do not select repo-defined base layers.
+
+**`dc new` forms** — `<scope>` can be `nodejs`, `golang`, a comma-separated combination, or a path to an explicit overlay Containerfile:
+
+| Form | Description |
+|---|---|
+| `dc new <name> <scope[,scope\|overlay-path...]> [--no-team] [--no-user] [host:container ...]` | Basic form with port mappings and optional auto-layer toggles |
+| `dc new <name> <scope[,scope\|overlay-path...]> [--repo-path <path>] [--cpus <N>] [--memory <val>] [--no-team] [--no-user] [host:container ...]` | With resource limits and overlay toggles |
+| `dc new <name> <scope[,scope...]> [--repo-path <path>] [--overlay-containerfile <file> ...] [--no-team] [--no-user] [host:container ...]` | With explicit overlay files (repeat `--overlay-containerfile` for multiple) |
+
+## Global configuration and overlays
+
+`setup.sh` bootstraps global configuration in:
+
+```
+~/.config/dev-containers/config
+```
+
+Required key:
+
+```bash
+DC_OVERLAYS_DIR="$HOME/.config/dev-containers/overlays"
+```
+
+`dc new` and `dc rebuild` load `DC_OVERLAYS_DIR` from this config file. If the global config file is missing, `DC_OVERLAYS_DIR` is unset, or the overlays root does not exist, the command fails fast with remediation guidance.
+
+Overlay layout under `DC_OVERLAYS_DIR`:
+
+```
+$DC_OVERLAYS_DIR/
+├── team/
+│   ├── README.md
+│   ├── Containerfile.all
+│   ├── Containerfile.nodejs
+│   └── Containerfile.golang
+└── user/
+    ├── README.md
+    ├── Containerfile.all
+    ├── Containerfile.nodejs
+    └── Containerfile.golang
+```
+
+`setup.sh` creates the overlays root and both namespace directories (`team/`, `user/`) and adds starter README files if missing.
+
+### Overlay ownership model
+
+- `Containerfiles/example/` in this repo is for reference templates only (never auto-layered)
+- `$DC_OVERLAYS_DIR/team/` is for shared team overlays
+- `$DC_OVERLAYS_DIR/user/` is for personal overlays
+- explicit overlays passed in the `dc new` command remain supported and are applied last
+
+### Canonical layering order
+
+For scope list `golang,nodejs`, overlay composition order is:
+
+1. `team/all`
+2. `user/all`
+3. `team/golang`
+4. `user/golang`
+5. `team/nodejs`
+6. `user/nodejs`
+7. explicit overlays passed by path (`--overlay-containerfile` or comma path tokens)
+
+`dev-base` is always the only repo-defined base layer. There are no repo scope-specific fragment layers.
+
+Missing optional overlay files are skipped silently. Overlay root missing is fatal.
+
+### Controlling auto overlays
+
+- default: include both team and user auto overlays
+- `--no-team`: include only user auto overlays
+- `--no-user`: include only team auto overlays
+- `--no-team --no-user`: include no auto overlays
+
+These settings persist per project config and are reused by `dc rebuild`.
 
 ## Why dev-containers?
 
@@ -68,7 +142,7 @@ If you are already comfortable with Docker, Podman, or apple/container CLIs, `dc
 
 What `dc` adds beyond raw backend commands:
 
-- project bootstrap from shared base/runtime definitions plus optional overlay Containerfiles
+- project bootstrap from a shared base image plus optional overlay Containerfiles
 - persisted per-project configuration in `~/.config/dev-containers/<name>/config`
 - consistent mounts, ports, and resource limit handling across backends
 - optional per-project credential layout for PAT/SSH key/.npmrc with repeatable rebuild flows
@@ -79,7 +153,7 @@ The table below intentionally focuses on the high-leverage commands where `dc` s
 | `dc` command | docker / orbstack / colima | podman | apple/container |
 |---|---|---|---|
 | `dc new myapp nodejs 3000:3000` | Compose Containerfile layers, run `docker build`, `docker create` (mounts/ports/limits), and `docker start`; then set up project config, keys, and editor files | Same flow with `podman` | Same flow with `container` |
-| `dc new ...` (with overlay) | Merge runtime and overlay fragments (composition rules), then build/create/start | Same flow | Same flow |
+| `dc new ...` (with overlay) | Merge team/user/explicit overlay fragments over `dev-base` (composition rules), then build/create/start | Same flow | Same flow |
 | `dc rebuild myapp` | `docker rm -f myapp`, then recreate with the original `docker create` flags and `docker start` | Same flow with `podman` | `container delete myapp`, then recreate and start |
 | `dc rebuild myapp --rotate-keys` | Rebuild flow plus SSH key regeneration and deploy-key rotation | Same flow | Same flow |
 | `dc clean` | `docker image ls` + remove non-`latest` tags for managed repos | Same flow with `podman image ls/rm` | Same flow with `container image ls/rm` |
@@ -89,7 +163,7 @@ The table below intentionally focuses on the high-leverage commands where `dc` s
 
 ## Common Tools Included In Base Image
 
-The base image is intentionally minimal and shared across runtime types. It includes essentials only:
+The base image is intentionally minimal and shared across all scope selections. It includes essentials only:
 
 - git
 - curl
@@ -149,9 +223,12 @@ Selected backend is stored per project in `~/.config/dev-containers/<name>/confi
 dev-containers/
 ├── Containerfiles/
 │   ├── Containerfile.base
-│   ├── Containerfile.nodejs
-│   ├── Containerfile.golang
-│   └── generated/                      # auto-generated composed files (multi-runtime/project overlays)
+│   ├── example/
+│   │   ├── Containerfile.nodejs        # overlay template example
+│   │   ├── Containerfile.golang        # overlay template example
+│   │   ├── Containerfile.all           # overlay template example
+│   │   └── README.md
+│   └── generated/                      # auto-generated composed files (multi-scope/project overlays)
 ├── lib/
 │   ├── common.sh                       # bash 4+ version guard, shared helpers
 │   ├── platform.sh                     # OS detection, path helpers
@@ -180,17 +257,55 @@ Host-side paths:
 - code: ${DC_REPOS_DIR:-$HOME/repos}/<project>
 - secrets: ~/.config/dev-containers/<project>
 - per-project config: ~/.config/dev-containers/<project>/config (backend, image, ports, resource limits, secrets paths)
+- global config: ~/.config/dev-containers/config
+- global overlays root: `DC_OVERLAYS_DIR` (typically `~/.config/dev-containers/overlays`)
+
+## Three-source model (repo, team overlays, user overlays)
+
+Keep these sources separate:
+
+1. **dev-containers repo** (`Containerfiles/base + Containerfiles/example`, scripts, docs)
+2. **team overlays source** (files synced into `$DC_OVERLAYS_DIR/team`)
+3. **user overlays source** (files synced into `$DC_OVERLAYS_DIR/user`)
+
+This separation avoids coupling team customization with personal customization and keeps layering deterministic.
+
+Recommended flow:
+
+- keep `$DC_OVERLAYS_DIR/team` as a git checkout of a private team overlays repository and update with `git pull`
+- keep `$DC_OVERLAYS_DIR/user` as a git checkout of your personal overlays repository and update with `git pull`
+- keep the public `dev-containers` repository focused on base image definition and reference templates under `Containerfiles/example/`
+
+Example setup:
+
+```
+git clone git@github.com:YOUR-ORG/dev-container-team-overlays.git "$DC_OVERLAYS_DIR/team"
+git clone git@github.com:YOUR-USER/dev-container-user-overlays.git "$DC_OVERLAYS_DIR/user"
+```
+
+Then keep overlays current:
+
+```bash
+git -C "$DC_OVERLAYS_DIR/team" pull --ff-only
+git -C "$DC_OVERLAYS_DIR/user" pull --ff-only
+```
 
 ## Initial setup
 
-**Important**: `setup.sh` builds base images (dev-base, dev-nodejs, dev-golang) into the selected backend's image store. Each container backend maintains its own separate image store. If you want to use multiple backends, you must run `setup.sh` once per backend:
+**Important**: `setup.sh` builds `dev-base` into the selected backend's image store. Each container backend maintains its own separate image store. If you want to use multiple backends, you must run `setup.sh` once per backend:
 
 ```
 CONTAINER_BACKEND=docker scripts/setup.sh
 CONTAINER_BACKEND=colima scripts/setup.sh
 ```
 
-Images built on one backend are not visible to another. `dc new` will check that the required images exist on the active backend and fail early if setup has not been run for that backend.
+Images built on one backend are not visible to another. `dc new` checks for `dev-base:latest` on the active backend and fails early if setup has not been run for that backend.
+
+`setup.sh` also bootstraps global overlay configuration and directories:
+
+- `~/.config/dev-containers/config` with `DC_OVERLAYS_DIR`
+- `$DC_OVERLAYS_DIR/team`
+- `$DC_OVERLAYS_DIR/user`
 
 1. Ensure Bash 4+ is installed:
 
@@ -234,7 +349,7 @@ CONTAINER_BACKEND=colima scripts/setup.sh
 
 Use dc new (alias), not direct script invocation.
 
-Single runtime examples:
+Single-scope examples:
 
 ```
 dc new myapp-frontend nodejs 3000:3000 5173:5173
@@ -242,25 +357,31 @@ dc new myapp-backend golang 8080:8080 9000:9000
 dc new work-api golang --repo-path ~/code/company/api 8080:8080
 ```
 
-Monorepo with multiple runtimes and multiple ports:
+Monorepo with multiple overlay scopes and multiple ports:
 
 ```
 dc new myapp-monorepo nodejs,golang 3000:3000 5173:5173 8080:8080 9000:9000
 ```
 
-Overlay example (preferred tools baked at image build time):
+Overlay example via explicit path token (applied last):
 
 ```
 dc new myapp-monorepo nodejs,golang,../../path/to/Containerfile.username 3000:3000 8080:8080
 ```
 
-Starter overlay included in this repo:
+Auto overlays example (`team/all`, `user/all`, plus scope-specific files when present):
 
 ```
-dc new myapp-monorepo nodejs,golang,Containerfiles/Containerfile.user 3000:3000 8080:8080
+dc new myapp-monorepo nodejs,golang 3000:3000 8080:8080
 ```
 
-Equivalent explicit flag form:
+Disable team auto overlays for a one-off project:
+
+```
+dc new myapp-monorepo nodejs,golang --no-team 3000:3000 8080:8080
+```
+
+Equivalent explicit flag form (applied after auto overlays):
 
 ```
 dc new myapp-monorepo nodejs,golang --overlay-containerfile ../../path/to/Containerfile.username 3000:3000 8080:8080
@@ -272,23 +393,30 @@ With resource limits:
 dc new myapp-backend golang --cpus 2 --memory 4g 8080:8080
 ```
 
-What type combinations mean:
+What scope combinations mean:
 
-- nodejs -> use Node.js runtime image
-- golang -> use Go runtime image
-- nodejs,golang -> generate a project-scoped composed image from both runtime Containerfiles
-- any overlay path token -> include that user overlay fragment in the composed project image
+- nodejs -> include `*.nodejs` overlay scopes
+- golang -> include `*.golang` overlay scopes
+- nodejs,golang -> include both scope families in canonical order
+- auto overlays -> loaded from `$DC_OVERLAYS_DIR/team` and `$DC_OVERLAYS_DIR/user`
+- any overlay path token -> include that explicit overlay fragment in the composed project image (applied last)
 
-Overlay contract (phase 1):
+Auto overlay flags:
 
-- Treated as Dockerfile fragments layered after runtime fragments
+- `--no-team` disables auto overlays from `$DC_OVERLAYS_DIR/team`
+- `--no-user` disables auto overlays from `$DC_OVERLAYS_DIR/user`
+- both flags together disable all auto overlays for that project
+
+Overlay contract:
+
+- Treated as Dockerfile fragments layered on top of `dev-base`
 - `FROM` and `CMD` are ignored during composition
 - `COPY` and `ADD` are not allowed (to avoid external build-context coupling)
 
 Starter file note:
 
-- `Containerfiles/Containerfile.user` is provided as a default starting point with common convenience tools.
-- Copy and customize it for your own workflow.
+- `Containerfiles/example/Containerfile.all` is a reference template.
+- Copy it into `$DC_OVERLAYS_DIR/team` or `$DC_OVERLAYS_DIR/user`, then customize.
 
 After dc new:
 
@@ -334,7 +462,7 @@ All backends use the same flag syntax (`--cpus`, `--memory`). No backend-specifi
 Monorepo:
 
 - One container, one workspace tree (example: ${DC_REPOS_DIR:-$HOME/repos}/myapp-monorepo)
-- Can combine runtimes with dc new ... nodejs,golang ...
+- Can combine scopes with dc new ... nodejs,golang ...
 
 Multi-repo with separate trust boundaries:
 
@@ -351,7 +479,7 @@ Single-container multi-repo workspace:
 docker/orbstack/colima/podman backends:
 
 - dc new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json
-- For multi-runtime and/or overlay projects, it points to a generated composed Containerfile
+- For multi-scope and/or overlay projects, it points to a generated composed Containerfile
 - Existing devcontainer.json is not overwritten
 - To attach VS Code to the exact same running container as dc shell, use: Dev Containers: Attach to Running Container... and choose <project>
 - Dev Containers: Reopen in Container may create a separate `vsc-*` container for editor workflows
@@ -430,13 +558,6 @@ dc rebuild-image base
 dc rebuild myapp-monorepo
 ```
 
-If you change `Containerfile.nodejs` or `Containerfile.golang`, rebuild the runtime image and then recreate the container:
-
-```
-dc rebuild-image nodejs   # or: dc rebuild-image golang
-dc rebuild myapp-monorepo
-```
-
 If your project uses overlay Containerfiles, update the overlay file and run:
 
 ```
@@ -444,6 +565,11 @@ dc rebuild myapp-monorepo
 ```
 
 `dc rebuild` recomposes and rebuilds project-scoped overlay images before recreating the container.
+
+This includes:
+
+- auto overlays from `$DC_OVERLAYS_DIR/team` and `$DC_OVERLAYS_DIR/user` (respecting saved `--no-team`/`--no-user` flags)
+- explicit overlays saved in project config (`CONTAINER_OVERLAY_FILES`)
 
 If you changed multiple Containerfiles and want everything refreshed:
 
@@ -455,7 +581,7 @@ dc rebuild myapp-monorepo
 Notes:
 
 - `dc rebuild-image` is backend-agnostic (apple/colima/docker/orbstack/podman via `CONTAINER_BACKEND` detection/override).
-- It rebuilds shared base/runtime images and legacy shared combined runtime images.
+- It rebuilds the shared base image (`dev-base`).
 - Project-scoped overlay images are rebuilt by `dc rebuild <project>` so each project uses current overlay files.
 
 ## Cleaning old dev-container images
@@ -472,7 +598,7 @@ Preview only:
 dc clean --dry-run
 ```
 
-Safety and scope:
+Safety and cleanup scope:
 
 - `dc clean` is backend-agnostic and uses the active backend (apple/colima/docker/orbstack/podman).
 - It only targets managed image repositories that match the dev-container naming pattern (`dev-*`) discovered from built-ins and `~/.config/dev-containers/*/config`.
@@ -519,7 +645,7 @@ Copies the dotfiles directory into the running container and executes its `insta
 ### What goes where
 
 - Shared essentials → `Containerfile.base`
-- Runtime guarantees (Node/Go/etc.) → runtime Containerfiles (`Containerfile.nodejs`, `Containerfile.golang`, ...)
+- Overlay examples (copy-first templates) → `Containerfiles/example/` (`Containerfile.all`, `Containerfile.nodejs`, `Containerfile.golang`)
 - Preferred day-to-day tools → user overlay Containerfile(s) layered during `dc new`/`dc rebuild`
 - Project secrets (PAT, SSH key, .npmrc) → `~/.config/dev-containers/<name>/`
 - Personal preferences (git identity, vim, shell) → your dotfiles repo

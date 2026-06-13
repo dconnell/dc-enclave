@@ -69,11 +69,11 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
       ssh_key_exists="✓"
     fi
 
-    type_value="${CONTAINER_TYPE:-${CONTAINER_RUNTIME_TYPES:-unknown}}"
+    scope_value="${CONTAINER_OVERLAY_SCOPES:-unknown}"
 
     echo "  [$project]  $is_running"
     echo "    Backend:      $resolved_backend"
-    echo "    Type:         $type_value"
+    echo "    Scopes:       $scope_value"
     echo "    Repos dir:    ${REPOS_DIR:-unknown}"
     echo "    GitHub token: $token_set"
     echo "    SSH key:      $ssh_key_exists"
@@ -89,5 +89,5 @@ echo "  dc start <name>       - start a container"
 echo "  dc shell <name>       - open a shell"
 echo "  dc stop <name>        - stop a container"
 echo "  dc rebuild <name>     - destroy and rebuild"
-echo "  dc rebuild-image      - rebuild images (all/base/nodejs/golang)"
+echo "  dc rebuild-image      - rebuild images (all/base)"
 echo "  dc clean              - remove old dev image tags (keep latest)"

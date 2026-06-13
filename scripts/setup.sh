@@ -99,6 +99,92 @@ for dir in "${DIRS[@]}"; do
   echo "  ✓ $dir"
 done
 
+GLOBAL_CONFIG="$HOME/.config/dev-containers/config"
+DEFAULT_OVERLAYS_DIR="$(dc_overlay_default_root)"
+
+echo ""
+echo "==> Bootstrapping global config..."
+if [[ ! -f "$GLOBAL_CONFIG" ]]; then
+  cat > "$GLOBAL_CONFIG" <<EOF
+# Global dev-containers config
+DC_OVERLAYS_DIR="$DEFAULT_OVERLAYS_DIR"
+EOF
+  echo "  ✓ Created $GLOBAL_CONFIG"
+fi
+
+if grep -Eq '^[[:space:]]*DC_OVERLAYS_DIR=' "$GLOBAL_CONFIG"; then
+  echo "  ✓ DC_OVERLAYS_DIR already present in $GLOBAL_CONFIG"
+else
+  {
+    echo ""
+    echo "# Global overlays root"
+    echo "DC_OVERLAYS_DIR=\"$DEFAULT_OVERLAYS_DIR\""
+  } >> "$GLOBAL_CONFIG"
+  echo "  ✓ Added DC_OVERLAYS_DIR to $GLOBAL_CONFIG"
+fi
+
+# shellcheck disable=SC1090
+source "$GLOBAL_CONFIG"
+
+if [[ -z "${DC_OVERLAYS_DIR:-}" ]]; then
+  echo "ERROR: DC_OVERLAYS_DIR is not set in ~/.config/dev-containers/config"
+  echo "Set DC_OVERLAYS_DIR and rerun scripts/setup.sh"
+  exit 1
+fi
+
+if [[ "$DC_OVERLAYS_DIR" == "~" || "$DC_OVERLAYS_DIR" == "~/"* ]]; then
+  DC_OVERLAYS_DIR="$HOME${DC_OVERLAYS_DIR#\~}"
+elif [[ "$DC_OVERLAYS_DIR" != /* ]]; then
+  DC_OVERLAYS_DIR="$HOME/.config/dev-containers/$DC_OVERLAYS_DIR"
+fi
+
+if [[ -e "$DC_OVERLAYS_DIR" && ! -d "$DC_OVERLAYS_DIR" ]]; then
+  echo "ERROR: Overlay root path is not a directory: $DC_OVERLAYS_DIR"
+  exit 1
+fi
+
+mkdir -p "$DC_OVERLAYS_DIR/team" "$DC_OVERLAYS_DIR/user"
+DC_OVERLAYS_DIR="$(cd -P "$DC_OVERLAYS_DIR" && pwd)"
+
+echo ""
+echo "==> Ensuring global overlay directories..."
+echo "  ✓ $DC_OVERLAYS_DIR/team"
+echo "  ✓ $DC_OVERLAYS_DIR/user"
+
+if [[ ! -f "$DC_OVERLAYS_DIR/team/README.md" ]]; then
+  cat > "$DC_OVERLAYS_DIR/team/README.md" <<EOF
+# Team overlays
+
+Optional team-wide overlay Containerfile fragments.
+
+Supported names:
+
+- Containerfile.all
+- Containerfile.nodejs
+- Containerfile.golang
+
+These files are automatically layered by dc new/dc rebuild unless disabled with --no-team.
+EOF
+  echo "  ✓ Created $DC_OVERLAYS_DIR/team/README.md"
+fi
+
+if [[ ! -f "$DC_OVERLAYS_DIR/user/README.md" ]]; then
+  cat > "$DC_OVERLAYS_DIR/user/README.md" <<EOF
+# User overlays
+
+Optional personal overlay Containerfile fragments.
+
+Supported names:
+
+- Containerfile.all
+- Containerfile.nodejs
+- Containerfile.golang
+
+These files are automatically layered by dc new/dc rebuild unless disabled with --no-user.
+EOF
+  echo "  ✓ Created $DC_OVERLAYS_DIR/user/README.md"
+fi
+
 # Create global gitignore for secrets.
 GLOBAL_GITIGNORE="$HOME/.gitignore_global"
 if ! grep -q "dev-containers secrets" "$GLOBAL_GITIGNORE" 2>/dev/null; then
@@ -115,29 +201,15 @@ EOF
   echo "✓ Updated global .gitignore at $GLOBAL_GITIGNORE"
 fi
 
-# Build base images.
+# Build base image.
 echo ""
-echo "==> Building base container images (this takes a few minutes)..."
+echo "==> Building base container image (this takes a few minutes)..."
 echo ""
 
 echo "--- Building dev-base ---"
 backend_build_image \
   "dev-base:latest" \
   "$ROOT_DIR/Containerfiles/Containerfile.base" \
-  "$ROOT_DIR"
-
-echo ""
-echo "--- Building dev-nodejs ---"
-backend_build_image \
-  "dev-nodejs:latest" \
-  "$ROOT_DIR/Containerfiles/Containerfile.nodejs" \
-  "$ROOT_DIR"
-
-echo ""
-echo "--- Building dev-golang ---"
-backend_build_image \
-  "dev-golang:latest" \
-  "$ROOT_DIR/Containerfiles/Containerfile.golang" \
   "$ROOT_DIR"
 
 # Optional VS Code extension check for Docker-compatible backends.

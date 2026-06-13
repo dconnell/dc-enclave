@@ -1,16 +1,13 @@
-# Optional user overlay fragment for preferred day-to-day tools.
+# Example overlay fragment applied to all scope combinations.
 #
-# Usage examples:
-#   dc new <name> nodejs,Containerfiles/Containerfile.user
-#   dc new <name> nodejs --overlay-containerfile Containerfiles/Containerfile.user
+# Copy this file to:
+# - $DC_OVERLAYS_DIR/team/Containerfile.all
+# - or $DC_OVERLAYS_DIR/user/Containerfile.all
 #
-# Notes:
-# - This file is a starter. Copy it and customize as needed.
-# - In overlay mode, FROM/CMD lines are ignored during composition.
+# Overlay fragments should avoid COPY/ADD.
 
 USER root
 
-# Convenience CLI tools previously baked into the base image.
 RUN apt-get update && apt-get install -y \
     vim \
     jq \
@@ -29,7 +26,6 @@ RUN apt-get update && apt-get install -y \
     dnsutils \
     && rm -rf /var/lib/apt/lists/*
 
-# PostgreSQL client (major-pinned where available).
 ARG POSTGRES_CLIENT_MAJOR=16
 RUN apt-get update && \
     if apt-cache show "postgresql-client-${POSTGRES_CLIENT_MAJOR}" >/dev/null 2>&1; then \
@@ -40,6 +36,5 @@ RUN apt-get update && \
     fi && \
     rm -rf /var/lib/apt/lists/*
 
-# OpenCode shell installer.
 USER dev
 RUN curl -fsSL https://opencode.ai/install | bash

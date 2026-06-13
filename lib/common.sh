@@ -54,3 +54,42 @@ dc_resolve_path() {
   parent="$(cd -P "$(dirname "$input")" && pwd)" || return 1
   printf '%s/%s\n' "$parent" "$(basename "$input")"
 }
+
+dc_global_config_path() {
+  printf '%s/.config/dev-containers/config\n' "$HOME"
+}
+
+dc_overlay_default_root() {
+  printf '%s/.config/dev-containers/overlays\n' "$HOME"
+}
+
+dc_load_global_config() {
+  local cfg=""
+  cfg="$(dc_global_config_path)"
+
+  if [[ ! -f "$cfg" ]]; then
+    dc_die "Global config not found: ~/.config/dev-containers/config
+Run: scripts/setup.sh"
+  fi
+
+  unset DC_OVERLAYS_DIR
+
+  # shellcheck disable=SC1090
+  source "$cfg"
+
+  if [[ -z "${DC_OVERLAYS_DIR:-}" ]]; then
+    dc_die "DC_OVERLAYS_DIR is not set in ~/.config/dev-containers/config
+Set DC_OVERLAYS_DIR and rerun scripts/setup.sh"
+  fi
+
+  if [[ "$DC_OVERLAYS_DIR" == "~" || "$DC_OVERLAYS_DIR" == "~/"* ]]; then
+    DC_OVERLAYS_DIR="$HOME${DC_OVERLAYS_DIR#\~}"
+  elif [[ "$DC_OVERLAYS_DIR" != /* ]]; then
+    DC_OVERLAYS_DIR="$HOME/.config/dev-containers/$DC_OVERLAYS_DIR"
+  fi
+
+  if [[ ! -d "$DC_OVERLAYS_DIR" ]]; then
+    dc_die "Overlay root does not exist: $DC_OVERLAYS_DIR
+Run: scripts/setup.sh"
+  fi
+}

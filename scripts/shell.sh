@@ -29,7 +29,7 @@ source "$ROOT_DIR/lib/container-backend.sh"
 
 CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'. Run: dc new $PROJECT <type>"
+  echo "ERROR: No config for '$PROJECT'. Run: dc new $PROJECT <scope>"
   exit 1
 fi
 

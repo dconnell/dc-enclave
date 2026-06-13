@@ -4,8 +4,8 @@
 # =============================================================================
 set -euo pipefail
 
-PROJECT="${1:?Usage: new-container.sh <project-name> <type[,type...]> [port:port ...]}"
-TYPE_INPUT="${2:?Specify type(s): nodejs, golang, or nodejs,golang[,overlay-path]}"
+PROJECT="${1:?Usage: new-container.sh <project-name> <scope[,scope...|overlay-path...]> [--repo-path <path>] [--overlay-containerfile <file> ...] [--no-team] [--no-user] [port:port ...]}"
+SCOPE_INPUT="${2:?Specify scope(s): nodejs, golang, or a comma-separated mix with optional overlay path tokens}"
 shift 2
 
 if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
@@ -17,8 +17,18 @@ fi
 PORTS=()
 EXTRA_OVERLAYS=()
 REPO_PATH_OVERRIDE=""
+AUTO_OVERLAYS_TEAM=1
+AUTO_OVERLAYS_USER=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --no-team)
+      AUTO_OVERLAYS_TEAM=0
+      shift
+      ;;
+    --no-user)
+      AUTO_OVERLAYS_USER=0
+      shift
+      ;;
     --overlay-containerfile)
       if [[ $# -lt 2 || "$2" == --* ]]; then
         echo "ERROR: --overlay-containerfile requires a file path argument"
@@ -71,30 +81,35 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
+dc_load_global_config
+
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
   exit 1
 fi
 
-TYPE_ORDER=(nodejs golang)
-declare -A TYPE_SELECTED=()
+declare -A SCOPE_SELECTED=()
 OVERLAY_FILES=()
+SELECTED_SCOPES=()
 
-IFS=',' read -r -a RAW_TYPES <<< "$TYPE_INPUT"
-for raw_type in "${RAW_TYPES[@]}"; do
-  normalized_type="${raw_type//[[:space:]]/}"
+IFS=',' read -r -a RAW_SCOPES <<< "$SCOPE_INPUT"
+for raw_scope in "${RAW_SCOPES[@]}"; do
+  normalized_scope="${raw_scope//[[:space:]]/}"
 
-  case "$normalized_type" in
+  case "$normalized_scope" in
     nodejs|golang)
-      TYPE_SELECTED["$normalized_type"]=1
+      if [[ -z "${SCOPE_SELECTED[$normalized_scope]-}" ]]; then
+        SCOPE_SELECTED["$normalized_scope"]=1
+        SELECTED_SCOPES+=("$normalized_scope")
+      fi
       ;;
     "")
       ;;
     *)
-      overlay_candidate="$(dc_resolve_path "$normalized_type")" || {
-        echo "ERROR: Unknown type token '$normalized_type'."
-        echo "  Supported runtime types: nodejs, golang"
+      overlay_candidate="$(dc_resolve_path "$normalized_scope")" || {
+        echo "ERROR: Unknown scope token '$normalized_scope'."
+        echo "  Supported overlay scopes: nodejs, golang"
         echo "  Or provide an existing overlay Containerfile path."
         exit 1
       }
@@ -102,8 +117,8 @@ for raw_type in "${RAW_TYPES[@]}"; do
       if [[ -f "$overlay_candidate" ]]; then
         OVERLAY_FILES+=("$overlay_candidate")
       else
-        echo "ERROR: Unknown type token '$normalized_type'."
-        echo "  Supported runtime types: nodejs, golang"
+        echo "ERROR: Unknown scope token '$normalized_scope'."
+        echo "  Supported overlay scopes: nodejs, golang"
         echo "  Or provide an existing overlay Containerfile path."
         exit 1
       fi
@@ -134,26 +149,32 @@ for overlay_file in "${OVERLAY_FILES[@]}"; do
 done
 OVERLAY_FILES=("${DEDUPED_OVERLAYS[@]}")
 
-RUNTIME_TYPES=()
-for runtime_type in "${TYPE_ORDER[@]}"; do
-  if [[ -n "${TYPE_SELECTED[$runtime_type]-}" ]]; then
-    RUNTIME_TYPES+=("$runtime_type")
-  fi
-done
-
-if [[ ${#RUNTIME_TYPES[@]} -eq 0 ]]; then
-  echo "ERROR: No valid runtime type selected. Use nodejs, golang, or both."
+if [[ ${#SELECTED_SCOPES[@]} -eq 0 ]]; then
+  echo "ERROR: No valid overlay scope selected. Use nodejs, golang, or both."
   exit 1
 fi
 
-RUNTIME_CSV="$(dc_join_by ',' "${RUNTIME_TYPES[@]}")"
+SCOPE_CSV="$(dc_join_by ',' "${SELECTED_SCOPES[@]}")"
 HAS_NODEJS=false
-if [[ -n "${TYPE_SELECTED[nodejs]-}" ]]; then
+if [[ -n "${SCOPE_SELECTED[nodejs]-}" ]]; then
   HAS_NODEJS=true
 fi
 
 IMAGE_MODE="shared"
-if [[ ${#RUNTIME_TYPES[@]} -gt 1 || ${#OVERLAY_FILES[@]} -gt 0 ]]; then
+AUTO_OVERLAY_PRESENT=0
+SCOPES=(all "${SELECTED_SCOPES[@]}")
+for scope in "${SCOPES[@]}"; do
+  if [[ "$AUTO_OVERLAYS_TEAM" == "1" && -f "$DC_OVERLAYS_DIR/team/Containerfile.$scope" ]]; then
+    AUTO_OVERLAY_PRESENT=1
+    break
+  fi
+  if [[ "$AUTO_OVERLAYS_USER" == "1" && -f "$DC_OVERLAYS_DIR/user/Containerfile.$scope" ]]; then
+    AUTO_OVERLAY_PRESENT=1
+    break
+  fi
+done
+
+if [[ ${#OVERLAY_FILES[@]} -gt 0 || "$AUTO_OVERLAY_PRESENT" == "1" ]]; then
   IMAGE_MODE="project"
 fi
 
@@ -199,21 +220,6 @@ if ! backend_image_exists "dev-base:latest"; then
   exit 1
 fi
 
-MISSING_IMAGES=()
-for runtime_type in "${RUNTIME_TYPES[@]}"; do
-  if ! backend_image_exists "dev-${runtime_type}:latest"; then
-    MISSING_IMAGES+=("dev-${runtime_type}:latest")
-  fi
-done
-if [[ ${#MISSING_IMAGES[@]} -gt 0 ]]; then
-  echo "ERROR: Required runtime image(s) not found on backend '$ACTIVE_BACKEND':"
-  for missing in "${MISSING_IMAGES[@]}"; do
-    echo "  - $missing"
-  done
-  echo "  Run setup first: CONTAINER_BACKEND=$ACTIVE_BACKEND scripts/setup.sh"
-  exit 1
-fi
-
 if backend_exists "$PROJECT"; then
   echo "ERROR: Container '$PROJECT' already exists."
   echo "To rebuild: dc rebuild $PROJECT"
@@ -244,29 +250,38 @@ REPOS_DIR="$(dc_resolve_path "$repo_target")" || {
 
 COMPOSED_CONTAINERFILE=""
 if [[ "$IMAGE_MODE" == "shared" ]]; then
-  IMAGE="dev-${RUNTIME_TYPES[0]}:latest"
-  DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.${RUNTIME_TYPES[0]}"
+  IMAGE="dev-base:latest"
+  DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.base"
 else
   IMAGE="dev-${PROJECT}:latest"
   COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${PROJECT}"
   DEVCONTAINER_BUILD_FILE="$COMPOSED_CONTAINERFILE"
 
-  echo "==> Generating composed Containerfile for project image..."
-  bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$RUNTIME_CSV" "${OVERLAY_FILES[@]}"
+  COMPOSE_ARGS=()
+  if [[ "$AUTO_OVERLAYS_TEAM" == "0" ]]; then
+    COMPOSE_ARGS+=(--no-team)
+  fi
+  if [[ "$AUTO_OVERLAYS_USER" == "0" ]]; then
+    COMPOSE_ARGS+=(--no-user)
+  fi
 
-  echo "==> Building project-scoped image: $IMAGE"
+  echo "==> Generating composed Containerfile for project image..."
+  bash "$COMPOSE_SCRIPT" "${COMPOSE_ARGS[@]}" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV" "${OVERLAY_FILES[@]}"
+
+  echo "==> Building overlay-scoped project image: $IMAGE"
   backend_build_image "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
 fi
 
 echo "======================================================================"
 echo "Creating container: $PROJECT"
-echo "Runtime(s): $RUNTIME_CSV | Image: $IMAGE | Backend: $ACTIVE_BACKEND"
+echo "Overlay scope(s): $SCOPE_CSV | Image: $IMAGE | Backend: $ACTIVE_BACKEND"
 if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
   echo "Resources: ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
 fi
 if [[ ${#OVERLAY_FILES[@]} -gt 0 ]]; then
   echo "Overlay Containerfiles: ${#OVERLAY_FILES[@]}"
 fi
+echo "Auto overlays: team=$AUTO_OVERLAYS_TEAM user=$AUTO_OVERLAYS_USER"
 echo "======================================================================"
 echo ""
 
@@ -321,12 +336,13 @@ cat > "$CONFIG_FILE" <<EOF
 # dev-container config for: $PROJECT
 # Generated: $(date)
 CONTAINER_PROJECT="$PROJECT"
-CONTAINER_TYPE="$RUNTIME_CSV"
-CONTAINER_RUNTIME_TYPES="$RUNTIME_CSV"
+CONTAINER_OVERLAY_SCOPES="$SCOPE_CSV"
 CONTAINER_IMAGE="$IMAGE"
 CONTAINER_IMAGE_MODE="$IMAGE_MODE"
 CONTAINER_BACKEND="$ACTIVE_BACKEND"
 CONTAINER_COMPOSED_CONTAINERFILE="$COMPOSED_CONTAINERFILE"
+CONTAINER_AUTO_OVERLAYS_TEAM="$AUTO_OVERLAYS_TEAM"
+CONTAINER_AUTO_OVERLAYS_USER="$AUTO_OVERLAYS_USER"
 CONTAINER_CPUS="${CONTAINER_CPUS:-}"
 CONTAINER_MEMORY="${CONTAINER_MEMORY:-}"
 REPOS_DIR="$REPOS_DIR"

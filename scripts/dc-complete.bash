@@ -35,12 +35,12 @@ _dc_subcommands() {
     "help"
 }
 
-_dc_types() {
+_dc_scopes() {
   printf '%s\n' "nodejs" "golang" "nodejs,golang"
 }
 
 _dc_rebuild_image_targets() {
-  printf '%s\n' "all" "base" "nodejs" "golang"
+  printf '%s\n' "all" "base"
 }
 
 _dc_complete() {
@@ -72,10 +72,10 @@ _dc_complete() {
         return 0
       fi
       if [[ $COMP_CWORD -eq 3 ]]; then
-        COMPREPLY=( $(compgen -W "$(_dc_types)" -- "$cur") )
+        COMPREPLY=( $(compgen -W "$(_dc_scopes)" -- "$cur") )
         return 0
       fi
-      COMPREPLY=( $(compgen -W "--repo-path --overlay-containerfile --cpus --memory" -- "$cur") )
+      COMPREPLY=( $(compgen -W "--repo-path --overlay-containerfile --cpus --memory --no-team --no-user" -- "$cur") )
       ;;
     start|stop|shell|rebuild|install)
       if [[ $COMP_CWORD -eq 2 ]]; then

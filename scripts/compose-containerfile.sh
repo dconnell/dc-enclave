@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# compose-containerfile.sh - Compose runtime Containerfiles plus optional user
-# overlay fragments into one generated Containerfile.
+# compose-containerfile.sh - Compose base image plus auto/explicit overlay
+# fragments into one generated Containerfile.
 # =============================================================================
 set -euo pipefail
 
@@ -17,13 +17,48 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$ROOT_DIR/lib/common.sh"
 
+usage() {
+  echo "Usage: compose-containerfile.sh [--no-team] [--no-user] <output-file> <overlay-scopes-csv> [explicit-overlay-file ...]"
+}
+
+INCLUDE_TEAM=1
+INCLUDE_USER=1
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-team)
+      INCLUDE_TEAM=0
+      shift
+      ;;
+    --no-user)
+      INCLUDE_USER=0
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      usage
+      dc_die "Unknown flag for compose-containerfile.sh: $1"
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
 if [[ $# -lt 2 ]]; then
-  echo "Usage: compose-containerfile.sh <output-file> <runtime-types-csv> [overlay-file ...]"
+  usage
   exit 1
 fi
 
 OUTPUT_FILE_RAW="$1"
-RUNTIME_INPUT="$2"
+SCOPE_INPUT="$2"
 shift 2
 
 if [[ "$OUTPUT_FILE_RAW" == /* ]]; then
@@ -36,14 +71,6 @@ OUTPUT_DIR="$(dirname "$OUTPUT_FILE")"
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd -P "$OUTPUT_DIR" && pwd)"
 OUTPUT_FILE="$OUTPUT_DIR/$(basename "$OUTPUT_FILE")"
-
-TYPE_ORDER=(nodejs golang)
-declare -A TYPE_SELECTED=()
-
-display_name() {
-  local file_path="$1"
-  printf '%s' "$(basename "$file_path")"
-}
 
 emit_fragment() {
   local fragment_file="$1"
@@ -63,73 +90,97 @@ validate_overlay_file() {
   local overlay_file="$1"
 
   if grep -Eiq '^[[:space:]]*(COPY|ADD)[[:space:]]+' "$overlay_file"; then
-    echo "ERROR: Overlay file contains COPY/ADD, which is disallowed in phase 1: $overlay_file"
-    echo "  Use RUN/ENV/ARG/SHELL/WORKDIR/USER instructions only."
-    exit 1
+    dc_die "Overlay file contains COPY/ADD, which is disallowed: $overlay_file
+Use RUN/ENV/ARG/SHELL/WORKDIR/USER only."
   fi
 }
 
-IFS=',' read -r -a RAW_TYPES <<< "$RUNTIME_INPUT"
-for raw_type in "${RAW_TYPES[@]}"; do
-  normalized_type="${raw_type//[[:space:]]/}"
-  case "$normalized_type" in
+AUTO_OVERLAY_FILES=()
+AUTO_OVERLAY_LABELS=()
+
+append_auto_overlay() {
+  local namespace="$1"
+  local scope="$2"
+  local overlay_file="$DC_OVERLAYS_DIR/$namespace/Containerfile.$scope"
+
+  if [[ -f "$overlay_file" ]]; then
+    validate_overlay_file "$overlay_file"
+    AUTO_OVERLAY_FILES+=("$overlay_file")
+    AUTO_OVERLAY_LABELS+=("$namespace/$scope")
+  fi
+}
+
+SELECTED_SCOPES=()
+declare -A SCOPE_SELECTED=()
+IFS=',' read -r -a RAW_SCOPES <<< "$SCOPE_INPUT"
+for raw_scope in "${RAW_SCOPES[@]}"; do
+  normalized_scope="${raw_scope//[[:space:]]/}"
+  case "$normalized_scope" in
     nodejs|golang)
-      TYPE_SELECTED["$normalized_type"]=1
+      if [[ -z "${SCOPE_SELECTED[$normalized_scope]-}" ]]; then
+        SCOPE_SELECTED["$normalized_scope"]=1
+        SELECTED_SCOPES+=("$normalized_scope")
+      fi
       ;;
     "")
       ;;
     *)
-      echo "ERROR: Unknown runtime type '$normalized_type'. Supported: nodejs, golang"
-      exit 1
+      dc_die "Unknown overlay scope '$normalized_scope'. Supported: nodejs, golang"
       ;;
   esac
 done
 
-RUNTIME_TYPES=()
-for runtime_type in "${TYPE_ORDER[@]}"; do
-  if [[ -n "${TYPE_SELECTED[$runtime_type]-}" ]]; then
-    RUNTIME_TYPES+=("$runtime_type")
+if [[ ${#SELECTED_SCOPES[@]} -eq 0 ]]; then
+  dc_die "At least one overlay scope is required to compose a Containerfile."
+fi
+
+dc_load_global_config
+
+if [[ "$INCLUDE_TEAM" == "1" ]]; then
+  append_auto_overlay team all
+fi
+if [[ "$INCLUDE_USER" == "1" ]]; then
+  append_auto_overlay user all
+fi
+
+for scope in "${SELECTED_SCOPES[@]}"; do
+  if [[ "$INCLUDE_TEAM" == "1" ]]; then
+    append_auto_overlay team "$scope"
+  fi
+  if [[ "$INCLUDE_USER" == "1" ]]; then
+    append_auto_overlay user "$scope"
   fi
 done
 
-if [[ ${#RUNTIME_TYPES[@]} -eq 0 ]]; then
-  echo "ERROR: At least one runtime type is required to compose a Containerfile."
-  exit 1
-fi
-
-OVERLAY_FILES=()
+EXPLICIT_OVERLAY_FILES=()
 for overlay_input in "$@"; do
   [[ -z "$overlay_input" ]] && continue
 
   overlay_file="$(dc_resolve_path "$overlay_input")" || {
-    echo "ERROR: Overlay path could not be resolved: $overlay_input"
-    exit 1
+    dc_die "Overlay path could not be resolved: $overlay_input"
   }
 
   if [[ ! -f "$overlay_file" ]]; then
-    echo "ERROR: Overlay Containerfile not found: $overlay_file"
-    exit 1
+    dc_die "Overlay Containerfile not found: $overlay_file"
   fi
 
   validate_overlay_file "$overlay_file"
-  OVERLAY_FILES+=("$overlay_file")
+  EXPLICIT_OVERLAY_FILES+=("$overlay_file")
 done
+
+SELECTED_SCOPE_SUMMARY="$(dc_join_by ', ' "${SELECTED_SCOPES[@]}")"
 
 {
   echo "FROM dev-base:latest"
+  echo ""
+  echo "# Selected overlay scopes: $SELECTED_SCOPE_SUMMARY"
 
-  for runtime_type in "${RUNTIME_TYPES[@]}"; do
-    runtime_containerfile="$ROOT_DIR/Containerfiles/Containerfile.$runtime_type"
-    if [[ ! -f "$runtime_containerfile" ]]; then
-      echo "ERROR: Missing runtime Containerfile: $runtime_containerfile" >&2
-      exit 1
-    fi
-
-    emit_fragment "$runtime_containerfile" "Containerfile.$runtime_type"
+  for i in "${!AUTO_OVERLAY_FILES[@]}"; do
+    emit_fragment "${AUTO_OVERLAY_FILES[$i]}" "overlay:auto:${AUTO_OVERLAY_LABELS[$i]}"
   done
 
-  for overlay_file in "${OVERLAY_FILES[@]}"; do
-    emit_fragment "$overlay_file" "overlay:$(display_name "$overlay_file")"
+  for overlay_file in "${EXPLICIT_OVERLAY_FILES[@]}"; do
+    emit_fragment "$overlay_file" "overlay:explicit:$(basename "$overlay_file")"
   done
 
   echo ""
@@ -137,4 +188,20 @@ done
   echo 'CMD ["sleep", "infinity"]'
 } > "$OUTPUT_FILE"
 
+AUTO_OVERLAY_SUMMARY="none"
+if [[ ${#AUTO_OVERLAY_LABELS[@]} -gt 0 ]]; then
+  AUTO_OVERLAY_SUMMARY="$(dc_join_by ', ' "${AUTO_OVERLAY_LABELS[@]}")"
+fi
+
+EXPLICIT_OVERLAY_SUMMARY="none"
+if [[ ${#EXPLICIT_OVERLAY_FILES[@]} -gt 0 ]]; then
+  EXPLICIT_NAMES=()
+  for overlay_file in "${EXPLICIT_OVERLAY_FILES[@]}"; do
+    EXPLICIT_NAMES+=("$(basename "$overlay_file")")
+  done
+  EXPLICIT_OVERLAY_SUMMARY="$(dc_join_by ', ' "${EXPLICIT_NAMES[@]}")"
+fi
+
 echo "✓ Generated composed Containerfile: $OUTPUT_FILE"
+echo "  Auto overlays included: $AUTO_OVERLAY_SUMMARY"
+echo "  Explicit overlays: $EXPLICIT_OVERLAY_SUMMARY"
