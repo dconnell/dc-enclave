@@ -14,5 +14,4 @@ Typical overlay workflow:
 Supported auto-layer filenames in team/user namespaces:
 
 - `Containerfile.all`
-- `Containerfile.nodejs`
-- `Containerfile.golang`
+- `Containerfile.<scope>` (any scope name you choose)

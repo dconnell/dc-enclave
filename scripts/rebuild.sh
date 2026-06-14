@@ -32,6 +32,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
+source "$ROOT_DIR/lib/vscode.sh"
 
 CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
@@ -42,27 +43,19 @@ fi
 source "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
+DOCKER_COMPATIBLE=false
+if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
+  DOCKER_COMPATIBLE=true
+fi
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 
 OVERLAY_SCOPES_CSV="${CONTAINER_OVERLAY_SCOPES:-}"
-if [[ -z "$OVERLAY_SCOPES_CSV" ]]; then
-  echo "ERROR: Missing CONTAINER_OVERLAY_SCOPES in $CONFIG"
-  echo "Recreate the project with: dc new <name> <scope[,scope...]>"
-  exit 1
-fi
 
 IMAGE_MODE="${CONTAINER_IMAGE_MODE:-shared}"
 COMPOSED_CONTAINERFILE="${CONTAINER_COMPOSED_CONTAINERFILE:-}"
 OVERLAY_FILES=()
 if declare -p CONTAINER_OVERLAY_FILES >/dev/null 2>&1; then
   OVERLAY_FILES=("${CONTAINER_OVERLAY_FILES[@]}")
-fi
-AUTO_OVERLAYS_TEAM="${CONTAINER_AUTO_OVERLAYS_TEAM:-1}"
-AUTO_OVERLAYS_USER="${CONTAINER_AUTO_OVERLAYS_USER:-1}"
-
-HAS_NODEJS=false
-if [[ ",$OVERLAY_SCOPES_CSV," == *",nodejs,"* ]]; then
-  HAS_NODEJS=true
 fi
 
 echo "======================================================================"
@@ -75,9 +68,8 @@ echo ""
 echo "  Container:  ${CONTAINER_PROJECT:-$PROJECT}"
 echo "  Image:      ${CONTAINER_IMAGE:-unknown}"
 echo "  Image mode: $IMAGE_MODE"
-echo "  Overlay scope(s): $OVERLAY_SCOPES_CSV"
+echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
 echo "  Backend:    $ACTIVE_BACKEND"
-echo "  Auto layers: team=$AUTO_OVERLAYS_TEAM user=$AUTO_OVERLAYS_USER"
 echo "  Repos:      ${REPOS_DIR:-unknown} (PRESERVED - verify your commits separately)"
 if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
   echo "  Resources:  ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
@@ -154,17 +146,9 @@ if [[ "$IMAGE_MODE" == "project" ]]; then
     COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${PROJECT}"
   fi
 
-  COMPOSE_ARGS=()
-  if [[ "$AUTO_OVERLAYS_TEAM" == "0" ]]; then
-    COMPOSE_ARGS+=(--no-team)
-  fi
-  if [[ "$AUTO_OVERLAYS_USER" == "0" ]]; then
-    COMPOSE_ARGS+=(--no-user)
-  fi
-
   echo ""
   echo "==> Step 4: Rebuilding overlay-scoped project image from selected scopes + overlays..."
-  bash "$COMPOSE_SCRIPT" "${COMPOSE_ARGS[@]}" "$COMPOSED_CONTAINERFILE" "$OVERLAY_SCOPES_CSV" "${OVERLAY_FILES[@]}"
+  bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$OVERLAY_SCOPES_CSV" "${OVERLAY_FILES[@]}"
   backend_build_image "$CONTAINER_IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
   echo "  ✓ Project image rebuilt: $CONTAINER_IMAGE"
 fi
@@ -173,7 +157,7 @@ echo ""
 echo "==> Step $CREATE_STEP: Recreating container from $CONTAINER_IMAGE..."
 
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
-if $HAS_NODEJS && [[ -n "${NPMRC_PATH:-}" ]]; then
+if [[ -n "${NPMRC_PATH:-}" ]]; then
   VOLUME_ARGS+=(--volume "$NPMRC_PATH:/home/dev/.npmrc:ro")
 fi
 
@@ -218,13 +202,28 @@ echo "  ✓ SSH key injected"
 backend_exec "$PROJECT" git config --global url."git@github.com:".insteadOf "https://github.com/"
 echo "  ✓ git configured (SSH insteadOf)"
 
+if $DOCKER_COMPATIBLE; then
+  echo ""
+  echo "==> Step $((START_STEP + 1)): Seeding VS Code named attach config..."
+  ATTACH_CONFIG_COUNT=0
+  while IFS= read -r attach_config_file; do
+    [[ -z "$attach_config_file" ]] && continue
+    ATTACH_CONFIG_COUNT=$((ATTACH_CONFIG_COUNT + 1))
+    echo "  ✓ $attach_config_file"
+  done < <(dc_vscode_seed_named_attach_config "$PROJECT" "/workspace")
+
+  if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
+    echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
+  fi
+fi
+
 echo ""
 echo "======================================================================"
 echo "Rebuild complete: $PROJECT"
 echo "======================================================================"
 echo ""
 echo "  Container recreated from $CONTAINER_IMAGE ($IMAGE_MODE mode)"
-echo "  Overlay scope(s): $OVERLAY_SCOPES_CSV"
+echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
 if [[ "$IMAGE_MODE" == "project" ]]; then
   echo "  Project image was rebuilt with current overlay files."
 elif [[ "$IMAGE_MODE" == "shared" ]]; then

@@ -18,22 +18,11 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 
 usage() {
-  echo "Usage: compose-containerfile.sh [--no-team] [--no-user] <output-file> <overlay-scopes-csv> [explicit-overlay-file ...]"
+  echo "Usage: compose-containerfile.sh <output-file> <overlay-scopes-csv> [explicit-overlay-file ...]"
 }
-
-INCLUDE_TEAM=1
-INCLUDE_USER=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --no-team)
-      INCLUDE_TEAM=0
-      shift
-      ;;
-    --no-user)
-      INCLUDE_USER=0
-      shift
-      ;;
     --help|-h)
       usage
       exit 0
@@ -107,6 +96,9 @@ append_auto_overlay() {
     validate_overlay_file "$overlay_file"
     AUTO_OVERLAY_FILES+=("$overlay_file")
     AUTO_OVERLAY_LABELS+=("$namespace/$scope")
+    echo "  $namespace/$scope: found"
+  else
+    echo "  $namespace/$scope: not found, skipped"
   fi
 }
 
@@ -116,40 +108,26 @@ IFS=',' read -r -a RAW_SCOPES <<< "$SCOPE_INPUT"
 for raw_scope in "${RAW_SCOPES[@]}"; do
   normalized_scope="${raw_scope//[[:space:]]/}"
   case "$normalized_scope" in
-    nodejs|golang)
+    "")
+      ;;
+    *)
       if [[ -z "${SCOPE_SELECTED[$normalized_scope]-}" ]]; then
         SCOPE_SELECTED["$normalized_scope"]=1
         SELECTED_SCOPES+=("$normalized_scope")
       fi
       ;;
-    "")
-      ;;
-    *)
-      dc_die "Unknown overlay scope '$normalized_scope'. Supported: nodejs, golang"
-      ;;
   esac
 done
 
-if [[ ${#SELECTED_SCOPES[@]} -eq 0 ]]; then
-  dc_die "At least one overlay scope is required to compose a Containerfile."
-fi
-
 dc_load_global_config
 
-if [[ "$INCLUDE_TEAM" == "1" ]]; then
-  append_auto_overlay team all
-fi
-if [[ "$INCLUDE_USER" == "1" ]]; then
-  append_auto_overlay user all
-fi
+echo "==> Layering overlays:"
+append_auto_overlay team all
+append_auto_overlay user all
 
 for scope in "${SELECTED_SCOPES[@]}"; do
-  if [[ "$INCLUDE_TEAM" == "1" ]]; then
-    append_auto_overlay team "$scope"
-  fi
-  if [[ "$INCLUDE_USER" == "1" ]]; then
-    append_auto_overlay user "$scope"
-  fi
+  append_auto_overlay team "$scope"
+  append_auto_overlay user "$scope"
 done
 
 EXPLICIT_OVERLAY_FILES=()
@@ -168,7 +146,11 @@ for overlay_input in "$@"; do
   EXPLICIT_OVERLAY_FILES+=("$overlay_file")
 done
 
-SELECTED_SCOPE_SUMMARY="$(dc_join_by ', ' "${SELECTED_SCOPES[@]}")"
+if [[ ${#SELECTED_SCOPES[@]} -gt 0 ]]; then
+  SELECTED_SCOPE_SUMMARY="$(dc_join_by ', ' "${SELECTED_SCOPES[@]}")"
+else
+  SELECTED_SCOPE_SUMMARY="(none)"
+fi
 
 {
   echo "FROM dev-base:latest"

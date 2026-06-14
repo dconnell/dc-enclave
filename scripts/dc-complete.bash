@@ -36,7 +36,35 @@ _dc_subcommands() {
 }
 
 _dc_scopes() {
-  printf '%s\n' "nodejs" "golang" "nodejs,golang"
+  local config="$HOME/.config/dev-containers/config"
+  local overlays_dir=""
+  local f name
+  local -A seen=()
+
+  if [[ -f "$config" ]]; then
+    overlays_dir="$(bash -c 'source "$1" 2>/dev/null && printf "%s" "${DC_OVERLAYS_DIR:-}"' _ "$config")"
+    if [[ -n "$overlays_dir" ]]; then
+      if [[ "$overlays_dir" == "~" || "$overlays_dir" == "~/"* ]]; then
+        overlays_dir="$HOME${overlays_dir#\~}"
+      elif [[ "$overlays_dir" != /* ]]; then
+        overlays_dir="$HOME/.config/dev-containers/$overlays_dir"
+      fi
+    fi
+  fi
+
+  if [[ -z "$overlays_dir" ]]; then
+    overlays_dir="$HOME/.config/dev-containers/overlays"
+  fi
+
+  for f in "$overlays_dir"/team/Containerfile.* "$overlays_dir"/user/Containerfile.*; do
+    [[ -f "$f" ]] || continue
+    name="$(basename "$f")"
+    name="${name#Containerfile.}"
+    [[ -z "$name" ]] && continue
+    [[ -n "${seen[$name]:-}" ]] && continue
+    seen["$name"]=1
+    printf '%s\n' "$name"
+  done
 }
 
 _dc_rebuild_image_targets() {
@@ -71,11 +99,12 @@ _dc_complete() {
       if [[ "$prev" == "--cpus" || "$prev" == "--memory" ]]; then
         return 0
       fi
+      local flags="--repo-path --overlay-containerfile --cpus --memory"
       if [[ $COMP_CWORD -eq 3 ]]; then
-        COMPREPLY=( $(compgen -W "$(_dc_scopes)" -- "$cur") )
-        return 0
+        COMPREPLY=( $(compgen -W "$(_dc_scopes) $flags" -- "$cur") )
+      else
+        COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
       fi
-      COMPREPLY=( $(compgen -W "--repo-path --overlay-containerfile --cpus --memory --no-team --no-user" -- "$cur") )
       ;;
     start|stop|shell|rebuild|install)
       if [[ $COMP_CWORD -eq 2 ]]; then

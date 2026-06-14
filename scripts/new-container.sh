@@ -4,9 +4,13 @@
 # =============================================================================
 set -euo pipefail
 
-PROJECT="${1:?Usage: new-container.sh <project-name> <scope[,scope...|overlay-path...]> [--repo-path <path>] [--overlay-containerfile <file> ...] [--no-team] [--no-user] [port:port ...]}"
-SCOPE_INPUT="${2:?Specify scope(s): nodejs, golang, or a comma-separated mix with optional overlay path tokens}"
-shift 2
+PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...|overlay-path...]] [--repo-path <path>] [--overlay-containerfile <file> ...] [port:port ...]}"
+shift
+SCOPE_INPUT=""
+if [[ $# -gt 0 && "$1" != --* && ! "$1" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
+  SCOPE_INPUT="$1"
+  shift
+fi
 
 if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
   echo "ERROR: Invalid project name '$PROJECT'."
@@ -17,18 +21,8 @@ fi
 PORTS=()
 EXTRA_OVERLAYS=()
 REPO_PATH_OVERRIDE=""
-AUTO_OVERLAYS_TEAM=1
-AUTO_OVERLAYS_USER=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --no-team)
-      AUTO_OVERLAYS_TEAM=0
-      shift
-      ;;
-    --no-user)
-      AUTO_OVERLAYS_USER=0
-      shift
-      ;;
     --overlay-containerfile)
       if [[ $# -lt 2 || "$2" == --* ]]; then
         echo "ERROR: --overlay-containerfile requires a file path argument"
@@ -80,6 +74,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
+source "$ROOT_DIR/lib/vscode.sh"
 
 dc_load_global_config
 
@@ -98,29 +93,17 @@ for raw_scope in "${RAW_SCOPES[@]}"; do
   normalized_scope="${raw_scope//[[:space:]]/}"
 
   case "$normalized_scope" in
-    nodejs|golang)
-      if [[ -z "${SCOPE_SELECTED[$normalized_scope]-}" ]]; then
-        SCOPE_SELECTED["$normalized_scope"]=1
-        SELECTED_SCOPES+=("$normalized_scope")
-      fi
-      ;;
     "")
       ;;
     *)
-      overlay_candidate="$(dc_resolve_path "$normalized_scope")" || {
-        echo "ERROR: Unknown scope token '$normalized_scope'."
-        echo "  Supported overlay scopes: nodejs, golang"
-        echo "  Or provide an existing overlay Containerfile path."
-        exit 1
-      }
-
-      if [[ -f "$overlay_candidate" ]]; then
+      overlay_candidate="$(dc_resolve_path "$normalized_scope" 2>/dev/null)" || overlay_candidate=""
+      if [[ -n "$overlay_candidate" && -f "$overlay_candidate" ]]; then
         OVERLAY_FILES+=("$overlay_candidate")
       else
-        echo "ERROR: Unknown scope token '$normalized_scope'."
-        echo "  Supported overlay scopes: nodejs, golang"
-        echo "  Or provide an existing overlay Containerfile path."
-        exit 1
+        if [[ -z "${SCOPE_SELECTED[$normalized_scope]-}" ]]; then
+          SCOPE_SELECTED["$normalized_scope"]=1
+          SELECTED_SCOPES+=("$normalized_scope")
+        fi
       fi
       ;;
   esac
@@ -149,26 +132,21 @@ for overlay_file in "${OVERLAY_FILES[@]}"; do
 done
 OVERLAY_FILES=("${DEDUPED_OVERLAYS[@]}")
 
-if [[ ${#SELECTED_SCOPES[@]} -eq 0 ]]; then
-  echo "ERROR: No valid overlay scope selected. Use nodejs, golang, or both."
-  exit 1
-fi
-
-SCOPE_CSV="$(dc_join_by ',' "${SELECTED_SCOPES[@]}")"
-HAS_NODEJS=false
-if [[ -n "${SCOPE_SELECTED[nodejs]-}" ]]; then
-  HAS_NODEJS=true
+if [[ ${#SELECTED_SCOPES[@]} -gt 0 ]]; then
+  SCOPE_CSV="$(dc_join_by ',' "${SELECTED_SCOPES[@]}")"
+else
+  SCOPE_CSV=""
 fi
 
 IMAGE_MODE="shared"
 AUTO_OVERLAY_PRESENT=0
 SCOPES=(all "${SELECTED_SCOPES[@]}")
 for scope in "${SCOPES[@]}"; do
-  if [[ "$AUTO_OVERLAYS_TEAM" == "1" && -f "$DC_OVERLAYS_DIR/team/Containerfile.$scope" ]]; then
+  if [[ -f "$DC_OVERLAYS_DIR/team/Containerfile.$scope" ]]; then
     AUTO_OVERLAY_PRESENT=1
     break
   fi
-  if [[ "$AUTO_OVERLAYS_USER" == "1" && -f "$DC_OVERLAYS_DIR/user/Containerfile.$scope" ]]; then
+  if [[ -f "$DC_OVERLAYS_DIR/user/Containerfile.$scope" ]]; then
     AUTO_OVERLAY_PRESENT=1
     break
   fi
@@ -257,16 +235,8 @@ else
   COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${PROJECT}"
   DEVCONTAINER_BUILD_FILE="$COMPOSED_CONTAINERFILE"
 
-  COMPOSE_ARGS=()
-  if [[ "$AUTO_OVERLAYS_TEAM" == "0" ]]; then
-    COMPOSE_ARGS+=(--no-team)
-  fi
-  if [[ "$AUTO_OVERLAYS_USER" == "0" ]]; then
-    COMPOSE_ARGS+=(--no-user)
-  fi
-
   echo "==> Generating composed Containerfile for project image..."
-  bash "$COMPOSE_SCRIPT" "${COMPOSE_ARGS[@]}" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV" "${OVERLAY_FILES[@]}"
+  bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV" "${OVERLAY_FILES[@]}"
 
   echo "==> Building overlay-scoped project image: $IMAGE"
   backend_build_image "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
@@ -274,14 +244,13 @@ fi
 
 echo "======================================================================"
 echo "Creating container: $PROJECT"
-echo "Overlay scope(s): $SCOPE_CSV | Image: $IMAGE | Backend: $ACTIVE_BACKEND"
+echo "Overlay scope(s): ${SCOPE_CSV:-(none)} | Image: $IMAGE | Backend: $ACTIVE_BACKEND"
 if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
   echo "Resources: ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
 fi
 if [[ ${#OVERLAY_FILES[@]} -gt 0 ]]; then
   echo "Overlay Containerfiles: ${#OVERLAY_FILES[@]}"
 fi
-echo "Auto overlays: team=$AUTO_OVERLAYS_TEAM user=$AUTO_OVERLAYS_USER"
 echo "======================================================================"
 echo ""
 
@@ -317,20 +286,18 @@ fi
 echo "✓ GitHub token placeholder: $TOKEN_FILE"
 echo "  !! Edit this file and replace ghp_REPLACE_ME with your PAT"
 
-if $HAS_NODEJS; then
-  NPMRC="$SECRET_DIR/.npmrc"
-  if [[ ! -f "$NPMRC" ]]; then
-    cat > "$NPMRC" <<'EOF'
+NPMRC="$SECRET_DIR/.npmrc"
+if [[ ! -f "$NPMRC" ]]; then
+  cat > "$NPMRC" <<'EOF'
 # .npmrc for this container only
 # Examples:
 #   //registry.npmjs.org/:_authToken=YOUR_NPM_TOKEN
 #   @myorg:registry=https://npm.pkg.github.com
 #   //npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT
 EOF
-    chmod 600 "$NPMRC"
-  fi
-  echo "✓ .npmrc template: $NPMRC"
+  chmod 600 "$NPMRC"
 fi
+echo "✓ .npmrc template: $NPMRC"
 
 cat > "$CONFIG_FILE" <<EOF
 # dev-container config for: $PROJECT
@@ -341,8 +308,6 @@ CONTAINER_IMAGE="$IMAGE"
 CONTAINER_IMAGE_MODE="$IMAGE_MODE"
 CONTAINER_BACKEND="$ACTIVE_BACKEND"
 CONTAINER_COMPOSED_CONTAINERFILE="$COMPOSED_CONTAINERFILE"
-CONTAINER_AUTO_OVERLAYS_TEAM="$AUTO_OVERLAYS_TEAM"
-CONTAINER_AUTO_OVERLAYS_USER="$AUTO_OVERLAYS_USER"
 CONTAINER_CPUS="${CONTAINER_CPUS:-}"
 CONTAINER_MEMORY="${CONTAINER_MEMORY:-}"
 REPOS_DIR="$REPOS_DIR"
@@ -379,9 +344,7 @@ if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
 fi
 
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
-if $HAS_NODEJS; then
-  VOLUME_ARGS+=(--volume "$SECRET_DIR/.npmrc:/home/dev/.npmrc:ro")
-fi
+VOLUME_ARGS+=(--volume "$SECRET_DIR/.npmrc:/home/dev/.npmrc:ro")
 
 echo ""
 echo "==> Creating container from image: $IMAGE"
@@ -426,9 +389,7 @@ if $DOCKER_COMPATIBLE; then
 
     MOUNTS_BLOCK=""
     MOUNTS_ENTRIES=()
-    if $HAS_NODEJS; then
-      MOUNTS_ENTRIES+=("source=$SECRET_DIR/.npmrc,target=/home/dev/.npmrc,type=bind,readonly")
-    fi
+    MOUNTS_ENTRIES+=("source=$SECRET_DIR/.npmrc,target=/home/dev/.npmrc,type=bind,readonly")
 
     if [[ ${#MOUNTS_ENTRIES[@]} -gt 0 ]]; then
       MOUNTS_BLOCK=$',\n  "mounts": [\n'
@@ -460,6 +421,18 @@ EOF
     echo "  ✓ Created $DEVCONTAINER_FILE"
     echo "  For a new Dev Container instance: Dev Containers: Reopen in Container"
     echo "  To use the same running '$PROJECT' container: Dev Containers: Attach to Running Container..."
+  fi
+
+  echo "==> Seeding VS Code named attach config..."
+  ATTACH_CONFIG_COUNT=0
+  while IFS= read -r attach_config_file; do
+    [[ -z "$attach_config_file" ]] && continue
+    ATTACH_CONFIG_COUNT=$((ATTACH_CONFIG_COUNT + 1))
+    echo "  ✓ $attach_config_file"
+  done < <(dc_vscode_seed_named_attach_config "$PROJECT" "/workspace")
+
+  if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
+    echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
   fi
 else
   echo "==> Generating VS Code workspace settings for apple/container backend..."

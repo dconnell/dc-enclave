@@ -72,16 +72,6 @@ is_managed_combined_repo() {
   IFS='-' read -r -a parts <<< "$slug"
   [[ ${#parts[@]} -ge 2 ]] || return 1
 
-  for part in "${parts[@]}"; do
-    case "$part" in
-      nodejs|golang)
-        ;;
-      *)
-        return 1
-        ;;
-    esac
-  done
-
   return 0
 }
 

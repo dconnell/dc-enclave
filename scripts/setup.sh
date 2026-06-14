@@ -157,13 +157,13 @@ if [[ ! -f "$DC_OVERLAYS_DIR/team/README.md" ]]; then
 
 Optional team-wide overlay Containerfile fragments.
 
-Supported names:
+Any file named Containerfile.<scope> is auto-layered when the matching
+scope is selected with dc new or dc rebuild. For example:
 
 - Containerfile.all
-- Containerfile.nodejs
-- Containerfile.golang
+- Containerfile.<any-scope-name>
 
-These files are automatically layered by dc new/dc rebuild unless disabled with --no-team.
+These files are automatically layered by dc new/dc rebuild when they exist.
 EOF
   echo "  ✓ Created $DC_OVERLAYS_DIR/team/README.md"
 fi
@@ -174,13 +174,13 @@ if [[ ! -f "$DC_OVERLAYS_DIR/user/README.md" ]]; then
 
 Optional personal overlay Containerfile fragments.
 
-Supported names:
+Any file named Containerfile.<scope> is auto-layered when the matching
+scope is selected with dc new or dc rebuild. For example:
 
 - Containerfile.all
-- Containerfile.nodejs
-- Containerfile.golang
+- Containerfile.<any-scope-name>
 
-These files are automatically layered by dc new/dc rebuild unless disabled with --no-user.
+These files are automatically layered by dc new/dc rebuild when they exist.
 EOF
   echo "  ✓ Created $DC_OVERLAYS_DIR/user/README.md"
 fi
@@ -293,5 +293,5 @@ fi
 echo ""
 echo "Next:"
 echo "  1. source $PROFILE_FILE"
-echo "  2. dc new <name> nodejs [port:port]"
-echo "  3. dc new <name> golang [port:port]"
+echo "  2. dc new <name> [scope] [port:port]"
+echo "  3. dc new <name> [scope] [port:port]"
