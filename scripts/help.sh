@@ -10,22 +10,19 @@ _show_summary() {
   echo "Usage: dc <command> [args]"
   echo ""
   echo "Commands:"
-  echo "  new <name> [scope[,scope|overlay-path...]] [host:container ...]"
+  echo "  new <name> [scope[,scope...]] [host:container ...]"
   echo "                                                    Create new project"
-  echo "  new <name> [scope[,scope|overlay-path...]] [--repo-path <path>]"
+  echo "  new <name> [scope[,scope...]] [--repo-path <path>]"
   echo "       [--cpus <N>] [--memory <val>] [host:container ...]"
   echo "                                                    With resource limits"
-  echo "  new <name> [scope[,scope...]] [--repo-path <path>]"
-  echo "       [--overlay-containerfile <file> ...] [host:container ...]"
-  echo "                                                    Overlay flag form (repeatable)"
   echo "  start [name]                                      Start project(s)"
   echo "  stop [name]                                       Stop project(s)"
   echo "  list                                              List containers and status"
   echo "  status                                            Show detailed status"
   echo "  shell <name> [cmd]                                Open shell or run command"
-  echo "  rebuild <name> [--rotate-keys]                    Destroy and recreate container"
-  echo "  rebuild-image [all|base]                           Rebuild shared base image"
-  echo "  clean [--dry-run]                                 Remove old image tags"
+  echo "  rebuild-container <name> [--rotate-keys]          Destroy and recreate container"
+  echo "  rebuild-image [all|base]                          Rebuild managed images"
+  echo "  clean [--dry-run]                                 Remove old and orphaned image tags"
   echo "  install <name> <path>                             Install dotfiles"
   echo "  help [command]                                    Show this help or detailed help"
   echo ""
@@ -34,28 +31,31 @@ _show_summary() {
 
 _show_help_new() {
   cat <<'EOF'
-Usage: dc new <name> [scope[,scope|overlay-path...]] [--repo-path <path>]
-              [--cpus <N>] [--memory <val>] [--overlay-containerfile <file> ...]
-              [host:container ...]
+Usage: dc new <name> [scope[,scope...]] [--repo-path <path>]
+              [--cpus <N>] [--memory <val>] [host:container ...]
 
 Description:
   Creates a new isolated development container with its own SSH keys, GitHub
-  token placeholder, .npmrc template, and a dedicated workspace mount. The
-  container is built from the shared dev-base image, or from a project-specific
-  image if overlay scopes or custom Containerfiles are provided.
+  token placeholder, .npmrc template, and a dedicated workspace mount.
 
-  After creation, the container is started immediately and SSH credentials are
-  injected. A checklist is printed showing manual steps (adding deploy keys,
-  GitHub PAT, etc.).
+  Image selection is scope-driven:
+  - The shared base image is always dev-base:latest.
+  - If effective overlay scopes are present, a deterministic derived image
+    (dev-img-<hash>:latest) is selected.
+  - If the derived image does not exist, it is composed and built.
+  - If it exists, it is reused.
+
+  Effective overlays are loaded only from:
+  - $DC_OVERLAYS_DIR/team/Containerfile.<scope>
+  - $DC_OVERLAYS_DIR/user/Containerfile.<scope>
+
+  Named scopes that do not exist in either team or user overlays fail fast.
 
 Arguments:
   <name>      Project name. Allowed chars: letters, numbers, dot, underscore,
               hyphen. Must not already exist.
 
-  <scope>     Optional overlay scope(s), comma-separated. Each scope is matched
-              against Containerfiles in the overlays directory
-              (e.g. Containerfile.<scope>). If a scope resolves to an existing
-              file path, it is treated as a custom overlay Containerfile instead.
+  <scope>     Optional overlay scope(s), comma-separated.
 
 Options:
   --repo-path <path>
@@ -68,11 +68,6 @@ Options:
               Memory limit for the container (e.g. 4g, 512m). Passed to the
               backend.
 
-  --overlay-containerfile <file>
-              Additional overlay Containerfile to layer on top of the base
-              image. Can be repeated to stack multiple overlays. Each file
-              must exist on disk.
-
   host:container
               Port mapping(s) to publish, in Docker syntax. A bare port number
               (e.g. 5173) maps the same port on both host and container. A
@@ -80,10 +75,10 @@ Options:
 
 Examples:
   dc new myapp
+  dc new myapp golang
   dc new myapp node,postgres
   dc new myapp node --repo-path ~/code/myapp
   dc new myapp --cpus 2 --memory 4g 5173:5173
-  dc new myapp --overlay-containerfile ~/overlays/custom.Containerfile 8080:8080
 
 Notes:
   - The base image 'dev-base:latest' must exist. Run scripts/setup.sh first.
@@ -132,9 +127,9 @@ Description:
   Stops one or more dev containers. If no project name is given, all
   configured containers are stopped.
 
-  Stopping preserves the container filesystem — the container can be restarted
-  with 'dc start' without data loss. Use 'dc rebuild' to fully destroy and
-  recreate a container.
+  Stopping preserves the container filesystem - the container can be restarted
+  with 'dc start' without data loss. Use 'dc rebuild-container' to fully
+  destroy and recreate a container.
 
 Arguments:
   [name ...]  One or more project names to stop. If omitted, all configured
@@ -241,19 +236,22 @@ Notes:
 EOF
 }
 
-_show_help_rebuild() {
+_show_help_rebuild_container() {
   cat <<'EOF'
-Usage: dc rebuild <name> [--rotate-keys]
+Usage: dc rebuild-container <name> [--rotate-keys]
 
 Description:
-  Destroys a container and recreates it from its known-good image. The host
-  workspace (repos directory) is preserved — only the container filesystem
-  is wiped.
+  Destroys a container and recreates it from its selected image.
+  The host workspace (repos directory) is preserved - only the container
+  filesystem is wiped.
 
-  For project-mode containers (those with overlay scopes), the project image
-  is rebuilt from the current overlay files before recreating the container.
+  This command does not rebuild images. It re-derives the image from current
+  overlay state and project scopes, updates config if needed, and then recreates
+  the container from that image.
 
-  After rebuilding, SSH credentials are re-injected and git is reconfigured.
+  If the required image is missing, the command fails before destruction and
+  instructs you to run:
+    dc rebuild-image all
 
 Arguments:
   <name>     Project/container name. Must already exist.
@@ -266,16 +264,14 @@ Options:
               GitHub before continuing.
 
 Examples:
-  dc rebuild myapp                       Standard rebuild with existing keys
-  dc rebuild myapp --rotate-keys         Rebuild and generate new SSH key
+  dc rebuild-container myapp
+  dc rebuild-container myapp --rotate-keys
 
 Notes:
   - This is DESTRUCTIVE to the container filesystem. Uncommitted work inside
     the container will be lost. Commit or push from the host repos dir first.
-  - Your code on the host ($REPOS_DIR) is safe — it is a bind mount.
-  - For shared-image containers, the base image is NOT updated. Use
-    'dc rebuild-image' to update the base image first if needed.
-  - After a rebuild, re-apply dotfiles with 'dc install <name> <path>'.
+  - Your code on the host ($REPOS_DIR) is safe - it is a bind mount.
+  - Re-apply dotfiles after rebuild with 'dc install <name> <path>'.
   - You will be prompted to type 'yes' to confirm before destruction.
 EOF
 }
@@ -285,26 +281,25 @@ _show_help_rebuild_image() {
 Usage: dc rebuild-image [all|base]
 
 Description:
-  Rebuilds the shared dev-base image from Containerfiles/Containerfile.base.
-  This updates the base image that new containers are created from.
-
-  Existing containers are NOT affected until you run 'dc rebuild <name>' to
-  recreate them from the updated image.
+  Rebuilds managed images for the active backend.
 
 Arguments:
-  [all|base]  Build target. Both 'all' and 'base' build the dev-base image.
-              Defaults to 'all' if omitted.
+  [all|base]
+    all  Rebuild dev-base:latest and all configured derived images
+         (default)
+    base Rebuild dev-base:latest only
 
 Examples:
-  dc rebuild-image           Rebuild the base image (defaults to 'all')
-  dc rebuild-image all       Same as above, explicit
-  dc rebuild-image base      Build only the base target
+  dc rebuild-image
+  dc rebuild-image all
+  dc rebuild-image base
 
 Notes:
   - Requires a reachable container backend.
-  - After rebuilding the image, run 'dc rebuild <name>' for each container
-    you want to update to the new base.
-  - Use 'dc clean' afterwards to remove old image tags.
+  - 'all' scans all project configs and rebuilds every derived image currently
+    selected by configured scope sets.
+  - After rebuilding images, run 'dc rebuild-container <name>' for containers
+    you want to recreate.
 EOF
 }
 
@@ -313,27 +308,24 @@ _show_help_clean() {
 Usage: dc clean [--dry-run]
 
 Description:
-  Removes old dev-container image tags, keeping only the 'latest' tag for
-  each managed repository. This reclaims disk space from outdated images
-  left behind by previous builds.
+  Cleans managed image tags and orphan managed image repos.
 
-  Managed repositories are discovered from:
-  - dev-base (the shared base image)
-  - All configured project images
-  - Generated Containerfile images
-  - Existing dev-* image repositories on the backend
+  Rules:
+  - Expected managed repos (dev-base + currently configured derived repos):
+    keep latest, remove non-latest tags.
+  - Orphan managed repos (no longer expected):
+    remove all tags, including latest.
 
 Options:
-  --dry-run   Show what would be removed without actually deleting anything.
+  --dry-run   Show what would be removed without deleting anything.
 
 Examples:
-  dc clean --dry-run       Preview what will be removed
-  dc clean                 Remove old image tags
+  dc clean --dry-run
+  dc clean
 
 Notes:
-  - Only dev-* prefixed image repositories are affected.
-  - 'latest' tags are always preserved.
-  - Images currently in use by running containers may not be removable.
+  - Managed repos are dev-base and dev-img-<16hex>.
+  - Images currently in use may fail to remove; those failures are reported.
   - Requires a reachable container backend.
 EOF
 }
@@ -381,7 +373,7 @@ Description:
 
 Arguments:
   [command]  Optional command name to show detailed help for. One of:
-             new, start, stop, status, list, shell, rebuild,
+             new, start, stop, status, list, shell, rebuild-container,
              rebuild-image, clean, install, help
 
 Aliases:
@@ -389,9 +381,9 @@ Aliases:
   -h         Same as 'dc help'
 
 Examples:
-  dc help                  Show command summary
-  dc help install          Detailed help for install
-  dc help new              Detailed help for new
+  dc help
+  dc help install
+  dc help rebuild-container
 
 Notes:
   - Running 'dc' with no arguments also shows the summary.
@@ -404,17 +396,17 @@ if [[ -z "$COMMAND" ]]; then
 fi
 
 case "$COMMAND" in
-  new)              _show_help_new ;;
-  start)            _show_help_start ;;
-  stop)             _show_help_stop ;;
-  status|s)         _show_help_status ;;
-  list|ls)          _show_help_list ;;
-  shell)            _show_help_shell ;;
-  rebuild)          _show_help_rebuild ;;
-  rebuild-image)    _show_help_rebuild_image ;;
-  clean)            _show_help_clean ;;
-  install)          _show_help_install ;;
-  help|--help|-h)   _show_help_help ;;
+  new)                _show_help_new ;;
+  start)              _show_help_start ;;
+  stop)               _show_help_stop ;;
+  status|s)           _show_help_status ;;
+  list|ls)            _show_help_list ;;
+  shell)              _show_help_shell ;;
+  rebuild-container)  _show_help_rebuild_container ;;
+  rebuild-image)      _show_help_rebuild_image ;;
+  clean)              _show_help_clean ;;
+  install)            _show_help_install ;;
+  help|--help|-h)     _show_help_help ;;
   *)
     echo "Unknown command: $COMMAND"
     echo "Run 'dc help' for a list of available commands."

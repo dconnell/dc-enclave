@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# rebuild.sh - Destroy a container and recreate it from the known-good image
+# rebuild-container.sh - Destroy a container and recreate it from an existing image
 # =============================================================================
 set -euo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-  echo "Usage: rebuild.sh <project-name> [--rotate-keys]"
+  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys]"
   exit 1
 fi
 
@@ -15,7 +15,7 @@ if [[ $# -eq 2 ]]; then
   if [[ "$2" == "--rotate-keys" ]]; then
     ROTATE_KEYS=true
   else
-    echo "Usage: rebuild.sh <project-name> [--rotate-keys]"
+    echo "Usage: rebuild-container.sh <project-name> [--rotate-keys]"
     exit 1
   fi
 fi
@@ -40,22 +40,40 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
+# shellcheck disable=SC1090
 source "$CONFIG"
+
+if [[ -z "${CONTAINER_PROJECT:-}" ]]; then
+  CONTAINER_PROJECT="$PROJECT"
+fi
+
+OVERLAY_SCOPES_CSV="${CONTAINER_OVERLAY_SCOPES:-}"
+
+dc_load_global_config
+NORMALIZED_SCOPES="$(dc_normalize_scopes_csv "$OVERLAY_SCOPES_CSV")" || exit 1
+if [[ "$NORMALIZED_SCOPES" != "$OVERLAY_SCOPES_CSV" ]]; then
+  OVERLAY_SCOPES_CSV="$NORMALIZED_SCOPES"
+  dc_set_config_key "$CONFIG" "CONTAINER_OVERLAY_SCOPES" "$OVERLAY_SCOPES_CSV"
+fi
+
+DERIVED_IMAGE="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$OVERLAY_SCOPES_CSV")" || exit 1
+
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 DOCKER_COMPATIBLE=false
 if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   DOCKER_COMPATIBLE=true
 fi
-COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 
-OVERLAY_SCOPES_CSV="${CONTAINER_OVERLAY_SCOPES:-}"
+if ! backend_image_exists "$DERIVED_IMAGE"; then
+  echo "ERROR: Required image '$DERIVED_IMAGE' is not present on backend '$ACTIVE_BACKEND'."
+  echo "Run: dc rebuild-image all"
+  exit 1
+fi
 
-IMAGE_MODE="${CONTAINER_IMAGE_MODE:-shared}"
-COMPOSED_CONTAINERFILE="${CONTAINER_COMPOSED_CONTAINERFILE:-}"
-OVERLAY_FILES=()
-if declare -p CONTAINER_OVERLAY_FILES >/dev/null 2>&1; then
-  OVERLAY_FILES=("${CONTAINER_OVERLAY_FILES[@]}")
+if [[ "${CONTAINER_IMAGE:-}" != "$DERIVED_IMAGE" ]]; then
+  CONTAINER_IMAGE="$DERIVED_IMAGE"
+  dc_set_config_key "$CONFIG" "CONTAINER_IMAGE" "$CONTAINER_IMAGE"
 fi
 
 echo "======================================================================"
@@ -65,9 +83,8 @@ if $ROTATE_KEYS; then
 fi
 echo "======================================================================"
 echo ""
-echo "  Container:  ${CONTAINER_PROJECT:-$PROJECT}"
+echo "  Container:  ${CONTAINER_PROJECT}"
 echo "  Image:      ${CONTAINER_IMAGE:-unknown}"
-echo "  Image mode: $IMAGE_MODE"
 echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
 echo "  Backend:    $ACTIVE_BACKEND"
 echo "  Repos:      ${REPOS_DIR:-unknown} (PRESERVED - verify your commits separately)"
@@ -130,31 +147,8 @@ else
   echo "==> Step 3: Keeping existing SSH key (use --rotate-keys to regenerate)"
 fi
 
-CREATE_STEP=4
-START_STEP=5
-
-if [[ "$IMAGE_MODE" == "project" ]]; then
-  CREATE_STEP=5
-  START_STEP=6
-
-  if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
-    echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
-    exit 1
-  fi
-
-  if [[ -z "$COMPOSED_CONTAINERFILE" ]]; then
-    COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${PROJECT}"
-  fi
-
-  echo ""
-  echo "==> Step 4: Rebuilding overlay-scoped project image from selected scopes + overlays..."
-  bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$OVERLAY_SCOPES_CSV" "${OVERLAY_FILES[@]}"
-  backend_build_image "$CONTAINER_IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
-  echo "  ✓ Project image rebuilt: $CONTAINER_IMAGE"
-fi
-
 echo ""
-echo "==> Step $CREATE_STEP: Recreating container from $CONTAINER_IMAGE..."
+echo "==> Step 4: Recreating container from $CONTAINER_IMAGE..."
 
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
 if [[ -n "${NPMRC_PATH:-}" ]]; then
@@ -190,7 +184,7 @@ backend_create "$PROJECT" "$CONTAINER_IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]
 echo "  ✓ Container created"
 
 echo ""
-echo "==> Step $START_STEP: Starting container and injecting credentials..."
+echo "==> Step 5: Starting container and injecting credentials..."
 backend_start "$PROJECT"
 sleep 2
 
@@ -204,7 +198,7 @@ echo "  ✓ git configured (SSH insteadOf)"
 
 if $DOCKER_COMPATIBLE; then
   echo ""
-  echo "==> Step $((START_STEP + 1)): Seeding VS Code named attach config..."
+  echo "==> Step 6: Seeding VS Code named attach config..."
   ATTACH_CONFIG_COUNT=0
   while IFS= read -r attach_config_file; do
     [[ -z "$attach_config_file" ]] && continue
@@ -222,13 +216,8 @@ echo "======================================================================"
 echo "Rebuild complete: $PROJECT"
 echo "======================================================================"
 echo ""
-echo "  Container recreated from $CONTAINER_IMAGE ($IMAGE_MODE mode)"
+echo "  Container recreated from $CONTAINER_IMAGE"
 echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
-if [[ "$IMAGE_MODE" == "project" ]]; then
-  echo "  Project image was rebuilt with current overlay files."
-elif [[ "$IMAGE_MODE" == "shared" ]]; then
-  echo "  Note: base image was not updated. To update it: dc rebuild-image <target>"
-fi
 echo ""
 echo "Host repos ($REPOS_DIR) are untouched — container state was wiped."
 if $ROTATE_KEYS; then

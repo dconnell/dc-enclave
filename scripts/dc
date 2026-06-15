@@ -37,8 +37,8 @@ case "$SUBCOMMAND" in
   shell)
     exec "$SCRIPT_DIR/shell.sh" "$@"
     ;;
-  rebuild)
-    exec "$SCRIPT_DIR/rebuild.sh" "$@"
+  rebuild-container)
+    exec "$SCRIPT_DIR/rebuild-container.sh" "$@"
     ;;
   rebuild-image)
     exec "$SCRIPT_DIR/rebuild-image.sh" "$@"

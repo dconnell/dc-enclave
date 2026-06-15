@@ -28,7 +28,7 @@ _dc_subcommands() {
     "list" \
     "ls" \
     "shell" \
-    "rebuild" \
+    "rebuild-container" \
     "rebuild-image" \
     "clean" \
     "install" \
@@ -92,26 +92,22 @@ _dc_complete() {
         COMPREPLY=( $(compgen -d -- "$cur") )
         return 0
       fi
-      if [[ "$prev" == "--overlay-containerfile" ]]; then
-        COMPREPLY=( $(compgen -f -- "$cur") )
-        return 0
-      fi
       if [[ "$prev" == "--cpus" || "$prev" == "--memory" ]]; then
         return 0
       fi
-      local flags="--repo-path --overlay-containerfile --cpus --memory"
+      local flags="--repo-path --cpus --memory"
       if [[ $COMP_CWORD -eq 3 ]]; then
         COMPREPLY=( $(compgen -W "$(_dc_scopes) $flags" -- "$cur") )
       else
         COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
       fi
       ;;
-    start|stop|shell|rebuild|install)
+    start|stop|shell|rebuild-container|install)
       if [[ $COMP_CWORD -eq 2 ]]; then
         COMPREPLY=( $(compgen -W "$(_dc_project_names "$cur")" -- "$cur") )
         return 0
       fi
-      if [[ "$cmd" == "rebuild" && $COMP_CWORD -eq 3 ]]; then
+      if [[ "$cmd" == "rebuild-container" && $COMP_CWORD -eq 3 ]]; then
         COMPREPLY=( $(compgen -W "--rotate-keys" -- "$cur") )
       fi
       if [[ "$cmd" == "install" && $COMP_CWORD -eq 3 ]]; then

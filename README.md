@@ -10,7 +10,7 @@ Isolated development containers for macOS, Linux, and WSL2 with one shared Bash 
 
 ## Goal
 
-**dev-containers** standardizes per-project containerized development environments from a shared Bash codebase. After one-time setup, `dc new` creates an isolated workspace for any repo while letting each developer use their preferred backend, tools, and dotfiles through overlay Containerfiles. Teams share the same base image and overlay model, and projects can optionally keep separate credentials and container state. If an environment is compromised or drifts, you can regenerate it quickly with `dc rebuild`, then audit repos and rotate access tokens.
+**dev-containers** standardizes per-project containerized development environments from a shared Bash codebase. After one-time setup, `dc new` creates an isolated workspace for any repo while letting each developer use their preferred backend, tools, and dotfiles through overlay Containerfiles. Teams share the same base image and overlay model, and projects can optionally keep separate credentials and container state. If an environment is compromised or drifts, you can regenerate it quickly with `dc rebuild-image all` + `dc rebuild-container`, then audit repos and rotate access tokens.
 
 ## Requirements
 
@@ -41,7 +41,7 @@ Each project container is set up with its own credentials and container state so
 - Per-project .npmrc — place a config alongside the other secrets for projects that use npm
 - Host-mounted workspace — code lives at `${DC_REPOS_DIR:-$HOME/repos}/<project>` on your machine and is bind-mounted to `/workspace` inside the container
 
-If a container's state is ever suspect, `dc rebuild` replaces the container from a known-good image without touching your host repos.
+If a container's state is ever suspect, `dc rebuild-container` replaces the container from a known-good image without touching your host repos.
 
 ## Command reference
 
@@ -54,21 +54,20 @@ The day-to-day interface is the `dc` command with subcommands. All subcommands d
 | `dc start [name]` | Start one project or all configured projects |
 | `dc stop [name]` | Stop one project or all configured projects |
 | `dc shell <name> [command]` | Open a shell or run one command inside a project container |
-| `dc rebuild <name> [--rotate-keys]` | Destroy and recreate container from a known-good image |
-| `dc rebuild-image [all\|base]` | Rebuild shared base image (project-scoped overlay images are rebuilt by `dc rebuild`) |
-| `dc clean [--dry-run]` | Remove old dev-container image tags while keeping latest |
+| `dc rebuild-container <name> [--rotate-keys]` | Destroy and recreate container from selected image |
+| `dc rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
+| `dc clean [--dry-run]` | Remove old tags from expected managed repos and remove orphan managed repos |
 | `dc install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
 | `dc help` | Show usage information |
 
 `<scope>` values in `dc new` are overlay scopes that match `Containerfile.<scope>` files in your overlay directories. Scope is optional — `dc new <name>` creates a base-only project. The `all` scope is always auto-layered when `Containerfile.all` exists.
 
-**`dc new` forms** — `<scope>` can be any scope name matching a `Containerfile.<scope>` in your overlays, a comma-separated combination, or a path to an explicit overlay Containerfile:
+**`dc new` forms** — `<scope>` can be any scope name matching a `Containerfile.<scope>` in your overlays or a comma-separated combination:
 
 | Form | Description |
 |---|---|
-| `dc new <name> [scope[,scope\|overlay-path...]] [host:container ...]` | Basic form with port mappings |
-| `dc new <name> [scope[,scope\|overlay-path...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [host:container ...]` | With resource limits |
-| `dc new <name> [scope[,scope...]] [--repo-path <path>] [--overlay-containerfile <file> ...] [host:container ...]` | With explicit overlay files (repeat `--overlay-containerfile` for multiple) |
+| `dc new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
+| `dc new <name> [scope[,scope...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [host:container ...]` | With resource limits |
 
 ## Global configuration and overlays
 
@@ -84,7 +83,7 @@ Required key:
 DC_OVERLAYS_DIR="$HOME/.config/dev-containers/overlays"
 ```
 
-`dc new` and `dc rebuild` load `DC_OVERLAYS_DIR` from this config file. If the global config file is missing, `DC_OVERLAYS_DIR` is unset, or the overlays root does not exist, the command fails fast with remediation guidance.
+`dc new`, `dc rebuild-image`, and `dc rebuild-container` load `DC_OVERLAYS_DIR` from this config file. If the global config file is missing, `DC_OVERLAYS_DIR` is unset, or the overlays root does not exist, the command fails fast with remediation guidance.
 
 Overlay layout under `DC_OVERLAYS_DIR`:
 
@@ -107,7 +106,7 @@ $DC_OVERLAYS_DIR/
 - `Containerfiles/example/` in this repo is for reference templates only (never auto-layered)
 - `$DC_OVERLAYS_DIR/team/` is for shared team overlays
 - `$DC_OVERLAYS_DIR/user/` is for personal overlays
-- explicit overlays passed in the `dc new` command remain supported and are applied last
+
 
 ### Canonical layering order
 
@@ -119,11 +118,11 @@ For scope list `<scope1>,<scope2>`, overlay composition order is:
 4. `user/<scope1>`
 5. `team/<scope2>`
 6. `user/<scope2>`
-7. explicit overlays passed by path (`--overlay-containerfile` or comma path tokens)
+
 
 `dev-base` is always the only repo-defined base layer. The `all` scope is always checked first — if `Containerfile.all` exists in team or user overlays, it is included automatically even without specifying `all` on the command line.
 
-Missing optional overlay files are skipped silently. Overlay root missing is fatal.
+Missing unrequested overlay files are skipped silently. If you request a named scope and it is missing in both `team/` and `user/`, the command fails fast.
 
 ## Why dev-containers?
 
@@ -142,13 +141,13 @@ The table below intentionally focuses on the high-leverage commands where `dc` s
 | `dc` command | docker / orbstack / colima | podman | apple/container |
 |---|---|---|---|
 | `dc new myapp nodejs 3000:3000` | Compose Containerfile layers, run `docker build`, `docker create` (mounts/ports/limits), and `docker start`; then set up project config, keys, and editor files | Same flow with `podman` | Same flow with `container` |
-| `dc new ...` (with overlay) | Merge team/user/explicit overlay fragments over `dev-base` (composition rules), then build/create/start | Same flow | Same flow |
-| `dc rebuild myapp` | `docker rm -f myapp`, then recreate with the original `docker create` flags and `docker start` | Same flow with `podman` | `container delete myapp`, then recreate and start |
-| `dc rebuild myapp --rotate-keys` | Rebuild flow plus SSH key regeneration and deploy-key rotation | Same flow | Same flow |
+| `dc new ...` (with overlay) | Merge team/user overlay fragments over `dev-base` (composition rules), then build/create/start | Same flow | Same flow |
+| `dc rebuild-container myapp` | Re-derive target image from scopes, then `docker rm -f myapp`, recreate with the original `docker create` flags, and `docker start` | Same flow with `podman` | `container delete myapp`, then recreate and start |
+| `dc rebuild-container myapp --rotate-keys` | Rebuild-container flow plus SSH key regeneration and deploy-key rotation | Same flow | Same flow |
 | `dc clean` | `docker image ls` + remove non-`latest` tags for managed repos | Same flow with `podman image ls/rm` | Same flow with `container image ls/rm` |
 | `dc install myapp ~/.dotfiles` | Stream dotfiles via `tar` + `docker exec`, run `install.sh`, then remove temp files | Same flow with `podman` | Same flow with `container exec` |
 
-`dc new`, `dc rebuild`, and `dc rebuild --rotate-keys` are the biggest differentiators: repeatable orchestration for container creation, recovery, and security response without retyping fragile backend-specific command sequences. `dc clean` and `dc install` reduce ongoing maintenance overhead once projects are up and running.
+`dc new`, `dc rebuild-image`, and `dc rebuild-container` are the biggest differentiators: repeatable orchestration for image lifecycle, container recovery, and security response without retyping fragile backend-specific command sequences. `dc clean` and `dc install` reduce ongoing maintenance overhead once projects are up and running.
 
 ## Common Tools Included In Base Image
 
@@ -232,7 +231,7 @@ dev-containers/
 │   ├── stop.sh
 │   ├── shell.sh
 │   ├── status.sh
-│   ├── rebuild.sh
+│   ├── rebuild-container.sh
 │   ├── rebuild-image.sh
 │   ├── install-dotfiles.sh
 │   ├── clean.sh
@@ -358,22 +357,10 @@ Monorepo with multiple overlay scopes and multiple ports:
 dc new myapp-monorepo nodejs,golang 3000:3000 5173:5173 8080:8080 9000:9000
 ```
 
-Overlay example via explicit path token (applied last):
-
-```
-dc new myapp-monorepo nodejs,golang,../../path/to/Containerfile.username 3000:3000 8080:8080
-```
-
 Auto overlays example (`team/all`, `user/all`, plus scope-specific files when present):
 
 ```
 dc new myapp-monorepo nodejs,golang 3000:3000 8080:8080
-```
-
-Equivalent explicit flag form (applied after auto overlays):
-
-```
-dc new myapp-monorepo nodejs,golang --overlay-containerfile ../../path/to/Containerfile.username 3000:3000 8080:8080
 ```
 
 With resource limits:
@@ -388,7 +375,7 @@ What scope combinations mean:
 - `<scope1>,<scope2>` -> include both scopes in canonical order (all first, then listed order)
 - (no scope) -> base image only, plus `Containerfile.all` when it exists
 - auto overlays -> loaded from `$DC_OVERLAYS_DIR/team` and `$DC_OVERLAYS_DIR/user`
-- any overlay path token -> include that explicit overlay fragment in the composed project image (applied last)
+
 
 Overlay contract:
 
@@ -435,9 +422,9 @@ Change limits on an existing project:
 
 1. Edit `~/.config/dev-containers/<name>/config`
 2. Update `CONTAINER_CPUS` and/or `CONTAINER_MEMORY`
-3. Run `dc rebuild <name>`
+3. Run `dc rebuild-container <name>`
 
-Resource limits are applied at container creation time. Changes to the config file take effect only after `dc rebuild` — `dc start` simply starts the existing container with its existing limits.
+Resource limits are applied at container creation time. Changes to the config file take effect only after `dc rebuild-container` — `dc start` simply starts the existing container with its existing limits.
 
 Config keys:
 
@@ -471,7 +458,7 @@ docker/orbstack/colima/podman backends:
 - For multi-scope and/or overlay projects, it points to a generated composed Containerfile
 - Existing devcontainer.json is not overwritten
 - To attach VS Code to the exact same running container as dc shell, use: Dev Containers: Attach to Running Container... and choose <project>
-- dc new and dc rebuild also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
+- dc new and dc rebuild-container also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
 - Dev Containers: Reopen in Container may create a separate `vsc-*` container for editor workflows
 
 apple backend:
@@ -520,7 +507,7 @@ code ${DC_REPOS_DIR:-$HOME/repos}/myapp-monorepo
 
 ```
 dc status
-dc rebuild myapp-monorepo
+dc rebuild-container myapp-monorepo
 ```
 
 For apple backend, use normal local folder + generated terminal profile instead of Dev Containers extension.
@@ -530,53 +517,51 @@ For apple backend, use normal local folder + generated terminal profile instead 
 Rebuild container:
 
 ```
-dc rebuild myapp-monorepo
+dc rebuild-container myapp-monorepo
 ```
 
 Rebuild and rotate SSH key:
 
 ```
-dc rebuild myapp-monorepo --rotate-keys
+dc rebuild-container myapp-monorepo --rotate-keys
 ```
 
 ## Rebuilding after Containerfile changes
 
-If you change `Containerfile.base`, the image must be rebuilt before `dc rebuild` will pick up the update:
+If you change `Containerfile.base`, rebuild managed images first, then recreate containers:
 
 ```
-dc rebuild-image base
-dc rebuild myapp-monorepo
+dc rebuild-image all
+dc rebuild-container myapp-monorepo
 ```
 
-If your project uses overlay Containerfiles, update the overlay file and run:
+If you change overlay Containerfiles, rebuild managed images then recreate containers:
 
 ```
-dc rebuild myapp-monorepo
+dc rebuild-image all
+dc rebuild-container myapp-monorepo
 ```
 
-`dc rebuild` recomposes and rebuilds project-scoped overlay images before recreating the container.
+`dc rebuild-image all` rebuilds the shared base image and all derived images selected by configured project scopes.
 
-This includes:
-
-- auto overlays from `$DC_OVERLAYS_DIR/team` and `$DC_OVERLAYS_DIR/user`
-- explicit overlays saved in project config (`CONTAINER_OVERLAY_FILES`)
+`dc rebuild-container` re-derives the image for that project and recreates only the container.
 
 If you changed multiple Containerfiles and want everything refreshed:
 
 ```
 dc rebuild-image all
-dc rebuild myapp-monorepo
+dc rebuild-container myapp-monorepo
 ```
 
 Notes:
 
 - `dc rebuild-image` is backend-agnostic (apple/colima/docker/orbstack/podman via `CONTAINER_BACKEND` detection/override).
-- It rebuilds the shared base image (`dev-base`).
-- Project-scoped overlay images are rebuilt by `dc rebuild <project>` so each project uses current overlay files.
+- `dc rebuild-image all` rebuilds `dev-base` and all configured derived images.
+- `dc rebuild-container <project>` never rebuilds images. If the required image is missing, it fails and instructs you to run `dc rebuild-image all`.
 
 ## Cleaning old dev-container images
 
-To remove old tags from managed dev-container images while preserving each `<repo>:latest`:
+To clean managed dev-container images:
 
 ```
 dc clean
@@ -591,10 +576,11 @@ dc clean --dry-run
 Safety and cleanup scope:
 
 - `dc clean` is backend-agnostic and uses the active backend (apple/colima/docker/orbstack/podman).
-- It only targets managed image repositories that match the dev-container naming pattern (`dev-*`) discovered from built-ins and `~/.config/dev-containers/*/config`.
-- It preserves all `:latest` tags and removes only other tags for those managed repos.
+- It targets managed image repositories (`dev-base` and `dev-img-<hash>`) discovered from current project configs and backend image state.
+- For expected managed repos, it preserves `:latest` and removes non-latest tags.
+- For orphan managed repos, it removes all tags (including `:latest`).
 - It does not remove unrelated images (for example VS Code `vsc-*` images).
-- If an old tag is still referenced by a container, it is skipped (no force delete).
+- If a tag is still referenced by a container, removal may fail and is reported (no force delete).
 
 ## Personal configuration (dotfiles)
 
@@ -636,7 +622,7 @@ Copies the dotfiles directory into the running container and executes its `insta
 
 - Shared essentials → `Containerfile.base`
 - Overlay examples (copy-first templates) → `Containerfiles/example/` (`Containerfile.all`, `Containerfile.nodejs`, `Containerfile.golang`, and any others you add)
-- Preferred day-to-day tools → user overlay Containerfile(s) layered during `dc new`/`dc rebuild`
+- Preferred day-to-day tools → user overlay Containerfile(s) layered during `dc new`/`dc rebuild-image`
 - Project secrets (PAT, SSH key, .npmrc) → `~/.config/dev-containers/<name>/`
 - Personal preferences (git identity, vim, shell) → your dotfiles repo
 
@@ -688,12 +674,12 @@ devcontainer.json or settings.json not overwritten:
 Changed ports or resource limits:
 
 - update ~/.config/dev-containers/<name>/config
-- run dc rebuild <name>
+- run dc rebuild-container <name>
 
 SSH auth issues:
 
 - verify ~/.config/dev-containers/<name>/ssh_key and github-token
-- restart with dc start or recreate with dc rebuild
+- restart with dc start or recreate with dc rebuild-container
 
 Podman on macOS not starting:
 

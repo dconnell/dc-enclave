@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# rebuild-image.sh - Rebuild shared base image without recreating containers
+# rebuild-image.sh - Rebuild base and configured derived images
 # =============================================================================
 set -euo pipefail
 
@@ -81,6 +81,63 @@ backend_build_image \
   "$ROOT_DIR/Containerfiles/Containerfile.base" \
   "$ROOT_DIR"
 
+if [[ "$TARGET" == "base" ]]; then
+  echo ""
+  echo "✓ Image rebuild complete for target: $TARGET"
+  echo "  Next: run dc rebuild-container <project> to recreate containers from updated images."
+  exit 0
+fi
+
+dc_load_global_config
+
+CONFIG_DIR="$HOME/.config/dev-containers"
+COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
+if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
+  echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
+  exit 1
+fi
+
+declare -A BUILT_REPOS=()
+declare -A SKIPPED_REPOS=()
+
+while IFS= read -r config_file; do
+  [[ -z "$config_file" ]] && continue
+
+  scope_csv="$(bash -c 'source "$1" 2>/dev/null && printf "%s" "${CONTAINER_OVERLAY_SCOPES:-}"' _ "$config_file")"
+  scope_csv="$(dc_normalize_scopes_csv "$scope_csv")" || exit 1
+
+  image_ref="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$scope_csv")" || exit 1
+  image_repo="${image_ref%%:*}"
+
+  if [[ "$image_ref" == "dev-base:latest" ]]; then
+    continue
+  fi
+
+  if [[ -n "${BUILT_REPOS[$image_repo]-}" || -n "${SKIPPED_REPOS[$image_repo]-}" ]]; then
+    continue
+  fi
+
+  image_hash="$(dc_image_hash_from_ref "$image_ref")" || {
+    echo "ERROR: Could not derive image hash from image ref: $image_ref"
+    exit 1
+  }
+
+  composed_file="$ROOT_DIR/Containerfiles/generated/Containerfile.${image_hash}"
+
+  echo ""
+  echo "--- Building $image_ref ---"
+  bash "$COMPOSE_SCRIPT" "$composed_file" "$scope_csv"
+  backend_build_image "$image_ref" "$composed_file" "$ROOT_DIR"
+  BUILT_REPOS["$image_repo"]=1
+done < <(for f in "$CONFIG_DIR"/*/config; do [[ -f "$f" ]] && printf '%s\n' "$f"; done)
+
+echo ""
+if [[ ${#BUILT_REPOS[@]} -eq 0 ]]; then
+  echo "No configured derived images found to rebuild."
+else
+  echo "Rebuilt derived repos: $(dc_join_by ', ' "${!BUILT_REPOS[@]}")"
+fi
+
 echo ""
 echo "✓ Image rebuild complete for target: $TARGET"
-echo "  Next: run dc rebuild <project> to recreate containers from updated image(s)."
+echo "  Next: run dc rebuild-container <project> to recreate containers from updated images."

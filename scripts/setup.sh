@@ -158,12 +158,12 @@ if [[ ! -f "$DC_OVERLAYS_DIR/team/README.md" ]]; then
 Optional team-wide overlay Containerfile fragments.
 
 Any file named Containerfile.<scope> is auto-layered when the matching
-scope is selected with dc new or dc rebuild. For example:
+scope is selected with dc new or dc rebuild-container. For example:
 
 - Containerfile.all
 - Containerfile.<any-scope-name>
 
-These files are automatically layered by dc new/dc rebuild when they exist.
+These files are automatically layered by dc new/dc rebuild-container when they exist.
 EOF
   echo "  ✓ Created $DC_OVERLAYS_DIR/team/README.md"
 fi
@@ -175,12 +175,12 @@ if [[ ! -f "$DC_OVERLAYS_DIR/user/README.md" ]]; then
 Optional personal overlay Containerfile fragments.
 
 Any file named Containerfile.<scope> is auto-layered when the matching
-scope is selected with dc new or dc rebuild. For example:
+scope is selected with dc new or dc rebuild-container. For example:
 
 - Containerfile.all
 - Containerfile.<any-scope-name>
 
-These files are automatically layered by dc new/dc rebuild when they exist.
+These files are automatically layered by dc new/dc rebuild-container when they exist.
 EOF
   echo "  ✓ Created $DC_OVERLAYS_DIR/user/README.md"
 fi

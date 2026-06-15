@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# clean.sh - Remove old dev-container image tags, keep latest tags only
+# clean.sh - Remove non-latest tags and orphan managed image repos
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -57,53 +57,37 @@ case "$ACTIVE_BACKEND" in
     ;;
 esac
 
+dc_load_global_config
+
 is_managed_repo() {
   local repo="$1"
-  [[ "$repo" == dev-* && "$repo" != */* ]]
+  [[ "$repo" == "dev-base" || "$repo" =~ ^dev-img-[0-9a-f]{16}$ ]]
 }
 
-is_managed_combined_repo() {
-  local repo="$1"
-  [[ "$repo" == dev-* ]] || return 1
-  [[ "$repo" == "dev-base" ]] && return 1
-
-  local slug="${repo#dev-}"
-  local -a parts=()
-  IFS='-' read -r -a parts <<< "$slug"
-  [[ ${#parts[@]} -ge 2 ]] || return 1
-
-  return 0
-}
-
-declare -A MANAGED_REPOS=()
-add_managed_repo() {
-  local repo="$1"
-  [[ -z "$repo" || "$repo" == "<none>" ]] && return
-  if is_managed_repo "$repo"; then
-    MANAGED_REPOS["$repo"]=1
-  fi
-}
-
-add_managed_repo "dev-base"
+declare -A EXPECTED_REPOS=()
+EXPECTED_REPOS["dev-base"]=1
 
 for config_file in "$HOME"/.config/dev-containers/*/config; do
-  source "$config_file"
-  image_ref="${CONTAINER_IMAGE:-}"
-  [[ -z "$image_ref" ]] && continue
-  add_managed_repo "${image_ref%%:*}"
+  [[ -f "$config_file" ]] || continue
+
+  scope_csv="$(bash -c 'source "$1" 2>/dev/null && printf "%s" "${CONTAINER_OVERLAY_SCOPES:-}"' _ "$config_file")"
+  if ! scope_csv="$(dc_normalize_scopes_csv "$scope_csv")"; then
+    dc_warn "Skipping invalid scope config: $config_file"
+    continue
+  fi
+
+  if ! image_ref="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$scope_csv")"; then
+    dc_warn "Skipping config with unresolved scopes: $config_file"
+    continue
+  fi
+  EXPECTED_REPOS["${image_ref%%:*}"]=1
 done
 
-for generated_file in "$ROOT_DIR"/Containerfiles/generated/Containerfile.*; do
-  slug="$(basename "$generated_file")"
-  slug="${slug#Containerfile.}"
-  [[ -z "$slug" ]] && continue
-  add_managed_repo "dev-$slug"
-done
-
+declare -A MANAGED_REPOS=()
 while IFS=$'\t' read -r repo tag image_id; do
   [[ -z "$repo" || "$repo" == "<none>" ]] && continue
-  if is_managed_combined_repo "$repo"; then
-    add_managed_repo "$repo"
+  if is_managed_repo "$repo"; then
+    MANAGED_REPOS["$repo"]=1
   fi
 done < <(backend_list_images)
 
@@ -114,37 +98,57 @@ fi
 
 REMOVE_REFS=()
 declare -A SEEN_REFS=()
+
 while IFS=$'\t' read -r repo tag image_id; do
   [[ -z "$repo" || -z "$tag" || -z "$image_id" ]] && continue
   [[ -z "${MANAGED_REPOS[$repo]-}" ]] && continue
 
-  if [[ "$tag" != "latest" && "$tag" != "<none>" ]]; then
-    ref="$repo:$tag"
-    if [[ -z "${SEEN_REFS[$ref]-}" ]]; then
-      REMOVE_REFS+=("$ref")
-      SEEN_REFS["$ref"]=1
+  is_expected=false
+  if [[ -n "${EXPECTED_REPOS[$repo]-}" ]]; then
+    is_expected=true
+  fi
+
+  if $is_expected; then
+    if [[ "$tag" == "latest" || "$tag" == "<none>" ]]; then
+      continue
     fi
+  else
+    [[ "$tag" == "<none>" ]] && continue
+  fi
+
+  ref="$repo:$tag"
+  if [[ -z "${SEEN_REFS[$ref]-}" ]]; then
+    REMOVE_REFS+=("$ref")
+    SEEN_REFS["$ref"]=1
   fi
 done < <(backend_list_images)
 
 if [[ ${#REMOVE_REFS[@]} -eq 0 ]]; then
-  echo "No old managed image tags found. Managed latest tags are already clean."
+  echo "No managed image tags found to remove."
   exit 0
 fi
 
 IFS=$'\n' refs=($(printf '%s\n' "${REMOVE_REFS[@]}" | sort))
 unset IFS
 
+expected_repo_names=("${!EXPECTED_REPOS[@]}")
 managed_repo_names=("${!MANAGED_REPOS[@]}")
+IFS=$'\n' expected_repo_names=($(printf '%s\n' "${expected_repo_names[@]}" | sort))
 IFS=$'\n' managed_repo_names=($(printf '%s\n' "${managed_repo_names[@]}" | sort))
 unset IFS
 
 echo "Active backend: $ACTIVE_BACKEND"
+echo "Expected repos: ${expected_repo_names[*]}"
 echo "Managed repos: ${managed_repo_names[*]}"
 echo ""
-echo "The following managed image tags will be removed (latest tags are preserved):"
+echo "The following managed image tags will be removed:"
 for ref in "${refs[@]}"; do
-  echo "  - $ref"
+  repo="${ref%%:*}"
+  if [[ -n "${EXPECTED_REPOS[$repo]-}" ]]; then
+    echo "  - $ref (old tag)"
+  else
+    echo "  - $ref (orphan repo)"
+  fi
 done
 
 if $DRY_RUN; then

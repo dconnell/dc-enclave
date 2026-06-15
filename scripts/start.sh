@@ -80,7 +80,7 @@ if [[ $# -gt 0 ]]; then
 else
   PROJECTS=("$HOME"/.config/dev-containers/*/config)
   if [[ ${#PROJECTS[@]} -eq 0 ]]; then
-    echo "No containers configured yet. Run: dc new <name> <scope>"
+    echo "No containers configured yet. Run: dc new <name> [scope]"
     exit 0
   fi
 

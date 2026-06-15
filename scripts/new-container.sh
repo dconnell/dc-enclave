@@ -4,7 +4,7 @@
 # =============================================================================
 set -euo pipefail
 
-PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...|overlay-path...]] [--repo-path <path>] [--overlay-containerfile <file> ...] [port:port ...]}"
+PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [port:port ...]}"
 shift
 SCOPE_INPUT=""
 if [[ $# -gt 0 && "$1" != --* && ! "$1" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
@@ -19,18 +19,9 @@ if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
 fi
 
 PORTS=()
-EXTRA_OVERLAYS=()
 REPO_PATH_OVERRIDE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --overlay-containerfile)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        echo "ERROR: --overlay-containerfile requires a file path argument"
-        exit 1
-      fi
-      EXTRA_OVERLAYS+=("$2")
-      shift 2
-      ;;
     --repo-path)
       if [[ $# -lt 2 || "$2" == --* ]]; then
         echo "ERROR: --repo-path requires a path argument"
@@ -84,77 +75,8 @@ if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   exit 1
 fi
 
-declare -A SCOPE_SELECTED=()
-OVERLAY_FILES=()
-SELECTED_SCOPES=()
-
-IFS=',' read -r -a RAW_SCOPES <<< "$SCOPE_INPUT"
-for raw_scope in "${RAW_SCOPES[@]}"; do
-  normalized_scope="${raw_scope//[[:space:]]/}"
-
-  case "$normalized_scope" in
-    "")
-      ;;
-    *)
-      overlay_candidate="$(dc_resolve_path "$normalized_scope" 2>/dev/null)" || overlay_candidate=""
-      if [[ -n "$overlay_candidate" && -f "$overlay_candidate" ]]; then
-        OVERLAY_FILES+=("$overlay_candidate")
-      else
-        if [[ -z "${SCOPE_SELECTED[$normalized_scope]-}" ]]; then
-          SCOPE_SELECTED["$normalized_scope"]=1
-          SELECTED_SCOPES+=("$normalized_scope")
-        fi
-      fi
-      ;;
-  esac
-done
-
-for overlay_input in "${EXTRA_OVERLAYS[@]}"; do
-  overlay_candidate="$(dc_resolve_path "$overlay_input")" || {
-    echo "ERROR: Overlay path could not be resolved: $overlay_input"
-    exit 1
-  }
-
-  if [[ ! -f "$overlay_candidate" ]]; then
-    echo "ERROR: Overlay Containerfile not found: $overlay_candidate"
-    exit 1
-  fi
-  OVERLAY_FILES+=("$overlay_candidate")
-done
-
-declare -A OVERLAY_SEEN=()
-DEDUPED_OVERLAYS=()
-for overlay_file in "${OVERLAY_FILES[@]}"; do
-  if [[ -z "${OVERLAY_SEEN[$overlay_file]-}" ]]; then
-    OVERLAY_SEEN["$overlay_file"]=1
-    DEDUPED_OVERLAYS+=("$overlay_file")
-  fi
-done
-OVERLAY_FILES=("${DEDUPED_OVERLAYS[@]}")
-
-if [[ ${#SELECTED_SCOPES[@]} -gt 0 ]]; then
-  SCOPE_CSV="$(dc_join_by ',' "${SELECTED_SCOPES[@]}")"
-else
-  SCOPE_CSV=""
-fi
-
-IMAGE_MODE="shared"
-AUTO_OVERLAY_PRESENT=0
-SCOPES=(all "${SELECTED_SCOPES[@]}")
-for scope in "${SCOPES[@]}"; do
-  if [[ -f "$DC_OVERLAYS_DIR/team/Containerfile.$scope" ]]; then
-    AUTO_OVERLAY_PRESENT=1
-    break
-  fi
-  if [[ -f "$DC_OVERLAYS_DIR/user/Containerfile.$scope" ]]; then
-    AUTO_OVERLAY_PRESENT=1
-    break
-  fi
-done
-
-if [[ ${#OVERLAY_FILES[@]} -gt 0 || "$AUTO_OVERLAY_PRESENT" == "1" ]]; then
-  IMAGE_MODE="project"
-fi
+SCOPE_CSV="$(dc_normalize_scopes_csv "$SCOPE_INPUT")" || exit 1
+IMAGE="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$SCOPE_CSV")" || exit 1
 
 PORT_ARGS=()
 FORWARD_PORTS=()
@@ -200,7 +122,7 @@ fi
 
 if backend_exists "$PROJECT"; then
   echo "ERROR: Container '$PROJECT' already exists."
-  echo "To rebuild: dc rebuild $PROJECT"
+  echo "To rebuild: dc rebuild-container $PROJECT"
   exit 1
 fi
 
@@ -227,19 +149,29 @@ REPOS_DIR="$(dc_resolve_path "$repo_target")" || {
 }
 
 COMPOSED_CONTAINERFILE=""
-if [[ "$IMAGE_MODE" == "shared" ]]; then
-  IMAGE="dev-base:latest"
-  DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.base"
-else
-  IMAGE="dev-${PROJECT}:latest"
-  COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${PROJECT}"
+DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.base"
+
+if [[ "$IMAGE" != "dev-base:latest" ]]; then
+  IMAGE_HASH="$(dc_image_hash_from_ref "$IMAGE")" || {
+    echo "ERROR: Could not derive image hash from image ref: $IMAGE"
+    exit 1
+  }
+
+  COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${IMAGE_HASH}"
   DEVCONTAINER_BUILD_FILE="$COMPOSED_CONTAINERFILE"
 
-  echo "==> Generating composed Containerfile for project image..."
-  bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV" "${OVERLAY_FILES[@]}"
-
-  echo "==> Building overlay-scoped project image: $IMAGE"
-  backend_build_image "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
+  if backend_image_exists "$IMAGE"; then
+    if [[ ! -f "$COMPOSED_CONTAINERFILE" ]]; then
+      echo "==> Generating composed Containerfile for image: $IMAGE"
+      bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV"
+    fi
+    echo "==> Reusing existing image: $IMAGE"
+  else
+    echo "==> Generating composed Containerfile for image: $IMAGE"
+    bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV"
+    echo "==> Building image: $IMAGE"
+    backend_build_image "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
+  fi
 fi
 
 echo "======================================================================"
@@ -247,9 +179,6 @@ echo "Creating container: $PROJECT"
 echo "Overlay scope(s): ${SCOPE_CSV:-(none)} | Image: $IMAGE | Backend: $ACTIVE_BACKEND"
 if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
   echo "Resources: ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
-fi
-if [[ ${#OVERLAY_FILES[@]} -gt 0 ]]; then
-  echo "Overlay Containerfiles: ${#OVERLAY_FILES[@]}"
 fi
 echo "======================================================================"
 echo ""
@@ -305,9 +234,7 @@ cat > "$CONFIG_FILE" <<EOF
 CONTAINER_PROJECT="$PROJECT"
 CONTAINER_OVERLAY_SCOPES="$SCOPE_CSV"
 CONTAINER_IMAGE="$IMAGE"
-CONTAINER_IMAGE_MODE="$IMAGE_MODE"
 CONTAINER_BACKEND="$ACTIVE_BACKEND"
-CONTAINER_COMPOSED_CONTAINERFILE="$COMPOSED_CONTAINERFILE"
 CONTAINER_CPUS="${CONTAINER_CPUS:-}"
 CONTAINER_MEMORY="${CONTAINER_MEMORY:-}"
 REPOS_DIR="$REPOS_DIR"
@@ -323,14 +250,6 @@ if [[ ${#PORTS[@]} -gt 0 ]]; then
   printf ')\n' >> "$CONFIG_FILE"
 else
   echo "PORTS=()" >> "$CONFIG_FILE"
-fi
-
-if [[ ${#OVERLAY_FILES[@]} -gt 0 ]]; then
-  printf 'CONTAINER_OVERLAY_FILES=(' >> "$CONFIG_FILE"
-  printf '%q ' "${OVERLAY_FILES[@]}" >> "$CONFIG_FILE"
-  printf ')\n' >> "$CONFIG_FILE"
-else
-  echo "CONTAINER_OVERLAY_FILES=()" >> "$CONFIG_FILE"
 fi
 
 echo "✓ Config saved: $CONFIG_FILE"

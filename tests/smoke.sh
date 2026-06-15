@@ -34,7 +34,7 @@ run_check "dc help stop" "$DC_BIN" help stop
 run_check "dc help status" "$DC_BIN" help status
 run_check "dc help list" "$DC_BIN" help list
 run_check "dc help shell" "$DC_BIN" help shell
-run_check "dc help rebuild" "$DC_BIN" help rebuild
+run_check "dc help rebuild-container" "$DC_BIN" help rebuild-container
 run_check "dc help rebuild-image" "$DC_BIN" help rebuild-image
 run_check "dc help clean" "$DC_BIN" help clean
 run_check "dc help install" "$DC_BIN" help install

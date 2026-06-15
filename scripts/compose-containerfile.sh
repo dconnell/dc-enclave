@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# compose-containerfile.sh - Compose base image plus auto/explicit overlay
-# fragments into one generated Containerfile.
+# compose-containerfile.sh - Compose base image plus scoped auto overlays
+# into one generated Containerfile.
 # =============================================================================
 set -euo pipefail
 
@@ -18,7 +18,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 
 usage() {
-  echo "Usage: compose-containerfile.sh <output-file> <overlay-scopes-csv> [explicit-overlay-file ...]"
+  echo "Usage: compose-containerfile.sh <output-file> <overlay-scopes-csv>"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -41,14 +41,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ $# -lt 2 ]]; then
+if [[ $# -ne 2 ]]; then
   usage
   exit 1
 fi
 
 OUTPUT_FILE_RAW="$1"
 SCOPE_INPUT="$2"
-shift 2
 
 if [[ "$OUTPUT_FILE_RAW" == /* ]]; then
   OUTPUT_FILE="$OUTPUT_FILE_RAW"
@@ -84,6 +83,16 @@ Use RUN/ENV/ARG/SHELL/WORKDIR/USER only."
   fi
 }
 
+dc_load_global_config
+
+NORMALIZED_SCOPES="$(dc_normalize_scopes_csv "$SCOPE_INPUT")" || exit 1
+EFFECTIVE_SCOPES_CSV="$(dc_effective_scopes_csv "$DC_OVERLAYS_DIR" "$NORMALIZED_SCOPES")" || exit 1
+
+SELECTED_SCOPES=()
+if [[ -n "$EFFECTIVE_SCOPES_CSV" ]]; then
+  IFS=',' read -r -a SELECTED_SCOPES <<< "$EFFECTIVE_SCOPES_CSV"
+fi
+
 AUTO_OVERLAY_FILES=()
 AUTO_OVERLAY_LABELS=()
 
@@ -102,48 +111,10 @@ append_auto_overlay() {
   fi
 }
 
-SELECTED_SCOPES=()
-declare -A SCOPE_SELECTED=()
-IFS=',' read -r -a RAW_SCOPES <<< "$SCOPE_INPUT"
-for raw_scope in "${RAW_SCOPES[@]}"; do
-  normalized_scope="${raw_scope//[[:space:]]/}"
-  case "$normalized_scope" in
-    "")
-      ;;
-    *)
-      if [[ -z "${SCOPE_SELECTED[$normalized_scope]-}" ]]; then
-        SCOPE_SELECTED["$normalized_scope"]=1
-        SELECTED_SCOPES+=("$normalized_scope")
-      fi
-      ;;
-  esac
-done
-
-dc_load_global_config
-
 echo "==> Layering overlays:"
-append_auto_overlay team all
-append_auto_overlay user all
-
 for scope in "${SELECTED_SCOPES[@]}"; do
   append_auto_overlay team "$scope"
   append_auto_overlay user "$scope"
-done
-
-EXPLICIT_OVERLAY_FILES=()
-for overlay_input in "$@"; do
-  [[ -z "$overlay_input" ]] && continue
-
-  overlay_file="$(dc_resolve_path "$overlay_input")" || {
-    dc_die "Overlay path could not be resolved: $overlay_input"
-  }
-
-  if [[ ! -f "$overlay_file" ]]; then
-    dc_die "Overlay Containerfile not found: $overlay_file"
-  fi
-
-  validate_overlay_file "$overlay_file"
-  EXPLICIT_OVERLAY_FILES+=("$overlay_file")
 done
 
 if [[ ${#SELECTED_SCOPES[@]} -gt 0 ]]; then
@@ -161,10 +132,6 @@ fi
     emit_fragment "${AUTO_OVERLAY_FILES[$i]}" "overlay:auto:${AUTO_OVERLAY_LABELS[$i]}"
   done
 
-  for overlay_file in "${EXPLICIT_OVERLAY_FILES[@]}"; do
-    emit_fragment "$overlay_file" "overlay:explicit:$(basename "$overlay_file")"
-  done
-
   echo ""
   echo "USER dev"
   echo 'CMD ["sleep", "infinity"]'
@@ -175,15 +142,5 @@ if [[ ${#AUTO_OVERLAY_LABELS[@]} -gt 0 ]]; then
   AUTO_OVERLAY_SUMMARY="$(dc_join_by ', ' "${AUTO_OVERLAY_LABELS[@]}")"
 fi
 
-EXPLICIT_OVERLAY_SUMMARY="none"
-if [[ ${#EXPLICIT_OVERLAY_FILES[@]} -gt 0 ]]; then
-  EXPLICIT_NAMES=()
-  for overlay_file in "${EXPLICIT_OVERLAY_FILES[@]}"; do
-    EXPLICIT_NAMES+=("$(basename "$overlay_file")")
-  done
-  EXPLICIT_OVERLAY_SUMMARY="$(dc_join_by ', ' "${EXPLICIT_NAMES[@]}")"
-fi
-
 echo "✓ Generated composed Containerfile: $OUTPUT_FILE"
 echo "  Auto overlays included: $AUTO_OVERLAY_SUMMARY"
-echo "  Explicit overlays: $EXPLICIT_OVERLAY_SUMMARY"
