@@ -26,6 +26,34 @@ run_check() {
 
 run_check "dc help" "$DC_BIN" help
 
+echo ""
+echo "==> dc help <command> (detailed help)"
+run_check "dc help new" "$DC_BIN" help new
+run_check "dc help start" "$DC_BIN" help start
+run_check "dc help stop" "$DC_BIN" help stop
+run_check "dc help status" "$DC_BIN" help status
+run_check "dc help list" "$DC_BIN" help list
+run_check "dc help shell" "$DC_BIN" help shell
+run_check "dc help rebuild" "$DC_BIN" help rebuild
+run_check "dc help rebuild-image" "$DC_BIN" help rebuild-image
+run_check "dc help clean" "$DC_BIN" help clean
+run_check "dc help install" "$DC_BIN" help install
+run_check "dc help help" "$DC_BIN" help help
+
+echo ""
+echo "==> dc help <alias>"
+run_check "dc help s (status alias)" "$DC_BIN" help s
+run_check "dc help ls (list alias)" "$DC_BIN" help ls
+
+echo ""
+echo "==> dc help <unknown> (should fail)"
+if "$DC_BIN" help nonexistent >/dev/null 2>&1; then
+  echo "  ✗ fail (expected non-zero exit)"
+  exit 1
+else
+  echo "  ✓ pass"
+fi
+
 if [[ -n "${CONTAINER_BACKEND:-}" ]]; then
   echo "==> backend-dependent checks"
   echo "  backend override: $CONTAINER_BACKEND"

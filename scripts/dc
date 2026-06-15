@@ -50,27 +50,7 @@ case "$SUBCOMMAND" in
     exec "$SCRIPT_DIR/install-dotfiles.sh" "$@"
     ;;
   help|--help|-h)
-    echo "Usage: dc <command> [args]"
-    echo ""
-    echo "Commands:"
-    echo "  new <name> [scope[,scope|overlay-path...]] [host:container ...]"
-    echo "                                                    Create new project"
-    echo "  new <name> [scope[,scope|overlay-path...]] [--repo-path <path>]"
-    echo "       [--cpus <N>] [--memory <val>] [host:container ...]"
-    echo "                                                    With resource limits"
-    echo "  new <name> [scope[,scope...]] [--repo-path <path>]"
-    echo "       [--overlay-containerfile <file> ...] [host:container ...]"
-    echo "                                                    Overlay flag form (repeatable)"
-    echo "  start [name]                                      Start project(s)"
-    echo "  stop [name]                                       Stop project(s)"
-    echo "  list                                              List containers and status"
-    echo "  status                                            Show detailed status"
-    echo "  shell <name> [cmd]                                Open shell or run command"
-    echo "  rebuild <name> [--rotate-keys]                    Destroy and recreate container"
-    echo "  rebuild-image [all|base]                           Rebuild shared base image"
-    echo "  clean [--dry-run]                                 Remove old image tags"
-    echo "  install <name> <path>                             Install dotfiles"
-    echo "  help                                              Show this help"
+    exec "$SCRIPT_DIR/help.sh" "$@"
     ;;
   *)
     echo "Unknown command: $SUBCOMMAND"
