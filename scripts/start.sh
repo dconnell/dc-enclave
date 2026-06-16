@@ -58,8 +58,20 @@ _start_container() {
     return 0
   fi
 
+  if ! declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1; then
+    CONTAINER_HIDDEN_PATHS=()
+  fi
+
   echo "  -> Starting $project on $active_backend..."
   backend_start "$project"
+
+  if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+    sleep 2
+    if ! dc_ensure_hidden_mounts "$project" "${CONTAINER_HIDDEN_PATHS[@]}"; then
+      echo "  ✗ $project - hidden volume mounts not active"
+      return 1
+    fi
+  fi
 
   if [[ -n "${SSH_KEY_PATH:-}" ]] && [[ -f "$SSH_KEY_PATH" ]]; then
     if ! backend_exec "$project" test -f ~/.ssh/id_ed25519 2>/dev/null; then

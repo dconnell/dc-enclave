@@ -352,6 +352,59 @@ dc_rebuild_handle_hidden_volumes() {
   done
 }
 
+dc_hidden_mounts_verified() {
+  local project="$1"
+  shift
+
+  local hidden_path=""
+  local target=""
+  local rc=0
+
+  for hidden_path in "$@"; do
+    [[ -z "$hidden_path" ]] && continue
+    target="/workspace/$hidden_path"
+
+    backend_exec "$project" sh -c \
+      '[ -d "'"${target}"'" ] && [ "$(stat -c %d /workspace)" != "$(stat -c %d "'"${target}"'")" ]' \
+      2>/dev/null || rc=1
+  done
+
+  return $rc
+}
+
+dc_ensure_hidden_mounts() {
+  local project="$1"
+  shift
+
+  if [[ $# -eq 0 ]]; then
+    return 0
+  fi
+
+  local attempt=0
+  local max_attempts=2
+
+  while true; do
+    if dc_hidden_mounts_verified "$project" "$@"; then
+      return 0
+    fi
+
+    attempt=$((attempt + 1))
+    if [[ $attempt -ge $max_attempts ]]; then
+      echo "ERROR: Hidden volume mounts not active after restart." >&2
+      echo "       Named volumes are configured but not applied to the container." >&2
+      echo "       This is a known issue with some container backends (e.g. OrbStack)." >&2
+      echo "       Try: dc stop $project && dc start $project" >&2
+      return 1
+    fi
+
+    echo "  -> Hidden volume mounts not active; restarting container to reapply..."
+    backend_stop "$project"
+    sleep 1
+    backend_start "$project"
+    sleep 2
+  done
+}
+
 dc_project_slug() {
   local project="$1"
   local project_slug="${project,,}"

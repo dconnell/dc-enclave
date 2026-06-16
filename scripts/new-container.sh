@@ -305,6 +305,12 @@ backend_start "$PROJECT"
 sleep 2
 
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+  echo "==> Verifying hidden volume mounts..."
+  if ! dc_ensure_hidden_mounts "$PROJECT" "${CONTAINER_HIDDEN_PATHS[@]}"; then
+    exit 1
+  fi
+  echo "  ✓ Hidden volume mounts active"
+
   echo "==> Normalizing hidden-path ownership..."
   for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
     target="/workspace/$hidden_path"
