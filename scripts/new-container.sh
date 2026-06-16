@@ -4,7 +4,7 @@
 # =============================================================================
 set -euo pipefail
 
-PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [port:port ...]}"
+PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [port:port ...]}"
 shift
 SCOPE_INPUT=""
 if [[ $# -gt 0 && "$1" != --* && ! "$1" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
@@ -20,6 +20,7 @@ fi
 
 PORTS=()
 REPO_PATH_OVERRIDE=""
+HIDDEN_PATH_INPUTS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-path)
@@ -44,6 +45,14 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       CONTAINER_MEMORY="$2"
+      shift 2
+      ;;
+    --hide)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        echo "ERROR: --hide requires a value (e.g. node_modules or apps/web/node_modules,apps/api/node_modules)"
+        exit 1
+      fi
+      HIDDEN_PATH_INPUTS+=("$2")
       shift 2
       ;;
     *)
@@ -77,6 +86,12 @@ fi
 
 SCOPE_CSV="$(dc_normalize_scopes_csv "$SCOPE_INPUT")" || exit 1
 IMAGE="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$SCOPE_CSV")" || exit 1
+
+HIDDEN_PATHS_CSV="$(dc_normalize_hidden_paths_values "${HIDDEN_PATH_INPUTS[@]:-}")" || exit 1
+CONTAINER_HIDDEN_PATHS=()
+if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
+  IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
+fi
 
 PORT_ARGS=()
 FORWARD_PORTS=()
@@ -180,6 +195,9 @@ echo "Overlay scope(s): ${SCOPE_CSV:-(none)} | Image: $IMAGE | Backend: $ACTIVE_
 if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
   echo "Resources: ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
 fi
+if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+  echo "Hidden paths: ${CONTAINER_HIDDEN_PATHS[*]}"
+fi
 echo "======================================================================"
 echo ""
 
@@ -252,6 +270,14 @@ else
   echo "PORTS=()" >> "$CONFIG_FILE"
 fi
 
+if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+  printf 'CONTAINER_HIDDEN_PATHS=(' >> "$CONFIG_FILE"
+  printf '%q ' "${CONTAINER_HIDDEN_PATHS[@]}" >> "$CONFIG_FILE"
+  printf ')\n' >> "$CONFIG_FILE"
+else
+  echo "CONTAINER_HIDDEN_PATHS=()" >> "$CONFIG_FILE"
+fi
+
 echo "✓ Config saved: $CONFIG_FILE"
 
 RESOURCE_ARGS=()
@@ -264,6 +290,10 @@ fi
 
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
 VOLUME_ARGS+=(--volume "$SECRET_DIR/.npmrc:/home/dev/.npmrc:ro")
+for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
+  hidden_volume="$(dc_hidden_volume_name "$PROJECT" "$hidden_path")"
+  VOLUME_ARGS+=(--volume "$hidden_volume:/workspace/$hidden_path")
+done
 
 echo ""
 echo "==> Creating container from image: $IMAGE"
@@ -273,6 +303,18 @@ echo ""
 echo "==> Starting container for initial SSH key injection..."
 backend_start "$PROJECT"
 sleep 2
+
+if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+  echo "==> Normalizing hidden-path ownership..."
+  for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
+    target="/workspace/$hidden_path"
+    backend_exec_as_root "$PROJECT" sh -lc "mkdir -p '$target' && chown -R dev:dev '$target'"
+    if ! backend_exec "$PROJECT" sh -lc "test -w '$target'"; then
+      echo "ERROR: Hidden path is not writable by dev: $target"
+      exit 1
+    fi
+  done
+fi
 
 echo "==> Injecting SSH deploy key..."
 backend_exec "$PROJECT" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
@@ -309,6 +351,10 @@ if $DOCKER_COMPATIBLE; then
     MOUNTS_BLOCK=""
     MOUNTS_ENTRIES=()
     MOUNTS_ENTRIES+=("source=$SECRET_DIR/.npmrc,target=/home/dev/.npmrc,type=bind,readonly")
+    for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
+      hidden_volume="$(dc_hidden_volume_name "$PROJECT" "$hidden_path")"
+      MOUNTS_ENTRIES+=("source=$hidden_volume,target=/workspace/$hidden_path,type=volume")
+    done
 
     if [[ ${#MOUNTS_ENTRIES[@]} -gt 0 ]]; then
       MOUNTS_BLOCK=$',\n  "mounts": [\n'

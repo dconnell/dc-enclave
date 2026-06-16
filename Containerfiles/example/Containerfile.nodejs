@@ -2,21 +2,101 @@ FROM dev-base:latest
 
 USER root
 
-# Install Node.js LTS via NodeSource (arm64-native for Apple Silicon)
+# Install Node.js LTS via NodeSource (arm64-native on Apple Silicon).
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 USER dev
 
-# npm global bin in PATH
+# npm global bin in PATH.
 ENV PATH="/home/dev/.local/bin:$PATH"
 ENV NPM_CONFIG_PREFIX="/home/dev/.npm-global"
 ENV PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
 
-# Verify
 RUN node --version && npm --version
 
 WORKDIR /workspace
 
+# This overlay supports the dc hidden-volume feature.  To use it, create the
+# container with:
+#
+#   dc new <project> nodejs --hide node_modules [ports...]
+#
+# dc injects a named volume at runtime (Containerfiles are build-time fragments
+# and cannot declare mounts):
+#
+#   --volume dc-hide-<project>-<hash>:/workspace/node_modules
+#
+# This keeps node_modules off the host bind mount for native-filesystem speed
+# and platform-correct binaries.  This overlay ships a dependency-sync
+# entrypoint that:
+# - skips install when package.json is absent,
+# - uses npm ci when lockfile exists, otherwise npm install,
+# - hashes package files + Node version to avoid unnecessary reinstalls,
+# - fails soft by default, with strict mode opt-in.
+
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-node-entrypoint.sh <<'ENTRYPOINT_EOF'
+#!/bin/sh
+set -eu
+
+APP_DIR="${APP_DIR:-/workspace}"
+STRICT="${DC_NODE_INSTALL_STRICT:-0}"
+HASH_FILE="$APP_DIR/node_modules/.dc-install-hash"
+
+log() { printf '%s\n' "[node-hide] $*"; }
+
+compute_hash() {
+  {
+    printf 'node=%s\n' "$(node --version 2>/dev/null || printf unknown)"
+    for f in package.json package-lock.json npm-shrinkwrap.json; do
+      if [ -f "$APP_DIR/$f" ]; then
+        printf 'file=%s sha256=%s\n' "$f" "$(sha256sum "$APP_DIR/$f" | cut -d' ' -f1)"
+      else
+        printf 'file=%s missing\n' "$f"
+      fi
+    done
+  } | sha256sum | cut -d' ' -f1
+}
+
+if [ ! -f "$APP_DIR/package.json" ]; then
+  log "no package.json at $APP_DIR; skipping dependency sync"
+  exec "$@"
+fi
+
+current_hash="$(compute_hash)"
+saved_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
+
+if [ "$saved_hash" != "$current_hash" ] || [ ! -d "$APP_DIR/node_modules" ]; then
+  if ! mkdir -p "$APP_DIR/node_modules" 2>/dev/null; then
+    log "warning: cannot write $APP_DIR/node_modules yet; skipping sync for this start"
+    exec "$@"
+  fi
+
+  if [ -f "$APP_DIR/package-lock.json" ] || [ -f "$APP_DIR/npm-shrinkwrap.json" ]; then
+    install_cmd="npm ci"
+  else
+    install_cmd="npm install"
+  fi
+
+  log "running: $install_cmd"
+  if sh -lc "$install_cmd"; then
+    current_hash="$(compute_hash)"
+    printf '%s' "$current_hash" > "$HASH_FILE"
+    log "dependency sync complete"
+  else
+    if [ "$STRICT" = "1" ]; then
+      log "error: dependency sync failed (strict mode)"
+      exit 1
+    fi
+    log "warning: dependency sync failed; container remains running"
+  fi
+fi
+
+exec "$@"
+ENTRYPOINT_EOF
+
+RUN chmod +x /home/dev/.local/bin/dc-node-entrypoint.sh
+
+ENTRYPOINT ["/home/dev/.local/bin/dc-node-entrypoint.sh"]
 CMD ["sleep", "infinity"]

@@ -40,6 +40,8 @@ PROJECTS=("$HOME"/.config/dev-containers/*/config)
 if [[ ${#PROJECTS[@]} -gt 0 ]]; then
   echo "Project details:"
   for config_file in "${PROJECTS[@]}"; do
+    PORTS=()
+    CONTAINER_HIDDEN_PATHS=()
     source "$config_file"
 
     project="${CONTAINER_PROJECT:-$(basename "$(dirname "$config_file")")}"
@@ -75,6 +77,9 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
     echo "    Backend:      $resolved_backend"
     echo "    Scopes:       $scope_value"
     echo "    Repos dir:    ${REPOS_DIR:-unknown}"
+    if declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1 && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+      echo "    Hidden paths: ${CONTAINER_HIDDEN_PATHS[*]}"
+    fi
     echo "    GitHub token: $token_set"
     echo "    SSH key:      $ssh_key_exists"
     if declare -p PORTS >/dev/null 2>&1 && [[ ${#PORTS[@]} -gt 0 ]]; then

@@ -25,6 +25,8 @@ run_check() {
 }
 
 run_check "dc help" "$DC_BIN" help
+run_check "hidden path helper checks" "$ROOT_DIR/tests/hidden-paths.sh"
+run_check "rebuild hidden-volume checks" "$ROOT_DIR/tests/rebuild-hidden-volumes.sh"
 
 echo ""
 echo "==> dc help <command> (detailed help)"
@@ -60,12 +62,14 @@ if [[ -n "${CONTAINER_BACKEND:-}" ]]; then
   run_check "dc list" "$DC_BIN" list
   run_check "dc status" "$DC_BIN" status
   run_check "dc clean --dry-run" "$DC_BIN" clean --dry-run
+  run_check "dc clean --hidden-volumes --dry-run" "$DC_BIN" clean --hidden-volumes --dry-run
 else
   if "$DC_BIN" list >/dev/null 2>&1; then
     echo "==> backend-dependent checks"
     echo "  ✓ backend reachable"
     run_check "dc status" "$DC_BIN" status
     run_check "dc clean --dry-run" "$DC_BIN" clean --dry-run
+    run_check "dc clean --hidden-volumes --dry-run" "$DC_BIN" clean --hidden-volumes --dry-run
   else
     echo "==> backend-dependent checks"
     echo "  - skipped (no supported backend detected or runtime unavailable)"

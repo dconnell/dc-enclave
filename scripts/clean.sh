@@ -1,15 +1,45 @@
 #!/usr/bin/env bash
 # =============================================================================
-# clean.sh - Remove non-latest tags and orphan managed image repos
+# clean.sh - Remove old managed image tags and orphan hidden volumes
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
 
 DRY_RUN=false
-if [[ "${1:-}" == "--dry-run" ]]; then
-  DRY_RUN=true
-elif [[ $# -gt 0 ]]; then
-  echo "Usage: dc clean [--dry-run]"
+CLEAN_HIDDEN_VOLUMES=false
+TARGET_PROJECT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --hidden-volumes)
+      CLEAN_HIDDEN_VOLUMES=true
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -* )
+      echo "Usage: dc clean [--dry-run] [--hidden-volumes [name]]"
+      exit 1
+      ;;
+    *)
+      if [[ -n "$TARGET_PROJECT" ]]; then
+        echo "Usage: dc clean [--dry-run] [--hidden-volumes [name]]"
+        exit 1
+      fi
+      TARGET_PROJECT="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$TARGET_PROJECT" && "$CLEAN_HIDDEN_VOLUMES" == "false" ]]; then
+  echo "Usage: dc clean [--dry-run] [--hidden-volumes [name]]"
   exit 1
 fi
 
@@ -58,6 +88,105 @@ case "$ACTIVE_BACKEND" in
 esac
 
 dc_load_global_config
+
+if $CLEAN_HIDDEN_VOLUMES; then
+  declare -A EXPECTED_VOLUMES=()
+
+  for config_file in "$HOME"/.config/dev-containers/*/config; do
+    [[ -f "$config_file" ]] || continue
+
+    project_name="$(basename "$(dirname "$config_file")")"
+    if [[ -n "$TARGET_PROJECT" && "$project_name" != "$TARGET_PROJECT" ]]; then
+      continue
+    fi
+
+    CONTAINER_HIDDEN_PATHS=()
+    # shellcheck disable=SC1090
+    source "$config_file"
+
+    if ! declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1; then
+      CONTAINER_HIDDEN_PATHS=()
+    fi
+
+    normalized_hidden_csv=""
+    if ! normalized_hidden_csv="$(dc_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]:-}")"; then
+      dc_warn "Skipping invalid hidden paths in $config_file"
+      continue
+    fi
+
+    normalized_hidden_paths=()
+    if [[ -n "$normalized_hidden_csv" ]]; then
+      IFS=',' read -r -a normalized_hidden_paths <<< "$normalized_hidden_csv"
+    fi
+
+    for hidden_path in "${normalized_hidden_paths[@]}"; do
+      [[ -z "$hidden_path" ]] && continue
+      hidden_volume="$(dc_hidden_volume_name "$project_name" "$hidden_path")"
+      EXPECTED_VOLUMES["$hidden_volume"]=1
+    done
+  done
+
+  managed_prefix="dc-hide-"
+  if [[ -n "$TARGET_PROJECT" ]]; then
+    managed_prefix="dc-hide-$(dc_project_slug "$TARGET_PROJECT")-"
+  fi
+
+  REMOVE_VOLUMES=()
+  declare -A SEEN_VOLUMES=()
+  while IFS= read -r volume_name; do
+    [[ -z "$volume_name" ]] && continue
+    [[ "$volume_name" == "$managed_prefix"* ]] || continue
+    if [[ -n "${EXPECTED_VOLUMES[$volume_name]-}" ]]; then
+      continue
+    fi
+    if [[ -z "${SEEN_VOLUMES[$volume_name]-}" ]]; then
+      REMOVE_VOLUMES+=("$volume_name")
+      SEEN_VOLUMES["$volume_name"]=1
+    fi
+  done < <(backend_list_volumes)
+
+  if [[ ${#REMOVE_VOLUMES[@]} -eq 0 ]]; then
+    if [[ -n "$TARGET_PROJECT" ]]; then
+      echo "No orphan hidden volumes found for project '$TARGET_PROJECT'."
+    else
+      echo "No orphan hidden volumes found."
+    fi
+    exit 0
+  fi
+
+  IFS=$'\n' clean_hidden_volumes=($(printf '%s\n' "${REMOVE_VOLUMES[@]}" | sort))
+  unset IFS
+
+  echo "Active backend: $ACTIVE_BACKEND"
+  echo "The following orphan hidden volumes will be removed:"
+  for volume_name in "${clean_hidden_volumes[@]}"; do
+    echo "  - $volume_name"
+  done
+
+  if $DRY_RUN; then
+    echo ""
+    echo "Dry run only; nothing removed."
+    exit 0
+  fi
+
+  removed=0
+  failed=0
+  for volume_name in "${clean_hidden_volumes[@]}"; do
+    if backend_remove_volume "$volume_name"; then
+      removed=$((removed + 1))
+    else
+      failed=$((failed + 1))
+      echo "WARN: Could not remove hidden volume $volume_name (may be in use)."
+    fi
+  done
+
+  echo ""
+  echo "Hidden volume cleanup complete. Removed: $removed"
+  if [[ $failed -gt 0 ]]; then
+    echo "Could not remove: $failed"
+  fi
+  exit 0
+fi
 
 is_managed_repo() {
   local repo="$1"

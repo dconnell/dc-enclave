@@ -92,10 +92,10 @@ _dc_complete() {
         COMPREPLY=( $(compgen -d -- "$cur") )
         return 0
       fi
-      if [[ "$prev" == "--cpus" || "$prev" == "--memory" ]]; then
+      if [[ "$prev" == "--cpus" || "$prev" == "--memory" || "$prev" == "--hide" ]]; then
         return 0
       fi
-      local flags="--repo-path --cpus --memory"
+      local flags="--repo-path --cpus --memory --hide"
       if [[ $COMP_CWORD -eq 3 ]]; then
         COMPREPLY=( $(compgen -W "$(_dc_scopes) $flags" -- "$cur") )
       else
@@ -107,8 +107,8 @@ _dc_complete() {
         COMPREPLY=( $(compgen -W "$(_dc_project_names "$cur")" -- "$cur") )
         return 0
       fi
-      if [[ "$cmd" == "rebuild-container" && $COMP_CWORD -eq 3 ]]; then
-        COMPREPLY=( $(compgen -W "--rotate-keys" -- "$cur") )
+      if [[ "$cmd" == "rebuild-container" && $COMP_CWORD -ge 3 ]]; then
+        COMPREPLY=( $(compgen -W "--rotate-keys --keep-hidden-volumes" -- "$cur") )
       fi
       if [[ "$cmd" == "install" && $COMP_CWORD -eq 3 ]]; then
         COMPREPLY=( $(compgen -d -- "$cur") )
@@ -121,7 +121,9 @@ _dc_complete() {
       ;;
     clean)
       if [[ $COMP_CWORD -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "--dry-run" -- "$cur") )
+        COMPREPLY=( $(compgen -W "--dry-run --hidden-volumes" -- "$cur") )
+      elif [[ "$prev" == "--hidden-volumes" ]]; then
+        COMPREPLY=( $(compgen -W "$(_dc_project_names "$cur")" -- "$cur") )
       fi
       ;;
   esac

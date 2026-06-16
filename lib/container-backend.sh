@@ -513,6 +513,42 @@ backend_remove_image() {
   esac
 }
 
+backend_list_volumes() {
+  local backend=""
+  backend="$(backend_name)" || return 1
+
+  case "$backend" in
+    apple)
+      if container volume list --format json >/dev/null 2>&1; then
+        container volume list --format json 2>/dev/null | awk -F'"' '/"name"[[:space:]]*:/ {print $4}'
+      elif container volume ls --format '{{.Name}}' >/dev/null 2>&1; then
+        container volume ls --format '{{.Name}}' 2>/dev/null
+      else
+        container volume list 2>/dev/null | awk 'NR > 1 {print $1}'
+      fi
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" volume ls --format '{{.Name}}' 2>/dev/null
+      ;;
+  esac
+}
+
+backend_remove_volume() {
+  local volume_name="$1"
+
+  case "$(backend_name)" in
+    apple)
+      if container volume delete "$volume_name" >/dev/null 2>&1; then
+        return 0
+      fi
+      container volume rm "$volume_name" >/dev/null 2>&1
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" volume rm "$volume_name" >/dev/null
+      ;;
+  esac
+}
+
 backend_list_running() {
   case "$(backend_name)" in
     apple)
@@ -638,6 +674,20 @@ backend_exec() {
       ;;
     docker|orbstack|colima|podman)
       "$(backend_cli)" exec "$name" "$@"
+      ;;
+  esac
+}
+
+backend_exec_as_root() {
+  local name="$1"
+  shift
+
+  case "$(backend_name)" in
+    apple)
+      container exec --uid 0 "$name" "$@"
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" exec -u 0 "$name" "$@"
       ;;
   esac
 }

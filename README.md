@@ -54,9 +54,9 @@ The day-to-day interface is the `dc` command with subcommands. All subcommands d
 | `dc start [name]` | Start one project or all configured projects |
 | `dc stop [name]` | Stop one project or all configured projects |
 | `dc shell <name> [command]` | Open a shell or run one command inside a project container |
-| `dc rebuild-container <name> [--rotate-keys]` | Destroy and recreate container from selected image |
+| `dc rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]` | Destroy and recreate container from selected image |
 | `dc rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
-| `dc clean [--dry-run]` | Remove old tags from expected managed repos and remove orphan managed repos |
+| `dc clean [--dry-run] [--hidden-volumes [name]]` | Remove old/orphan managed image tags or orphan managed hidden volumes |
 | `dc install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
 | `dc help` | Show usage information |
 
@@ -67,7 +67,7 @@ The day-to-day interface is the `dc` command with subcommands. All subcommands d
 | Form | Description |
 |---|---|
 | `dc new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
-| `dc new <name> [scope[,scope...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [host:container ...]` | With resource limits |
+| `dc new <name> [scope[,scope...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]` | With resource limits and hidden paths (see [Hiding generated paths](#hiding-generated-paths-from-the-host---hide)) |
 
 ## Global configuration and overlays
 
@@ -433,6 +433,62 @@ Config keys:
 
 All backends use the same flag syntax (`--cpus`, `--memory`). No backend-specific configuration is needed.
 
+## Hiding generated paths from the host (`--hide`)
+
+By default, the entire workspace is a bind mount: everything under `/workspace` inside the container is a live view of the host repos directory. This is great for source code but problematic for generated paths like `node_modules`, build caches, or compiled output. Those directories can contain thousands of files, platform-specific binaries, and large caches that are meaningless—or even harmful—on the host filesystem.
+
+The `--hide` flag solves this by mounting a named container volume over a `/workspace`-relative path so its contents live inside the container's volume store instead of on the host.
+
+### Why use `--hide`
+
+- **Bind-mount performance** — On macOS (Docker Desktop, OrbStack, Colima) and WSL2, bind mounts crossing the VM boundary are slow for heavy file I/O. A directory like `node_modules` with tens of thousands of tiny files can make `npm install`, `git status`, and file watchers painfully slow. Moving it to a named volume restores native filesystem speed.
+- **Platform correctness** — Native dependencies (e.g. `node-gyp` binaries, Go build artifacts) compiled inside the Linux container are not compatible with a macOS or Windows host. Keeping them in a container-only volume avoids platform mismatch errors.
+- **Host cleanliness** — Generated output, caches, and lock-file side effects won't clutter your host checkout, won't confuse `git status`, and won't risk accidental commits.
+
+### Usage
+
+`--hide` accepts one or more comma-separated paths and can be repeated. Paths are relative to `/workspace`:
+
+```
+dc new myapp nodejs --hide node_modules 3000:3000
+dc new monorepo nodejs,golang \
+  --hide node_modules \
+  --hide apps/web/node_modules,apps/api/node_modules \
+  --hide .cache/go/mod,.cache/go/build \
+  3000:3000 8080:8080
+```
+
+### How it works
+
+- Each hidden path gets a deterministic named volume (`dc-hide-<project>-<hash>`) mounted at `/workspace/<path>`.
+- After container start, dc ensures the hidden mount points are writable by the `dev` user (root `mkdir`/`chown` fallback applied across all backends).
+- Hidden paths are persisted in the project config (`CONTAINER_HIDDEN_PATHS`) and automatically remounted on `dc rebuild-container`.
+- **`dc rebuild-container` removes hidden volumes by default** for a clean slate (fresh dependency install, no stale caches). Use `--keep-hidden-volumes` to preserve them.
+- For Docker-compatible backends, hidden mounts are also added to the generated `devcontainer.json` so VS Code Dev Containers uses the same layout.
+
+### Overlay integration
+
+Scope-specific overlays can build on hidden volumes. For example, the Node.js overlay (`Containerfile.nodejs`) includes an entrypoint that:
+
+- detects a hidden `node_modules` volume
+- runs `npm ci` (if a lockfile exists) or `npm install` automatically on container start
+- writes a hash sentinel so deps are only re-installed when `package.json` or `package-lock.json` changes
+- fails soft by default; set `DC_NODE_INSTALL_STRICT=1` to make install errors fatal
+
+This means you get fast, correct dependency sync without any `node_modules` files touching your host.
+
+### Cleaning up hidden volumes
+
+Hidden volumes are removed automatically during `dc rebuild-container` (default behavior) so the rebuilt container starts clean. To reclaim space from orphaned volumes left behind by deleted projects:
+
+```
+dc clean --hidden-volumes --dry-run    # preview what would be removed
+dc clean --hidden-volumes              # remove orphan hidden volumes
+dc clean --hidden-volumes myproject    # scope to one project
+```
+
+Only `dc-hide-*` managed volumes that no longer correspond to an active project config are removed.
+
 ## Monorepo and multi-repo patterns
 
 Monorepo:
@@ -514,7 +570,7 @@ For apple backend, use normal local folder + generated terminal profile instead 
 
 ## Rebuild and incident recovery
 
-Rebuild container:
+Rebuild container (hidden volumes removed by default for a clean slate):
 
 ```
 dc rebuild-container myapp-monorepo
@@ -525,6 +581,14 @@ Rebuild and rotate SSH key:
 ```
 dc rebuild-container myapp-monorepo --rotate-keys
 ```
+
+Rebuild while preserving hidden volumes (skip dependency re-install):
+
+```
+dc rebuild-container myapp-monorepo --keep-hidden-volumes
+```
+
+For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. Combining `--rotate-keys` with `--keep-hidden-volumes` triggers a loud warning.
 
 ## Rebuilding after Containerfile changes
 

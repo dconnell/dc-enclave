@@ -155,6 +155,219 @@ dc_normalize_scopes_csv() {
   dc_join_by ',' "${normalized[@]}"
 }
 
+dc_validate_hidden_path() {
+  local path="$1"
+
+  [[ -n "$path" ]] || return 1
+
+  if [[ "$path" =~ [[:space:]] ]]; then
+    return 1
+  fi
+
+  [[ "$path" != /* ]] || return 1
+  [[ "$path" != "." && "$path" != ".." ]] || return 1
+  [[ "$path" != *:* ]] || return 1
+
+  if [[ "$path" =~ (^|/)\.\.?($|/) ]]; then
+    return 1
+  fi
+
+  [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]]
+}
+
+dc_normalize_hidden_paths_csv() {
+  local input="$1"
+
+  if [[ -z "$input" ]]; then
+    printf 'ERROR: Hidden path value is empty.\n' >&2
+    return 1
+  fi
+
+  local -a normalized=()
+  local -a raw_paths=()
+  declare -A seen=()
+  local raw_path=""
+  local path=""
+  local saw_token=0
+
+  IFS=',' read -r -a raw_paths <<< "$input"
+  for raw_path in "${raw_paths[@]}"; do
+    saw_token=1
+    path="$raw_path"
+    path="${path#"${path%%[![:space:]]*}"}"
+    path="${path%"${path##*[![:space:]]}"}"
+    [[ -z "$path" ]] && continue
+
+    while [[ "$path" == ./* ]]; do
+      path="${path#./}"
+    done
+
+    while [[ "$path" == */ ]]; do
+      path="${path%/}"
+    done
+
+    while [[ "$path" == *"//"* ]]; do
+      path="${path//\/\//\/}"
+    done
+
+    if ! dc_validate_hidden_path "$path"; then
+      printf 'ERROR: Invalid hidden path: %s\n' "$path" >&2
+      printf '  Rules: relative path under /workspace; no whitespace, no :, no traversal (., ..)\n' >&2
+      return 1
+    fi
+
+    if [[ -n "${seen[$path]-}" ]]; then
+      continue
+    fi
+
+    seen["$path"]=1
+    normalized+=("$path")
+  done
+
+  if [[ "$saw_token" -eq 1 && ${#normalized[@]} -eq 0 ]]; then
+    printf 'ERROR: Hidden path value is empty or invalid: %s\n' "$input" >&2
+    return 1
+  fi
+
+  dc_join_by ',' "${normalized[@]}"
+}
+
+dc_normalize_hidden_paths_values() {
+  if [[ $# -eq 0 ]]; then
+    printf ''
+    return 0
+  fi
+
+  local -a normalized_all=()
+  local -a normalized_parts=()
+  declare -A seen=()
+  local raw_value=""
+  local normalized_csv=""
+  local part=""
+
+  for raw_value in "$@"; do
+    [[ -z "$raw_value" ]] && continue
+    if ! normalized_csv="$(dc_normalize_hidden_paths_csv "$raw_value")"; then
+      return 1
+    fi
+
+    IFS=',' read -r -a normalized_parts <<< "$normalized_csv"
+    for part in "${normalized_parts[@]}"; do
+      [[ -z "$part" ]] && continue
+      if [[ -n "${seen[$part]-}" ]]; then
+        continue
+      fi
+      seen["$part"]=1
+      normalized_all+=("$part")
+    done
+  done
+
+  dc_join_by ',' "${normalized_all[@]}"
+}
+
+dc_hidden_volume_name() {
+  local project="$1"
+  local hidden_path="$2"
+
+  local project_slug=""
+  project_slug="$(dc_project_slug "$project")"
+
+  local key="hide-v1|$project|$hidden_path"
+  local hash=""
+  hash="$(dc_sha256_hex "$key")"
+  hash="${hash:0:12}"
+
+  printf 'dc-hide-%s-%s\n' "$project_slug" "$hash"
+}
+
+dc_hidden_volume_exists() {
+  local volume_name="$1"
+  local volume_list=""
+  local listed_volume=""
+
+  if ! volume_list="$(backend_list_volumes 2>/dev/null)"; then
+    return 2
+  fi
+
+  while IFS= read -r listed_volume; do
+    [[ -z "$listed_volume" ]] && continue
+    if [[ "$listed_volume" == "$volume_name" ]]; then
+      return 0
+    fi
+  done <<< "$volume_list"
+
+  return 1
+}
+
+dc_rebuild_handle_hidden_volumes() {
+  local project="$1"
+  local keep_hidden_volumes="$2"
+  shift 2
+
+  local -a hidden_paths=("$@")
+  local hidden_path=""
+  local hidden_volume=""
+  local exists_rc=0
+
+  if [[ ${#hidden_paths[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  echo ""
+  if [[ "$keep_hidden_volumes" == "true" ]]; then
+    echo "  -> Preserving hidden volumes (--keep-hidden-volumes):"
+    for hidden_path in "${hidden_paths[@]}"; do
+      [[ -z "$hidden_path" ]] && continue
+      hidden_volume="$(dc_hidden_volume_name "$project" "$hidden_path")"
+      echo "     ~ Kept: $hidden_volume ($hidden_path)"
+    done
+    return 0
+  fi
+
+  echo "  -> Removing hidden volumes for clean rebuild..."
+  for hidden_path in "${hidden_paths[@]}"; do
+    [[ -z "$hidden_path" ]] && continue
+    hidden_volume="$(dc_hidden_volume_name "$project" "$hidden_path")"
+
+    if backend_remove_volume "$hidden_volume" 2>/dev/null; then
+      echo "     ✓ Removed: $hidden_volume ($hidden_path)"
+      continue
+    fi
+
+    if dc_hidden_volume_exists "$hidden_volume"; then
+      echo "ERROR: Failed to remove hidden volume still present: $hidden_volume ($hidden_path)"
+      echo "       Aborting rebuild to avoid reusing possibly compromised hidden state."
+      return 1
+    else
+      exists_rc=$?
+    fi
+
+    if [[ "$exists_rc" -eq 2 ]]; then
+      echo "ERROR: Failed to verify hidden volume removal: $hidden_volume ($hidden_path)"
+      echo "       Aborting rebuild to avoid reusing possibly compromised hidden state."
+      return 1
+    fi
+
+    echo "     (already gone: $hidden_volume)"
+  done
+}
+
+dc_project_slug() {
+  local project="$1"
+  local project_slug="${project,,}"
+
+  project_slug="${project_slug//[^a-z0-9]/-}"
+  while [[ "$project_slug" == *--* ]]; do
+    project_slug="${project_slug//--/-}"
+  done
+  project_slug="${project_slug#-}"
+  project_slug="${project_slug%-}"
+  [[ -n "$project_slug" ]] || project_slug="project"
+  project_slug="${project_slug:0:24}"
+
+  printf '%s\n' "$project_slug"
+}
+
 dc_scope_exists() {
   local overlays_dir="$1"
   local scope="$2"
