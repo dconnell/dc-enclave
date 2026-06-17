@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# stop.sh - Stop one or all dev containers
+# scripts/stop.sh - `dc stop`: stop one or all dev containers.
+#
+# Stopping preserves the container filesystem - it can be restarted with
+# `dc start` without data loss. Use `dc rebuild-container` to fully destroy.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
 
+# Resolve real script dir (follows symlinks) and repo root.
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"
@@ -18,6 +22,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
+# Stop a single project; already-stopped containers are reported, not errored.
 _stop_container() {
   local project="$1"
   local config="$HOME/.config/dev-containers/$project/config"

@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# compose-containerfile.sh - Compose base image plus scoped auto overlays
-# into one generated Containerfile.
+# scripts/compose-containerfile.sh - Compose base image + overlay scopes into
+# one generated Containerfile for a derived (dev-img-<hash>) image.
+#
+# This implements the layering contract: team/all, user/all, then team/<scope>,
+# user/<scope> for each requested scope, in that fixed order. FROM and CMD from
+# overlay fragments are stripped (we own the base image and the final CMD);
+# COPY/ADD are rejected (overlays must not couple to an external build context).
 # =============================================================================
 set -euo pipefail
 
@@ -21,6 +26,7 @@ usage() {
   echo "Usage: compose-containerfile.sh <output-file> <overlay-scopes-csv>"
 }
 
+# Parse flags (--help/-h, and reject unknown flags). No real options today.
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --help|-h)
@@ -60,6 +66,8 @@ mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd -P "$OUTPUT_DIR" && pwd)"
 OUTPUT_FILE="$OUTPUT_DIR/$(basename "$OUTPUT_FILE")"
 
+# Emit one overlay fragment into the composed file with begin/end markers.
+# Strips a leading FROM (we always build FROM dev-base) and any CMD lines.
 emit_fragment() {
   local fragment_file="$1"
   local label="$2"
@@ -74,6 +82,8 @@ emit_fragment() {
   echo "# --- end $label ---"
 }
 
+# Reject COPY/ADD in overlays. Generated files build with the repo as context,
+# but overlays must stay context-free so team/user fragments compose portably.
 validate_overlay_file() {
   local overlay_file="$1"
 
@@ -96,6 +106,9 @@ fi
 AUTO_OVERLAY_FILES=()
 AUTO_OVERLAY_LABELS=()
 
+# Record one overlay file for emission, in the canonical namespace order.
+# Missing unrequested files are reported but skipped silently is handled by the
+# caller (effective-scopes resolution already validated requested scopes).
 append_auto_overlay() {
   local namespace="$1"
   local scope="$2"
@@ -111,6 +124,7 @@ append_auto_overlay() {
   fi
 }
 
+# Layer overlays in canonical order: for each effective scope, team then user.
 echo "==> Layering overlays:"
 for scope in "${SELECTED_SCOPES[@]}"; do
   append_auto_overlay team "$scope"
@@ -123,6 +137,8 @@ else
   SELECTED_SCOPE_SUMMARY="(none)"
 fi
 
+# Emit the composed file: always FROM dev-base:latest, each overlay fragment in
+# layered order, then force USER dev and a long-running CMD.
 {
   echo "FROM dev-base:latest"
   echo ""

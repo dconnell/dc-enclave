@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# rebuild-image.sh - Rebuild base and configured derived images
+# scripts/rebuild-image.sh - `dc rebuild-image`: rebuild managed images.
+#
+# `base` rebuilds only dev-base:latest. `all` (default) rebuilds dev-base plus
+# every derived image (dev-img-<hash>) currently selected by configured project
+# scopes, composing each on the fly. Images are rebuilt into the active
+# backend's store only. After rebuilding, run `dc rebuild-container <name>` to
+# recreate containers from the refreshed images.
 # =============================================================================
 set -euo pipefail
 
@@ -97,6 +103,8 @@ if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   exit 1
 fi
 
+# Scan every project config, derive its image, and build each unique derived
+# repo once. dev-base-only projects are skipped (built above as the base).
 declare -A BUILT_REPOS=()
 declare -A SKIPPED_REPOS=()
 

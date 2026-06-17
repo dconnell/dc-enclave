@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# start.sh - Start one or all dev containers
+# scripts/start.sh - `dc start`: start one or all dev containers.
+#
+# Starts named projects, or all configured projects when none are given. Brings
+# up the runtime if needed, verifies hidden-volume mounts, and re-injects the
+# SSH deploy key if it's missing from the container filesystem.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
 
+# Resolve real script dir (follows symlinks) and repo root.
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"
@@ -18,6 +23,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
+# Start a single project: reach the backend, ensure hidden mounts are live, and
+# re-inject the SSH key if the container lost it (e.g. after a host reboot).
 _start_container() {
   local project="$1"
   local config="$HOME/.config/dev-containers/$project/config"

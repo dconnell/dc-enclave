@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# status.sh - Show status of all dev containers
+# scripts/status.sh - `dc status`: detailed status across all dev containers.
+#
+# Shows backend/system info, all containers, then per-project detail (running
+# state, scopes, repos dir, hidden paths, token/SSH-key presence, ports). Each
+# project may use a different backend, so the backend is resolved per project.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
 
+# Resolve real script dir (follows symlinks) and repo root.
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"

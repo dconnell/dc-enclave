@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# install-dotfiles.sh - Install or update dotfiles in a running container
+# scripts/install-dotfiles.sh - `dc install`: apply personal dotfiles into a
+# running container. Streams the dotfiles dir into the container via tar, runs
+# its install.sh as the dev user, then removes the temp copy. Re-run after any
+# rebuild to restore personal config.
 # =============================================================================
 set -euo pipefail
 
@@ -53,6 +56,8 @@ if ! backend_is_running "$PROJECT"; then
   exit 1
 fi
 
+# Stream the dotfiles into a temp dir inside the container (no host path
+# coupling), make install.sh executable, run it, then clean up.
 REMOTE_DIR="/tmp/dotfiles-$$"
 
 echo "==> Installing dotfiles into '$PROJECT'..."

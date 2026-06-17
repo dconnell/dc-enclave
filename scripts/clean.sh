@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# clean.sh - Remove old managed image tags and orphan hidden volumes
+# scripts/clean.sh - `dc clean`: reclaim backend storage.
+#
+# Two modes:
+#   default             Remove old/orphan managed *image* tags. Expected repos
+#                       (dev-base + currently-configured dev-img-*) keep
+#                       :latest and shed other tags; orphan repos lose all tags.
+#   --hidden-volumes    Remove orphan managed *hidden volumes* (dc-hide-* no
+#                       longer referenced by an active project config). An
+#                       optional project name scopes it to one project.
+#
+# Unrelated images/volumes are never touched. --dry-run previews only.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -89,6 +99,9 @@ esac
 
 dc_load_global_config
 
+# --- Hidden-volume cleanup mode -----------------------------------------------
+# Build the set of volumes still referenced by active project configs, then
+# remove any dc-hide-* volume not in that set (optionally scoped to one project).
 if $CLEAN_HIDDEN_VOLUMES; then
   declare -A EXPECTED_VOLUMES=()
 
@@ -188,11 +201,15 @@ if $CLEAN_HIDDEN_VOLUMES; then
   exit 0
 fi
 
+# A repo is "managed" by dev-containers if it's dev-base or a dev-img-<16hex>.
+# Only these are ever candidates for cleanup; everything else is left alone.
 is_managed_repo() {
   local repo="$1"
   [[ "$repo" == "dev-base" || "$repo" =~ ^dev-img-[0-9a-f]{16}$ ]]
 }
 
+# --- Image-tag cleanup mode --------------------------------------------------
+# Expected repos = dev-base + every image currently selected by a project config.
 declare -A EXPECTED_REPOS=()
 EXPECTED_REPOS["dev-base"]=1
 

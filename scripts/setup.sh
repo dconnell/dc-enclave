@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # =============================================================================
-# setup.sh - One-time host setup for dev-containers
+# scripts/setup.sh - One-time host setup for dev-containers.
+#
+# Idempotent and safe to re-run. Per active backend it: starts/reaches the
+# runtime, picks a repos dir, creates the config/overlay directories, writes
+# the global config (DC_OVERLAYS_DIR), registers a global gitignore for
+# secrets, builds dev-base:latest into that backend's image store, and adds the
+# `dc` alias + completion + DC_REPOS_DIR to the shell profile.
+#
+# Run once per backend you use - image stores are not shared across backends.
 # =============================================================================
 set -euo pipefail
 
@@ -185,7 +193,8 @@ EOF
   echo "  ✓ Created $DC_OVERLAYS_DIR/user/README.md"
 fi
 
-# Create global gitignore for secrets.
+# Register a global gitignore so per-project secrets (tokens, SSH keys, npmrc)
+# are never accidentally committed, and point git at it.
 GLOBAL_GITIGNORE="$HOME/.gitignore_global"
 if ! grep -q "dev-containers secrets" "$GLOBAL_GITIGNORE" 2>/dev/null; then
   cat >> "$GLOBAL_GITIGNORE" <<'EOF'

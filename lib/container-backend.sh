@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
-# Shared backend abstraction for apple/container, Docker, OrbStack, Colima, and Podman.
+# =============================================================================
+# lib/container-backend.sh - Single abstraction over five container runtimes.
+#
+# Exposes a stable `backend_*` API (build/create/start/exec/volumes/...) that
+# dispatches to the right CLI for the active backend:
+#
+#   apple   -> `container` (apple/container)   macOS only, distinct CLI shape
+#   docker  -> `docker`
+#   orbstack-> `docker` (OrbStack Docker context)
+#   colima  -> `docker` (Colima, requires Docker runtime + Colima context)
+#   podman  -> `podman`
+#
+# docker/orbstack/colima/podman all share the Docker CLI, so most operations
+# collapse to one branch; apple/container diverges and gets per-op fallbacks.
+# Selection is memoized in DEV_CONTAINERS_BACKEND / _DC_CLI after backend_use().
+# =============================================================================
 
+# Auto-source common.sh if this lib is loaded directly (keeps a single import).
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
   _dc_backend_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   source "$_dc_backend_lib_dir/common.sh"
@@ -12,11 +28,13 @@ if [[ -n "${_DC_BACKEND_SH_LOADED:-}" ]]; then
 fi
 declare -gr _DC_BACKEND_SH_LOADED=1
 
+# Memoized backend selection and CLI/exec state (populated by backend_use).
 declare -g DEV_CONTAINERS_BACKEND="${DEV_CONTAINERS_BACKEND:-}"
 declare -g _DC_CLI=""
 declare -g _DC_PODMAN_HOST_GATEWAY_SUPPORTED=""
 declare -g _DC_PODMAN_HOST_GATEWAY_WARNED=0
 
+# Canonicalize a backend name from its common aliases; fails on unknown input.
 _backend_normalize() {
   local raw="${1:-}"
   local value="${raw,,}"
@@ -46,6 +64,7 @@ _backend_normalize() {
   esac
 }
 
+# Return whether the selected backend's CLI binary is on PATH.
 _backend_cli_available() {
   local backend="$1"
 
@@ -68,24 +87,30 @@ _backend_cli_available() {
   esac
 }
 
+# Colima needs both its own CLI and the docker CLI (it drives docker).
 _backend_colima_cli_available() {
   command -v colima >/dev/null 2>&1
 }
 
+# Name of the Docker CLI's currently active context (Docker CLI concept, not ours).
 _backend_docker_context_name() {
   docker context show 2>/dev/null || true
 }
 
+# Resolve the docker host endpoint URL for a given context name.
 _backend_docker_context_host() {
   local context="$1"
   docker context inspect "$context" --format '{{ (index .Endpoints "docker").Host }}' 2>/dev/null || true
 }
 
+# True if the context name itself indicates OrbStack.
 _backend_context_is_orbstack() {
   local context="$1"
   [[ "${context,,}" == *"orbstack"* ]]
 }
 
+# True if a Docker context points at Colima - by name, or by a host URL that
+# references the Colima socket path (handles unnamed/renamed contexts).
 _backend_context_is_colima() {
   local context="$1"
   local context_lower="${context,,}"
@@ -105,12 +130,15 @@ _backend_context_is_colima() {
   [[ "$docker_host" == *"/.colima/"* || "$docker_host" == *"colima"* ]]
 }
 
+# True if a Colima context is currently the active Docker context.
 _backend_colima_context_active() {
   local context=""
   context="$(_backend_docker_context_name)"
   _backend_context_is_colima "$context"
 }
 
+# Locate an OrbStack Docker context and pin it via DOCKER_CONTEXT, or fail.
+# OrbStack is indistinguishable from plain docker without an explicit context.
 _backend_use_orbstack_context() {
   local ctx
   ctx="$(docker context ls --format '{{.Name}}' 2>/dev/null \
@@ -123,6 +151,7 @@ _backend_use_orbstack_context() {
   export DOCKER_CONTEXT="$ctx"
 }
 
+# Locate a Colima Docker context and pin it via DOCKER_CONTEXT, or fail.
 _backend_use_colima_context() {
   local ctx
   ctx="$(docker context ls --format '{{.Name}}' 2>/dev/null \
@@ -136,6 +165,7 @@ _backend_use_colima_context() {
   export DOCKER_CONTEXT="$ctx"
 }
 
+# Read Colima's active runtime (docker/containerd/...) from `colima status`.
 _backend_colima_runtime() {
   local status=""
   status="$(colima status 2>/dev/null || true)"
@@ -155,6 +185,11 @@ _backend_colima_runtime() {
   printf '%s\n' "$runtime"
 }
 
+# Auto-detect the backend when CONTAINER_BACKEND is unset.
+#
+# Detection order matters: the active Docker context is inspected first so
+# OrbStack and Colima (which both use the docker CLI) are identified before a
+# generic docker fallback, then apple/container, docker, and podman by CLI.
 _backend_detect_auto() {
   local docker_context=""
 
@@ -191,6 +226,7 @@ _backend_detect_auto() {
   return 1
 }
 
+# Map a canonical backend name to the CLI binary used to drive it.
 _backend_set_cli() {
   local selected="$1"
 
@@ -210,6 +246,7 @@ _backend_set_cli() {
   esac
 }
 
+# Print targeted install guidance when a selected backend's CLI is missing.
 _backend_warn_missing_cli() {
   local selected="$1"
 
@@ -236,6 +273,8 @@ _backend_warn_missing_cli() {
   esac
 }
 
+# Fail fast unless a Colima Docker context is active. dev-containers drives
+# Colima through the docker CLI, so it must be pointed at Colima to work.
 _backend_require_colima_context() {
   local context=""
   context="$(_backend_docker_context_name)"
@@ -254,6 +293,8 @@ _backend_require_colima_context() {
   return 1
 }
 
+# Fail fast unless Colima is running with the docker runtime. Non-docker
+# runtimes (e.g. containerd) are unsupported and silently misbehave.
 _backend_require_colima_docker_runtime() {
   local runtime=""
   runtime="$(_backend_colima_runtime 2>/dev/null || true)"
@@ -268,6 +309,8 @@ _backend_require_colima_docker_runtime() {
   return 0
 }
 
+# Capability probe: does this Podman version understand --add-host host-gateway?
+# Result is cached in _DC_PODMAN_HOST_GATEWAY_SUPPORTED so we only probe once.
 _backend_podman_supports_host_gateway() {
   if [[ -n "$_DC_PODMAN_HOST_GATEWAY_SUPPORTED" ]]; then
     [[ "$_DC_PODMAN_HOST_GATEWAY_SUPPORTED" == "1" ]]
@@ -283,6 +326,12 @@ _backend_podman_supports_host_gateway() {
   return 1
 }
 
+# Resolve, validate, and lock in the active backend.
+#
+# Honors CONTAINER_BACKEND if set (otherwise auto-detects), confirms the CLI is
+# installed, picks the matching binary, pins the Docker context for
+# Colima/OrbStack, and exports DEV_CONTAINERS_BACKEND so later calls are cached.
+# Every other backend_* function assumes this has run.
 backend_use() {
   local requested="${1:-${CONTAINER_BACKEND:-}}"
   local selected=""
@@ -322,6 +371,7 @@ backend_use() {
   esac
 }
 
+# Echo the canonical backend name, running backend_use() if not yet selected.
 backend_name() {
   if [[ -z "${DEV_CONTAINERS_BACKEND:-}" ]]; then
     backend_use || return 1
@@ -330,6 +380,8 @@ backend_name() {
   printf '%s\n' "$DEV_CONTAINERS_BACKEND"
 }
 
+# Echo the CLI binary (docker/container/podman) for the active backend, with
+# a live Colima-context re-check so a switched-away context is caught early.
 backend_cli() {
   backend_name >/dev/null || return 1
   if [[ -z "$_DC_CLI" ]]; then
@@ -343,6 +395,9 @@ backend_cli() {
   printf '%s\n' "$_DC_CLI"
 }
 
+# True for backends that speak the Docker CLI (docker/orbstack/colima/podman),
+# i.e. everything except apple/container. Drives Docker-only code paths
+# (devcontainer.json, VS Code attach config).
 backend_is_docker_compatible() {
   local backend="${1:-}"
   if [[ -z "$backend" ]]; then
@@ -352,6 +407,7 @@ backend_is_docker_compatible() {
   [[ "$backend" == "docker" || "$backend" == "orbstack" || "$backend" == "colima" || "$backend" == "podman" ]]
 }
 
+# Echo a human-readable version string for the active backend.
 backend_version() {
   case "$(backend_name)" in
     apple)
@@ -376,6 +432,8 @@ backend_version() {
   esac
 }
 
+# Ensure the runtime engine is up (start daemon/machine/VM as needed) so the
+# backend is ready for commands. Returns non-zero (with guidance) if unreachable.
 backend_system_start() {
   case "$(backend_name)" in
     apple)
@@ -428,6 +486,7 @@ backend_system_start() {
   esac
 }
 
+# Print detailed runtime info for the active backend (for `dc status`).
 backend_system_info() {
   case "$(backend_name)" in
     apple)
@@ -448,6 +507,7 @@ backend_system_info() {
   esac
 }
 
+# Build an image from a Containerfile. Extra args are forwarded to the builder.
 backend_build_image() {
   local tag="$1"
   local file="$2"
@@ -464,6 +524,8 @@ backend_build_image() {
   esac
 }
 
+# Return whether an image tag exists in the backend's image store.
+# apple/container has several list-flag variants across versions, hence fallbacks.
 backend_image_exists() {
   local tag="$1"
 
@@ -483,6 +545,7 @@ backend_image_exists() {
   esac
 }
 
+# List images as repo<TAB>tag<TAB>id rows (normalized across backends/versions).
 backend_list_images() {
   case "$(backend_name)" in
     apple)
@@ -500,6 +563,7 @@ backend_list_images() {
   esac
 }
 
+# Remove an image reference (silently succeeds if already absent).
 backend_remove_image() {
   local image_ref="$1"
 
@@ -513,6 +577,7 @@ backend_remove_image() {
   esac
 }
 
+# List volume names (one per line). apple/container may emit JSON, hence parsing.
 backend_list_volumes() {
   local backend=""
   backend="$(backend_name)" || return 1
@@ -533,6 +598,7 @@ backend_list_volumes() {
   esac
 }
 
+# Remove a named volume (silently succeeds if already absent).
 backend_remove_volume() {
   local volume_name="$1"
 
@@ -549,6 +615,7 @@ backend_remove_volume() {
   esac
 }
 
+# List running containers (raw backend output).
 backend_list_running() {
   case "$(backend_name)" in
     apple)
@@ -560,6 +627,7 @@ backend_list_running() {
   esac
 }
 
+# List all containers including stopped (raw backend output).
 backend_list_all() {
   case "$(backend_name)" in
     apple)
@@ -571,6 +639,7 @@ backend_list_all() {
   esac
 }
 
+# Return whether a named container exists (any state).
 backend_exists() {
   local name="$1"
 
@@ -584,6 +653,7 @@ backend_exists() {
   esac
 }
 
+# Return whether a named container is currently running.
 backend_is_running() {
   local name="$1"
 
@@ -597,6 +667,11 @@ backend_is_running() {
   esac
 }
 
+# Create a container from an image with the given create flags.
+#
+# For Podman we add a host.docker.internal=host-gateway alias when supported,
+# so containers can reach the host by the same name as Docker backends; older
+# Podman gets a one-time warning to use host.containers.internal instead.
 backend_create() {
   local name="$1"
   local image="$2"
@@ -625,6 +700,7 @@ backend_create() {
   esac
 }
 
+# Start an existing container.
 backend_start() {
   local name="$1"
 
@@ -638,6 +714,7 @@ backend_start() {
   esac
 }
 
+# Stop a running container.
 backend_stop() {
   local name="$1"
 
@@ -651,6 +728,7 @@ backend_stop() {
   esac
 }
 
+# Delete a container (force-remove for Docker CLIs).
 backend_delete() {
   local name="$1"
 
@@ -664,6 +742,7 @@ backend_delete() {
   esac
 }
 
+# Run a command in a container as the dev user (non-interactive, no TTY).
 backend_exec() {
   local name="$1"
   shift
@@ -678,6 +757,8 @@ backend_exec() {
   esac
 }
 
+# Run a command in a container as root (uid 0). Used for setup that the dev
+# user can't do, e.g. chown of hidden-volume mount points.
 backend_exec_as_root() {
   local name="$1"
   shift
@@ -692,6 +773,8 @@ backend_exec_as_root() {
   esac
 }
 
+# Run a command in a container with stdin attached (no TTY). Used to stream
+# data into the container, e.g. piping a host file or tar into the container.
 backend_exec_stdin() {
   local name="$1"
   shift
@@ -706,6 +789,11 @@ backend_exec_stdin() {
   esac
 }
 
+# Open an interactive (TTY) session in a container as dev.
+#
+# Args before a literal "--" are passed as exec options (e.g. --env KEY=VAL);
+# everything after "--" is the command to run. This lets callers inject env
+# vars without colliding with the exec option namespace.
 backend_exec_interactive() {
   local name="$1"
   shift

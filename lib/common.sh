@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
-# Shared Bash guardrails and helper utilities for host-side scripts.
+# =============================================================================
+# lib/common.sh - Shared helpers for host-side dc scripts.
+#
+# Sourced (never executed directly) by every script under scripts/. Enforces the
+# Bash 4+ requirement, guards against double-sourcing, and exposes the dc_*
+# helper API used across the codebase: global config loading, scope/hidden-path
+# normalization, deterministic image-tag derivation, and hidden-volume handling.
+#
+# Key concepts this file encodes:
+#   - Overlay scopes  -> see dc_effective_scopes_csv / dc_image_ref_from_scopes
+#   - Hidden volumes  -> see dc_hidden_volume_name and friends
+#   - Per-project cfg -> ~/.config/dev-containers/<name>/config (key=value)
+# =============================================================================
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
   echo "ERROR: dev-containers requires Bash 4+ (scripts must run under bash)." >&2
@@ -12,20 +24,26 @@ if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
   exit 1
 fi
 
+# Include guard: scripts chain-source lib files; this makes re-sourcing a no-op
+# so helpers and globals are defined exactly once per shell.
 if [[ -n "${_DC_COMMON_SH_LOADED:-}" ]]; then
   return 0
 fi
 declare -gr _DC_COMMON_SH_LOADED=1
 
+# Print an error message to stderr and exit non-zero. Standard failure path.
 dc_die() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1
 }
 
+# Print a non-fatal warning to stderr.
 dc_warn() {
   printf 'WARN: %s\n' "$*" >&2
 }
 
+# Join positional arguments with the given separator (first arg). Echoes the
+# result without a trailing newline; empty args are preserved as empty fields.
 dc_join_by() {
   local separator="$1"
   shift
@@ -42,6 +60,8 @@ dc_join_by() {
   printf '%s' "$out"
 }
 
+# Canonicalize a path to an absolute, symlink-resolved form. Works for both
+# existing directories and not-yet-existing file paths (resolving the parent).
 dc_resolve_path() {
   local input="$1"
 
@@ -55,14 +75,21 @@ dc_resolve_path() {
   printf '%s/%s\n' "$parent" "$(basename "$input")"
 }
 
+# Path to the global dev-containers config file (DC_OVERLAYS_DIR lives here).
 dc_global_config_path() {
   printf '%s/.config/dev-containers/config\n' "$HOME"
 }
 
+# Default overlays root used by setup.sh when bootstrapping global config.
 dc_overlay_default_root() {
   printf '%s/.config/dev-containers/overlays\n' "$HOME"
 }
 
+# Source and validate the global config, exporting DC_OVERLAYS_DIR.
+#
+# DC_OVERLAYS_DIR is deliberately unset before sourcing so a stale or malicious
+# value can't leak in from the environment; it is then normalized (~ and
+# relative paths are resolved against the config dir) and required to exist.
 dc_load_global_config() {
   local cfg=""
   cfg="$(dc_global_config_path)"
@@ -94,6 +121,10 @@ Run: scripts/setup.sh"
   fi
 }
 
+# Echo the SHA-256 hex digest of a string.
+#
+# Tries sha256sum (Linux), shasum (macOS default), then openssl, so the same
+# code works across all supported host platforms without extra dependencies.
 dc_sha256_hex() {
   local input="$1"
 
@@ -118,11 +149,14 @@ dc_sha256_hex() {
   dc_die "No SHA-256 tool available (sha256sum, shasum, or openssl required)."
 }
 
+# Validate a single overlay scope name against the allowed identifier pattern.
 dc_validate_scope_name() {
   local scope="$1"
   [[ "$scope" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
 }
 
+# Normalize a comma-separated scope list: trim/lowercase each token, drop
+# empties, reject invalid names, and de-duplicate while preserving order.
 dc_normalize_scopes_csv() {
   local input="$1"
 
@@ -155,6 +189,10 @@ dc_normalize_scopes_csv() {
   dc_join_by ',' "${normalized[@]}"
 }
 
+# Validate one hidden path. Hidden paths are mounted as named volumes under
+# /workspace and embedded in backend mount flags, so they must be relative,
+# traversal-free, contain no whitespace or ':' (which would break flag parsing),
+# and use only filename-safe characters.
 dc_validate_hidden_path() {
   local path="$1"
 
@@ -175,6 +213,9 @@ dc_validate_hidden_path() {
   [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]]
 }
 
+# Normalize a single comma-separated hidden-path value: trim whitespace, strip
+# leading "./", collapse duplicate slashes, strip trailing "/", de-dupe, and
+# validate each path. Returns the canonical CSV or fails with a message.
 dc_normalize_hidden_paths_csv() {
   local input="$1"
 
@@ -232,6 +273,9 @@ dc_normalize_hidden_paths_csv() {
   dc_join_by ',' "${normalized[@]}"
 }
 
+# Normalize hidden paths across multiple --hide values (which may repeat).
+# Merges and de-duplicates all values into one canonical CSV, echoing empty
+# when no values are supplied.
 dc_normalize_hidden_paths_values() {
   if [[ $# -eq 0 ]]; then
     printf ''
@@ -265,6 +309,11 @@ dc_normalize_hidden_paths_values() {
   dc_join_by ',' "${normalized_all[@]}"
 }
 
+# Build the deterministic managed-volume name for a project hidden path.
+#
+# Format: dc-hide-<project-slug>-<12hex>. The name is derived purely from the
+# project and path (not random) so the same hidden path reliably maps to the
+# same volume across creates, starts, and rebuilds, letting us find/remove it.
 dc_hidden_volume_name() {
   local project="$1"
   local hidden_path="$2"
@@ -280,6 +329,8 @@ dc_hidden_volume_name() {
   printf 'dc-hide-%s-%s\n' "$project_slug" "$hash"
 }
 
+# Check whether a named volume exists in the backend's volume store.
+# Returns 0 (exists), 1 (absent), or 2 (the backend list call itself failed).
 dc_hidden_volume_exists() {
   local volume_name="$1"
   local volume_list=""
@@ -299,6 +350,11 @@ dc_hidden_volume_exists() {
   return 1
 }
 
+# Remove (or preserve) hidden volumes during a container rebuild.
+#
+# Default rebuild drops hidden volumes for a clean slate (fresh dependency
+# install, no stale/compromised caches). If removal fails but the volume is
+# still present, the rebuild aborts rather than risk reusing suspect state.
 dc_rebuild_handle_hidden_volumes() {
   local project="$1"
   local keep_hidden_volumes="$2"
@@ -352,6 +408,9 @@ dc_rebuild_handle_hidden_volumes() {
   done
 }
 
+# Verify each hidden path is actually backed by a separate volume (different
+# device than /workspace). Catches the case where a named volume was requested
+# but the backend silently bind-mounted the host path instead.
 dc_hidden_mounts_verified() {
   local project="$1"
   shift
@@ -372,6 +431,11 @@ dc_hidden_mounts_verified() {
   return $rc
 }
 
+# Ensure hidden-volume mounts are live, restarting the container if needed.
+#
+# Some backends (e.g. OrbStack) occasionally apply named-volume mounts only
+# after a restart, so we verify, then stop/start once and re-verify before
+# giving up. Called after both create and start.
 dc_ensure_hidden_mounts() {
   local project="$1"
   shift
@@ -405,6 +469,8 @@ dc_ensure_hidden_mounts() {
   done
 }
 
+# Derive a filesystem-safe slug from a project name (lowercased, non-alnum
+# collapsed to '-', trimmed, capped at 24 chars). Used to build volume names.
 dc_project_slug() {
   local project="$1"
   local project_slug="${project,,}"
@@ -421,6 +487,7 @@ dc_project_slug() {
   printf '%s\n' "$project_slug"
 }
 
+# Return whether an overlay scope exists in either team/ or user/ overlays.
 dc_scope_exists() {
   local overlays_dir="$1"
   local scope="$2"
@@ -428,6 +495,12 @@ dc_scope_exists() {
   [[ -f "$overlays_dir/team/Containerfile.$scope" || -f "$overlays_dir/user/Containerfile.$scope" ]]
 }
 
+# Resolve the final, effective scope list for a create/rebuild.
+#
+# Implements the layering contract: requested named scopes must exist in team/
+# or user/ (missing ones fail fast), "all" is never taken from the request but
+# auto-prepended when a Containerfile.all exists. The resulting order drives
+# overlay composition and image-tag derivation.
 dc_effective_scopes_csv() {
   local overlays_dir="$1"
   local requested_scopes_csv="$2"
@@ -470,6 +543,11 @@ dc_effective_scopes_csv() {
   dc_join_by ',' "${effective[@]}"
 }
 
+# Derive the deterministic image tag for a scope set.
+#
+# No overlays -> dev-base:latest (the shared base). Otherwise the effective
+# scopes are hashed into dev-img-<16hex>:latest so identical scope sets always
+# resolve to one reusable, shareable derived image across projects/machines.
 dc_image_ref_from_scopes() {
   local overlays_dir="$1"
   local requested_scopes_csv="$2"
@@ -501,6 +579,7 @@ dc_image_ref_from_scopes() {
   printf 'dev-img-%s:latest\n' "$hash"
 }
 
+# Extract the 16-hex hash from a dev-img-* reference, or fail for other refs.
 dc_image_hash_from_ref() {
   local image_ref="$1"
   local repo="${image_ref%%:*}"
@@ -513,6 +592,9 @@ dc_image_hash_from_ref() {
   return 1
 }
 
+# Set or replace a single KEY="value" line in a project config file safely.
+# Rewrites via a temp file and atomic mv, escaping backslashes/quotes so the
+# value round-trips through a later `source`. Appends the key if absent.
 dc_set_config_key() {
   local config_file="$1"
   local key="$2"

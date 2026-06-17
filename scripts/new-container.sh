@@ -1,9 +1,24 @@
 #!/usr/bin/env bash
 # =============================================================================
-# new-container.sh - Create a new isolated development container.
+# scripts/new-container.sh - `dc new`: create a new isolated dev container.
+#
+# High-level flow:
+#   1. Parse project name, optional scope(s), flags (--repo-path/--cpus/
+#      --memory/--hide), and host:container port mappings.
+#   2. Resolve the derived image from scopes; compose+build it if missing,
+#      reuse it if present (dev-base:latest when no scopes).
+#   3. Fail fast if the base image, project config, or container already exists.
+#   4. Create the per-project secret dir: SSH deploy key, GitHub token
+#      placeholder, .npmrc template (all tight permissions).
+#   5. Write the project config and create+start the container with mounts,
+#      ports, resource limits, and hidden volumes.
+#   6. Verify hidden mounts, fix their ownership, inject SSH key + git config.
+#   7. Generate editor integration: devcontainer.json (Docker-compatible) or
+#      VS Code terminal-profile settings (apple/container).
 # =============================================================================
 set -euo pipefail
 
+# 1. Parse arguments: project name, optional scope, flags, and port mappings.
 PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [port:port ...]}"
 shift
 SCOPE_INPUT=""
@@ -84,6 +99,7 @@ if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   exit 1
 fi
 
+# 2. Resolve the derived image for these scopes (dev-base:latest when none).
 SCOPE_CSV="$(dc_normalize_scopes_csv "$SCOPE_INPUT")" || exit 1
 IMAGE="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$SCOPE_CSV")" || exit 1
 
@@ -166,6 +182,7 @@ REPOS_DIR="$(dc_resolve_path "$repo_target")" || {
 COMPOSED_CONTAINERFILE=""
 DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.base"
 
+# If scopes select a derived image, compose+build it once (reuse if present).
 if [[ "$IMAGE" != "dev-base:latest" ]]; then
   IMAGE_HASH="$(dc_image_hash_from_ref "$IMAGE")" || {
     echo "ERROR: Could not derive image hash from image ref: $IMAGE"
@@ -207,6 +224,7 @@ echo "✓ Directories created"
 echo "  Repos mount: $REPOS_DIR"
 echo "  Secrets:     $SECRET_DIR (chmod 700)"
 
+# Bootstrap per-project secrets (only created if missing, never overwritten).
 SSH_KEY="$SECRET_DIR/ssh_key"
 if [[ ! -f "$SSH_KEY" ]]; then
   ssh-keygen -t ed25519 -f "$SSH_KEY" -C "dev-container-${PROJECT}" -N "" -q
@@ -288,6 +306,7 @@ if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
   RESOURCE_ARGS+=(--memory "$CONTAINER_MEMORY")
 fi
 
+# Mount flags: workspace bind mount, read-only .npmrc, one hidden volume per path.
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
 VOLUME_ARGS+=(--volume "$SECRET_DIR/.npmrc:/home/dev/.npmrc:ro")
 for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
@@ -332,6 +351,8 @@ backend_exec "$PROJECT" git config --global url."git@github.com:".insteadOf "htt
 
 if $DOCKER_COMPATIBLE; then
   echo "==> Generating Dev Containers config for Docker-compatible backend..."
+  # Docker-compatible: write a .devcontainer/devcontainer.json so VS Code Dev
+  # Containers can build/attach the same recipe (existing file is preserved).
   DEVCONTAINER_DIR="$REPOS_DIR/.devcontainer"
   DEVCONTAINER_FILE="$DEVCONTAINER_DIR/devcontainer.json"
 
@@ -407,6 +428,8 @@ EOF
   fi
 else
   echo "==> Generating VS Code workspace settings for apple/container backend..."
+  # apple/container has no Dev Containers extension; route VS Code terminals
+  # through `dc shell` via a terminal profile instead.
   VSCODE_DIR="$REPOS_DIR/.vscode"
   VSCODE_SETTINGS="$VSCODE_DIR/settings.json"
   mkdir -p "$VSCODE_DIR"

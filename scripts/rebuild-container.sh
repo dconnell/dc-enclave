@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 # =============================================================================
-# rebuild-container.sh - Destroy a container and recreate it from an existing image
+# scripts/rebuild-container.sh - `dc rebuild-container`: destroy and recreate a
+# container from its selected image.
+#
+# Used for drift recovery and incident response. The host workspace (repos dir)
+# is always preserved - only the container filesystem is wiped. It re-derives
+# the image from current overlay state (it never builds images; run
+# `dc rebuild-image all` first if the image is missing), then:
+#   stop -> delete -> handle hidden volumes -> (optionally rotate SSH key) ->
+#   recreate -> start -> re-inject credentials -> reseed VS Code config.
+#
+# Safety semantics:
+#   - Hidden volumes are REMOVED by default for a clean slate; --keep-hidden-
+#     volumes preserves them. Combining --rotate-keys with --keep-hidden-volumes
+#     raises a loud warning (key rotation implies incident response).
+#   - Destructive: requires typing 'yes' to confirm.
 # =============================================================================
 set -euo pipefail
 
@@ -71,6 +85,8 @@ if [[ -z "${CONTAINER_PROJECT:-}" ]]; then
   CONTAINER_PROJECT="$PROJECT"
 fi
 
+# Normalize persisted scopes/hidden paths, then re-derive the image from current
+# overlay state. We never build here - the required image must already exist.
 OVERLAY_SCOPES_CSV="${CONTAINER_OVERLAY_SCOPES:-}"
 
 if ! declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1; then
@@ -135,6 +151,8 @@ if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
 fi
 echo ""
 
+# Loud warning: key rotation signals incident response, where keeping hidden
+# volumes (node_modules, caches) would let possibly-compromised code survive.
 if $ROTATE_KEYS && $KEEP_HIDDEN_VOLUMES && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   echo "  ********************************************************************"
   echo "  *                                                                  *"

@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# Bash completion for the dc command.
+# =============================================================================
+# scripts/dc-complete.bash - Bash tab completion for the `dc` command.
+#
+# Sourced into the interactive shell by setup.sh (not executed). Provides
+# subcommand, project-name, scope, and flag completion. Project/scope lists are
+# derived live from ~/.config/dev-containers and the configured overlays dir.
+# =============================================================================
 
+# Echo configured project names (dirs with a config file) matching the prefix.
 _dc_project_names() {
   local cur="${1:-}"
   local -a names=()
@@ -18,6 +25,7 @@ _dc_project_names() {
   printf '%s\n' "${names[@]}"
 }
 
+# Echo the static list of dc subcommands (including aliases).
 _dc_subcommands() {
   printf '%s\n' \
     "new" \
@@ -35,6 +43,8 @@ _dc_subcommands() {
     "help"
 }
 
+# Echo available overlay scope names discovered from team/ and user/ overlays,
+# applying the same DC_OVERLAYS_DIR resolution as the runtime helpers.
 _dc_scopes() {
   local config="$HOME/.config/dev-containers/config"
   local overlays_dir=""
@@ -67,10 +77,12 @@ _dc_scopes() {
   done
 }
 
+# Echo the valid targets for `dc rebuild-image`.
 _dc_rebuild_image_targets() {
   printf '%s\n' "all" "base"
 }
 
+# Main completion entry point bound to `dc` via `complete -F`.
 _dc_complete() {
   local cur prev
   COMPREPLY=()

@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
+# =============================================================================
+# scripts/list.sh - `dc list` / `dc ls`: compact one-line-per-container summary
+# (name, running/stopped/missing/unknown, backend, scopes). A lighter view than
+# `dc status`. Requires a reachable backend to report live state.
+# =============================================================================
 set -euo pipefail
 shopt -s nullglob
 
+# Resolve real script dir (follows symlinks) and repo root.
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"

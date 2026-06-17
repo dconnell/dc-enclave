@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-# VS Code attached-container configuration helpers.
+# =============================================================================
+# lib/vscode.sh - VS Code "attach to running container" config helpers.
+#
+# Only Docker-compatible backends use this. When a container is created or
+# rebuilt, we seed VS Code's per-container "named attach" config
+# (workspaceFolder=/workspace) so "Attach to Running Container" lands in the
+# right workspace across image rebuilds/re-tags. Existing configs are preserved.
+# =============================================================================
 
+# Auto-source deps if this lib is loaded directly (single-import convenience).
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
   _dc_vscode_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   source "$_dc_vscode_lib_dir/common.sh"
@@ -18,6 +26,8 @@ if [[ -n "${_DC_VSCODE_SH_LOADED:-}" ]]; then
 fi
 declare -gr _DC_VSCODE_SH_LOADED=1
 
+# Print candidate VS Code Remote-Containers globalStorage dirs for this OS.
+# Covers both stable and Insiders installs; callers filter to existing ones.
 dc_vscode_remote_containers_storage_candidates() {
   case "$(platform_os)" in
     macos)
@@ -33,6 +43,9 @@ dc_vscode_remote_containers_storage_candidates() {
   esac
 }
 
+# Return the candidate storage dirs that look "live enough" to write into -
+# i.e. the storage dir, its parent, or the User dir already exists. Writing a
+# nameConfig subdir only makes sense once VS Code has been run at least once.
 dc_vscode_remote_containers_storage_dirs() {
   local candidate=""
   local parent=""
@@ -48,6 +61,9 @@ dc_vscode_remote_containers_storage_dirs() {
   done < <(dc_vscode_remote_containers_storage_candidates)
 }
 
+# URL-encode a container name into the key VS Code uses for its per-container
+# attach config file (e.g. "/" -> "%2f"). Only encodes the few characters that
+# appear in container names and are unsafe in filenames.
 dc_vscode_encode_attach_key() {
   local raw_name="$1"
   local name="${raw_name#/}"
@@ -76,6 +92,10 @@ dc_vscode_encode_attach_key() {
   printf '%s\n' "$encoded"
 }
 
+# Seed (or check) the VS Code named-attach config for a container so "Attach to
+# Running Container" opens /workspace. Creates the config if missing, warns (and
+# leaves it untouched) if it exists with a different workspaceFolder. Echoes
+# each config file path touched/found.
 dc_vscode_seed_named_attach_config() {
   local container_name="$1"
   local workspace_folder="${2:-/workspace}"

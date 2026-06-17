@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# shell.sh - Open an interactive shell in a dev container
+# scripts/shell.sh - `dc shell`: open an interactive shell (or run one command)
+# in a dev container. Starts the container if it isn't running, and injects the
+# project's GITHUB_TOKEN into the shell environment when set.
 # =============================================================================
 set -euo pipefail
 
@@ -42,6 +44,8 @@ if ! backend_is_running "$PROJECT"; then
   "$SCRIPT_DIR/start.sh" "$PROJECT"
 fi
 
+# Read the GitHub token, skipping comment lines and the placeholder value so an
+# unfilled token file doesn't leak "ghp_REPLACE_ME" into the environment.
 GITHUB_TOKEN=""
 if [[ -n "${TOKEN_FILE:-}" ]] && [[ -f "$TOKEN_FILE" ]]; then
   GITHUB_TOKEN="$(awk '

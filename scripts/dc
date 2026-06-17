@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
+# =============================================================================
+# scripts/dc - The `dc` command entry point / subcommand dispatcher.
+#
+# Installed as an alias (alias dc='.../scripts/dc') by setup.sh. Each subcommand
+# execs a dedicated script under scripts/, so adding a command means: write
+# scripts/<cmd>.sh and add a case branch here (and to dc-complete.bash).
+# `dc` with no args shows help.
+# =============================================================================
 set -euo pipefail
 
+# Resolve the real location of this file (following symlinks) and the repo
+# root. Needed because `dc` is invoked via an alias and may be symlinked.
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"
@@ -13,6 +23,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$ROOT_DIR/lib/common.sh"
 
+# Default to `help` when invoked with no subcommand.
 SUBCOMMAND="${1:-help}"
 if [[ $# -gt 0 ]]; then
   shift
