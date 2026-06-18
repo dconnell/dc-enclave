@@ -78,8 +78,7 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-# shellcheck disable=SC1090
-source "$CONFIG"
+dc_load_project_config "$CONFIG"
 
 if [[ -z "${CONTAINER_PROJECT:-}" ]]; then
   CONTAINER_PROJECT="$PROJECT"

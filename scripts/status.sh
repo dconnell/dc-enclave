@@ -47,7 +47,7 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
   for config_file in "${PROJECTS[@]}"; do
     PORTS=()
     CONTAINER_HIDDEN_PATHS=()
-    source "$config_file"
+    dc_load_project_config "$config_file"
 
     project="${CONTAINER_PROJECT:-$(basename "$(dirname "$config_file")")}"
     project_backend="${CONTAINER_BACKEND:-$DEFAULT_BACKEND}"

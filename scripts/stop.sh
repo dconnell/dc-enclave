@@ -32,7 +32,7 @@ _stop_container() {
     return 1
   fi
 
-  source "$config"
+  dc_load_project_config "$config"
   backend_use "${CONTAINER_BACKEND:-}" || return 1
 
   local active_backend=""

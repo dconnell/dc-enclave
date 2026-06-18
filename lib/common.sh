@@ -85,11 +85,12 @@ dc_overlay_default_root() {
   printf '%s/.config/dev-containers/overlays\n' "$HOME"
 }
 
-# Source and validate the global config, exporting DC_OVERLAYS_DIR.
+# Load and validate the global config, exporting DC_OVERLAYS_DIR.
 #
-# DC_OVERLAYS_DIR is deliberately unset before sourcing so a stale or malicious
-# value can't leak in from the environment; it is then normalized (~ and
-# relative paths are resolved against the config dir) and required to exist.
+# The global config is parsed with dc_config_extract_scalar (no `source`), so a
+# malicious or corrupted file cannot execute code. DC_OVERLAYS_DIR is deliberately
+# unset first so a stale/environment value can't leak in; it is then normalized
+# (~ and relative paths resolved against the config dir) and required to exist.
 dc_load_global_config() {
   local cfg=""
   cfg="$(dc_global_config_path)"
@@ -99,10 +100,16 @@ dc_load_global_config() {
 Run: scripts/setup.sh"
   fi
 
+  if [[ -L "$cfg" ]]; then
+    dc_die "Refusing to load global config via symlink: $cfg"
+  fi
+
   unset DC_OVERLAYS_DIR
 
-  # shellcheck disable=SC1090
-  source "$cfg"
+  if ! DC_OVERLAYS_DIR="$(dc_config_extract_scalar "$cfg" DC_OVERLAYS_DIR)"; then
+    dc_die "DC_OVERLAYS_DIR is not set (or is not a clean quoted value) in ~/.config/dev-containers/config
+Set DC_OVERLAYS_DIR and rerun scripts/setup.sh"
+  fi
 
   if [[ -z "${DC_OVERLAYS_DIR:-}" ]]; then
     dc_die "DC_OVERLAYS_DIR is not set in ~/.config/dev-containers/config
@@ -592,17 +599,409 @@ dc_image_hash_from_ref() {
   return 1
 }
 
+# Known scalar and array keys permitted in a project config file. The loader
+# rejects any key outside these sets so an attacker cannot introduce arbitrary
+# assignments. Keep in sync with scripts/new-container.sh config emission.
+declare -gra _DC_CONFIG_SCALAR_KEYS=(
+  CONTAINER_PROJECT CONTAINER_OVERLAY_SCOPES CONTAINER_IMAGE CONTAINER_BACKEND
+  CONTAINER_CPUS CONTAINER_MEMORY REPOS_DIR SECRET_DIR
+  SSH_KEY_PATH TOKEN_FILE NPMRC_PATH
+)
+declare -ga _DC_CONFIG_ARRAY_KEYS=(PORTS CONTAINER_HIDDEN_PATHS)
+
+# Supported container backend names (mirrors lib/container-backend.sh selection).
+declare -ga _DC_KNOWN_BACKENDS=(apple docker orbstack colima podman)
+
+# Validate a CONTAINER_CPUS value: empty (default) or a positive decimal such as
+# 1, 2, 1.5, 0.25. Rejects zero/negative, exponent notation, whitespace, and any
+# shell metacharacter. Prints a diagnostic and returns 1 on rejection.
+dc_validate_cpus_value() {
+  local value="$1"
+
+  [[ -n "$value" ]] || return 0
+
+  if [[ ! "$value" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    printf 'ERROR: Invalid CPU value: %q\n' "$value" >&2
+    printf '  Expected a positive decimal (e.g. 1, 2, 1.5, 0.25); no exponents or units.\n' >&2
+    return 1
+  fi
+
+  if [[ "$value" =~ ^0+(\.0+)?$ ]]; then
+    printf 'ERROR: CPU value must be greater than zero: %s\n' "$value" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+# Validate a CONTAINER_MEMORY value: empty (default) or a positive integer with an
+# optional single unit suffix (k, m, g; case-insensitive), e.g. 512m, 4g, 1024.
+# Rejects zero/negative, unsupported suffixes, whitespace, and shell metacharacters.
+dc_validate_memory_value() {
+  local value="$1"
+
+  [[ -n "$value" ]] || return 0
+
+  if [[ ! "$value" =~ ^[0-9]+[kKmMgG]?$ ]]; then
+    printf 'ERROR: Invalid memory value: %q\n' "$value" >&2
+    printf '  Expected a positive integer with optional unit (k, m, g), e.g. 512m, 4g, 1024.\n' >&2
+    return 1
+  fi
+
+  if [[ "$value" =~ ^0+[kKmMgG]?$ ]]; then
+    printf 'ERROR: memory value must be greater than zero: %s\n' "$value" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+# Serialize a value for safe embedding inside a double-quoted shell assignment.
+# Escapes backslash, quote, $, and backtick (in that order) so a later `source`
+# reproduces the exact bytes without executing command substitution. Rejects
+# control characters (newline, tab, NUL, ...) outright; they never belong in a
+# config value. Echoes the escaped string on success; returns 1 on rejection.
+dc_escape_config_value() {
+  local value="$1"
+
+  if [[ "$value" =~ [[:cntrl:]] ]]; then
+    printf 'ERROR: config value rejected: contains control characters.\n' >&2
+    return 1
+  fi
+
+  local out="$value"
+  out="${out//\\/\\\\}"
+  out="${out//\"/\\\"}"
+  out="${out//\$/\\\$}"
+  out="${out//\`/\\\`}"
+
+  printf '%s' "$out"
+}
+
+# Return 0 if KEY is an allowed scalar project-config key.
+dc_config_is_scalar_key() {
+  local key="$1"
+  local k=""
+  for k in "${_DC_CONFIG_SCALAR_KEYS[@]}"; do
+    [[ "$k" == "$key" ]] && return 0
+  done
+  return 1
+}
+
+# Return 0 if KEY is an allowed array project-config key.
+dc_config_is_array_key() {
+  local key="$1"
+  local k=""
+  for k in "${_DC_CONFIG_ARRAY_KEYS[@]}"; do
+    [[ "$k" == "$key" ]] && return 0
+  done
+  return 1
+}
+
+# Return 0 if NAME is a supported container backend identifier.
+dc_config_is_known_backend() {
+  local name="$1"
+  local b=""
+  for b in "${_DC_KNOWN_BACKENDS[@]}"; do
+    [[ "$b" == "$name" ]] && return 0
+  done
+  return 1
+}
+
+# Return 0 (true) if PATH is group- or other-writable. Uses single-bit -perm
+# checks (portable across GNU and BSD find) combined with -o so either bit trips.
+dc_path_is_group_or_other_writable() {
+  local path="$1"
+  [[ -e "$path" ]] || return 1
+  [[ -n "$(find "$path" -maxdepth 0 \( -perm -020 -o -perm -002 \) -print 2>/dev/null)" ]]
+}
+
+# Scan the content of a double-quoted value and return 0 if an UNESCAPED command
+# substitution token ($ or backtick) is present. Escaped forms (\$, \`) are
+# treated as literal data and ignored, since the serializer emits those for any
+# real $/backtick in a value. This is the guard that lets us source safely.
+dc_quoted_has_unescaped_subst() {
+  local content="$1"
+  local i=0
+  local len=${#content}
+  local ch=""
+  local escaped=0
+
+  for ((i = 0; i < len; i++)); do
+    ch="${content:i:1}"
+    if [[ "$escaped" -eq 1 ]]; then
+      escaped=0
+      continue
+    fi
+    if [[ "$ch" == '\' ]]; then
+      escaped=1
+      continue
+    fi
+    if [[ "$ch" == '$' || "$ch" == '`' ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+# Validate one line of a project config against the strict assignment grammar.
+# Returns 0 if the line is blank, a (non-continuing) comment, or a known
+# KEY="value" / KEY=(array) assignment with no unescaped command substitution.
+# Returns 1 (reject) for unknown keys, bare shell syntax, or dangerous tokens.
+dc_config_line_is_safe() {
+  local line="$1"
+
+  # Blank / whitespace-only line.
+  [[ -z "${line//[[:space:]]/}" ]] && return 0
+
+  # Comment line. Reject a trailing backslash, which would continue the comment
+  # onto the next line and could hide a payload after the comment.
+  if [[ "$line" =~ ^[[:space:]]*# ]]; then
+    [[ "$line" != *'\' ]]
+    return $?
+  fi
+
+  # Must be a KEY=... assignment with an uppercase identifier key.
+  if [[ ! "$line" =~ ^([A-Z_][A-Z0-9_]*)=(.*)$ ]]; then
+    return 1
+  fi
+
+  local key="${BASH_REMATCH[1]}"
+  local rest="${BASH_REMATCH[2]}"
+
+  if dc_config_is_array_key "$key"; then
+    # Array assignment must be wrapped in (...).
+    [[ "${rest:0:1}" == "(" ]] || return 1
+    [[ "${rest: -1}" == ")" ]] || return 1
+    # Array elements are emitted with printf '%q'; reject any shell metacharacter
+    # that %q output never produces, as it would indicate hand-crafted content.
+    case "$rest" in
+      *'$'*|*'`'*|*';'*|*'|'*|*'&'*|*'<'*|*'>'*) return 1 ;;
+    esac
+    return 0
+  fi
+
+  if dc_config_is_scalar_key "$key"; then
+    # Scalar must be a single, well-formed double-quoted string (handles escaped
+    # quotes/backslashes). This also rejects trailing content after the closing
+    # quote, e.g. KEY="x"; rm -rf /.
+    if [[ ! "$rest" =~ ^\"([^\"\\]|\\.)*\"$ ]]; then
+      return 1
+    fi
+    local content="${rest#\"}"
+    content="${content%\"}"
+    if dc_quoted_has_unescaped_subst "$content"; then
+      return 1
+    fi
+    return 0
+  fi
+
+  # Unknown key.
+  return 1
+}
+
+# Validate the values loaded from a project config (called after sourcing, while
+# the variables are in scope). Prints a diagnostic and returns 1 (does NOT exit)
+# on any out-of-contract value: security-critical file/line checks are handled
+# earlier by dc_load_project_config via dc_die, but value problems are left to
+# the caller so maintenance commands (e.g. `dc clean`) can skip a bad project
+# without aborting the whole run.
+dc_validate_config_values() {
+  local config_file="$1"
+
+  if ! dc_validate_cpus_value "${CONTAINER_CPUS:-}" >&2; then
+    printf '  in %s\n' "$config_file" >&2
+    return 1
+  fi
+
+  if ! dc_validate_memory_value "${CONTAINER_MEMORY:-}" >&2; then
+    printf '  in %s\n' "$config_file" >&2
+    return 1
+  fi
+
+  if [[ -n "${CONTAINER_BACKEND:-}" ]]; then
+    if ! dc_config_is_known_backend "${CONTAINER_BACKEND}"; then
+      printf 'ERROR: Unsupported CONTAINER_BACKEND in %s: %s\n' "$config_file" "${CONTAINER_BACKEND}" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -n "${CONTAINER_PROJECT:-}" ]]; then
+    if [[ ! "${CONTAINER_PROJECT}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+      printf 'ERROR: Invalid CONTAINER_PROJECT in %s: %s\n' "$config_file" "${CONTAINER_PROJECT}" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -n "${CONTAINER_IMAGE:-}" ]]; then
+    if [[ ! "${CONTAINER_IMAGE}" =~ ^[A-Za-z0-9._/:@-]+$ ]]; then
+      printf 'ERROR: Invalid CONTAINER_IMAGE in %s: %s\n' "$config_file" "${CONTAINER_IMAGE}" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -n "${CONTAINER_OVERLAY_SCOPES:-}" ]]; then
+    if ! dc_normalize_scopes_csv "${CONTAINER_OVERLAY_SCOPES}" >/dev/null 2>&1; then
+      printf 'ERROR: Invalid CONTAINER_OVERLAY_SCOPES in %s: %s\n' "$config_file" "${CONTAINER_OVERLAY_SCOPES}" >&2
+      return 1
+    fi
+  fi
+
+  local port=""
+  if declare -p PORTS >/dev/null 2>&1; then
+    for port in "${PORTS[@]}"; do
+      [[ -z "$port" ]] && continue
+      if [[ ! "$port" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
+        printf 'ERROR: Invalid port mapping in %s: %s (expected N or N:N)\n' "$config_file" "$port" >&2
+        return 1
+      fi
+    done
+  fi
+
+  if declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1 && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+    if ! dc_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]}" >/dev/null 2>&1; then
+      printf 'ERROR: Invalid CONTAINER_HIDDEN_PATHS in %s.\n' "$config_file" >&2
+      return 1
+    fi
+  fi
+
+  # Persisted paths must be absolute and free of control characters.
+  local path_key=""
+  local path_val=""
+  for path_key in REPOS_DIR SECRET_DIR SSH_KEY_PATH TOKEN_FILE NPMRC_PATH; do
+    path_val="${!path_key:-}"
+    [[ -n "$path_val" ]] || continue
+    if [[ "$path_val" != /* ]]; then
+      printf 'ERROR: Invalid %s in %s: must be an absolute path (%s)\n' "$path_key" "$config_file" "$path_val" >&2
+      return 1
+    fi
+    if [[ "$path_val" =~ [[:cntrl:]] ]]; then
+      printf 'ERROR: Invalid %s in %s: contains control characters\n' "$path_key" "$config_file" >&2
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# Load a project config file through the hardened, single path. Validates file
+# safety (regular file, not a symlink, not group/other-writable) and line shape
+# (known keys, no shell syntax or unescaped command substitution) BEFORE sourcing,
+# then validates the loaded values. On success the config keys are set as globals
+# in the caller's scope and it returns 0. Security violations (file/line shape)
+# exit via dc_die; value violations return 1 so callers under `set -e` exit while
+# maintenance commands can choose to skip a bad project.
+dc_load_project_config() {
+  local config_file="$1"
+
+  [[ -n "$config_file" ]] || dc_die "dc_load_project_config: config file path required"
+
+  if [[ -L "$config_file" ]]; then
+    dc_die "Refusing to load config via symlink: $config_file"
+  fi
+  if [[ ! -f "$config_file" ]]; then
+    dc_die "Config file not found: $config_file"
+  fi
+
+  local parent=""
+  parent="$(dirname "$config_file")"
+  if dc_path_is_group_or_other_writable "$config_file"; then
+    dc_die "Refusing to load group/other-writable config: $config_file
+  Fix with: chmod 600 \"$config_file\""
+  fi
+  if dc_path_is_group_or_other_writable "$parent"; then
+    dc_die "Refusing to load config from group/other-writable directory: $parent
+  Fix with: chmod 700 \"$parent\""
+  fi
+
+  local line=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if ! dc_config_line_is_safe "$line"; then
+      dc_die "Unsafe or invalid line in config $config_file:
+  $line
+Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
+    fi
+  done < "$config_file"
+
+  # Reset optional arrays so a config lacking them (or a prior load) doesn't leak
+  # stale values; plain assignments sourced below become globals automatically.
+  PORTS=()
+  CONTAINER_HIDDEN_PATHS=()
+
+  # shellcheck disable=SC1090
+  source "$config_file"
+
+  dc_validate_config_values "$config_file" || return 1
+}
+
+# Extract a single double-quoted scalar value for KEY from a config file WITHOUT
+# executing anything: pure line + escape-aware parsing. Used for the global config
+# (DC_OVERLAYS_DIR) and anywhere only one key is needed, so call sites never have
+# to `source`. Echoes the literal (unescaped) value; returns 1 if not found or not
+# a clean quoted assignment.
+dc_config_extract_scalar() {
+  local file="$1"
+  local key="$2"
+  local line=""
+  local raw=""
+  local content=""
+  local i=0
+  local ch=""
+  local escaped=0
+  local out=""
+
+  [[ -f "$file" ]] || return 1
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "${line//[[:space:]]/}" ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    # Match only the requested key as a full identifier (anchored word boundary).
+    [[ "$line" =~ ^[[:space:]]*${key}= ]] || continue
+
+    raw="${line#*=}"
+    if [[ "$raw" != \"*\" ]]; then
+      return 1
+    fi
+    content="${raw#\"}"
+    content="${content%\"}"
+
+    # Inverse of dc_escape_config_value: interpret backslash escapes literally.
+    out=""
+    escaped=0
+    for ((i = 0; i < ${#content}; i++)); do
+      ch="${content:i:1}"
+      if [[ "$escaped" -eq 1 ]]; then
+        out+="$ch"
+        escaped=0
+        continue
+      fi
+      if [[ "$ch" == '\' ]]; then
+        escaped=1
+        continue
+      fi
+      out+="$ch"
+    done
+
+    printf '%s' "$out"
+    return 0
+  done < "$file"
+
+  return 1
+}
+
 # Set or replace a single KEY="value" line in a project config file safely.
-# Rewrites via a temp file and atomic mv, escaping backslashes/quotes so the
-# value round-trips through a later `source`. Appends the key if absent.
+# Rewrites via a temp file and atomic mv, serializing the value through the shared
+# dc_escape_config_value helper (escapes backslash/quote/$/backtick, rejects
+# control characters) so the value round-trips inertly through dc_load_project_config.
+# Appends the key if absent.
 dc_set_config_key() {
   local config_file="$1"
   local key="$2"
   local value="$3"
 
-  local escaped="$value"
-  escaped="${escaped//\\/\\\\}"
-  escaped="${escaped//\"/\\\"}"
+  local escaped=""
+  escaped="$(dc_escape_config_value "$value")" || return 1
 
   local tmp_file="${config_file}.tmp.$$"
   local updated=0

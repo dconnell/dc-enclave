@@ -43,6 +43,36 @@ _dc_subcommands() {
     "help"
 }
 
+# Read DC_OVERLAYS_DIR from the global config WITHOUT sourcing/executing it.
+# Restricted line + quoted-value parsing only: a malicious config line can never
+# run code through completion. Echoes the value; returns 1 if absent/malformed.
+_dc_read_overlays_dir() {
+  local config="$1"
+  local line raw content
+
+  [[ -f "$config" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*DC_OVERLAYS_DIR= ]] || continue
+    raw="${line#*=}"
+    # Require a double-quoted value.
+    if [[ "$raw" != \"*\" ]]; then
+      return 1
+    fi
+    content="${raw#\"}"
+    content="${content%\"}"
+    # Reject any $/backtick outright (an overlays path never needs them), then
+    # undo the minimal escapes the serializer emits. No interpretation = no exec.
+    if [[ "$content" == *'$'* || "$content" == *'`'* ]]; then
+      return 1
+    fi
+    content="${content//\\\"/\"}"
+    content="${content//\\\\/\\}"
+    printf '%s' "$content"
+    return 0
+  done < "$config"
+  return 1
+}
+
 # Echo available overlay scope names discovered from team/ and user/ overlays,
 # applying the same DC_OVERLAYS_DIR resolution as the runtime helpers.
 _dc_scopes() {
@@ -52,7 +82,7 @@ _dc_scopes() {
   local -A seen=()
 
   if [[ -f "$config" ]]; then
-    overlays_dir="$(bash -c 'source "$1" 2>/dev/null && printf "%s" "${DC_OVERLAYS_DIR:-}"' _ "$config")"
+    overlays_dir="$(_dc_read_overlays_dir "$config")" || overlays_dir=""
     if [[ -n "$overlays_dir" ]]; then
       if [[ "$overlays_dir" == "~" || "$overlays_dir" == "~/"* ]]; then
         overlays_dir="$HOME${overlays_dir#\~}"

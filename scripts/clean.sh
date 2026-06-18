@@ -114,8 +114,12 @@ if $CLEAN_HIDDEN_VOLUMES; then
     fi
 
     CONTAINER_HIDDEN_PATHS=()
-    # shellcheck disable=SC1090
-    source "$config_file"
+    # Load through the hardened path; skip (don't abort) projects whose config
+    # has invalid values so cleanup of healthy projects still proceeds.
+    if ! dc_load_project_config "$config_file"; then
+      dc_warn "Skipping invalid or unsafe config: $config_file"
+      continue
+    fi
 
     if ! declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1; then
       CONTAINER_HIDDEN_PATHS=()
@@ -216,7 +220,10 @@ EXPECTED_REPOS["dev-base"]=1
 for config_file in "$HOME"/.config/dev-containers/*/config; do
   [[ -f "$config_file" ]] || continue
 
-  scope_csv="$(bash -c 'source "$1" 2>/dev/null && printf "%s" "${CONTAINER_OVERLAY_SCOPES:-}"' _ "$config_file")"
+  if ! scope_csv="$(dc_config_extract_scalar "$config_file" CONTAINER_OVERLAY_SCOPES)"; then
+    dc_warn "Skipping config without CONTAINER_OVERLAY_SCOPES: $config_file"
+    continue
+  fi
   if ! scope_csv="$(dc_normalize_scopes_csv "$scope_csv")"; then
     dc_warn "Skipping invalid scope config: $config_file"
     continue

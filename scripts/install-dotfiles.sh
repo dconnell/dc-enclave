@@ -29,7 +29,7 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-source "$CONFIG"
+dc_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 
 DOTFILES_SRC="$(dc_resolve_path "$DOTFILES_SRC")" || {

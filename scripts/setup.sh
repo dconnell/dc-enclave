@@ -131,11 +131,11 @@ else
   echo "  ✓ Added DC_OVERLAYS_DIR to $GLOBAL_CONFIG"
 fi
 
-# shellcheck disable=SC1090
-source "$GLOBAL_CONFIG"
-
-if [[ -z "${DC_OVERLAYS_DIR:-}" ]]; then
-  echo "ERROR: DC_OVERLAYS_DIR is not set in ~/.config/dev-containers/config"
+# Read DC_OVERLAYS_DIR back through the hardened parser (no `source`), so a
+# hand-edited global config can't execute code during setup.
+if ! DC_OVERLAYS_DIR="$(dc_config_extract_scalar "$GLOBAL_CONFIG" DC_OVERLAYS_DIR)" \
+   || [[ -z "${DC_OVERLAYS_DIR:-}" ]]; then
+  echo "ERROR: DC_OVERLAYS_DIR is not set (or is malformed) in ~/.config/dev-containers/config"
   echo "Set DC_OVERLAYS_DIR and rerun scripts/setup.sh"
   exit 1
 fi

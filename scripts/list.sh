@@ -33,7 +33,7 @@ fi
 printf "%-24s %-12s %-10s %s\n" "NAME" "STATUS" "BACKEND" "SCOPES"
 
 for config_file in "${PROJECTS[@]}"; do
-  source "$config_file"
+  dc_load_project_config "$config_file"
   project="${CONTAINER_PROJECT:-$(basename "$(dirname "$config_file")")}"
   project_backend="${CONTAINER_BACKEND:-$DEFAULT_BACKEND}"
 

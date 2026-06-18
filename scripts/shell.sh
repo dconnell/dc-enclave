@@ -35,7 +35,7 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-source "$CONFIG"
+dc_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 

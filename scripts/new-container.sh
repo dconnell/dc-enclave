@@ -91,6 +91,16 @@ source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 
+# Fail fast on resource flags: validate immediately after the helpers are
+# available (and before any backend/global-config work) so bad values never reach
+# config persistence or the runtime.
+if [[ -n "${CONTAINER_CPUS:-}" ]]; then
+  dc_validate_cpus_value "$CONTAINER_CPUS" || exit 1
+fi
+if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
+  dc_validate_memory_value "$CONTAINER_MEMORY" || exit 1
+fi
+
 dc_load_global_config
 
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
@@ -264,20 +274,35 @@ EOF
 fi
 echo "✓ .npmrc template: $NPMRC"
 
+# Serialize every scalar value through the shared escaper so the persisted config
+# is inert data: any $/backtick/quote/backslash is escaped and round-trips safely
+# through dc_load_project_config without executing command substitution.
+esc_project="$(dc_escape_config_value "$PROJECT")" || exit 1
+esc_scopes="$(dc_escape_config_value "$SCOPE_CSV")" || exit 1
+esc_image="$(dc_escape_config_value "$IMAGE")" || exit 1
+esc_backend="$(dc_escape_config_value "$ACTIVE_BACKEND")" || exit 1
+esc_cpus="$(dc_escape_config_value "${CONTAINER_CPUS:-}")" || exit 1
+esc_memory="$(dc_escape_config_value "${CONTAINER_MEMORY:-}")" || exit 1
+esc_repos="$(dc_escape_config_value "$REPOS_DIR")" || exit 1
+esc_secret="$(dc_escape_config_value "$SECRET_DIR")" || exit 1
+esc_ssh="$(dc_escape_config_value "$SECRET_DIR/ssh_key")" || exit 1
+esc_token="$(dc_escape_config_value "$SECRET_DIR/github-token")" || exit 1
+esc_npmrc="$(dc_escape_config_value "$SECRET_DIR/.npmrc")" || exit 1
+
 cat > "$CONFIG_FILE" <<EOF
 # dev-container config for: $PROJECT
 # Generated: $(date)
-CONTAINER_PROJECT="$PROJECT"
-CONTAINER_OVERLAY_SCOPES="$SCOPE_CSV"
-CONTAINER_IMAGE="$IMAGE"
-CONTAINER_BACKEND="$ACTIVE_BACKEND"
-CONTAINER_CPUS="${CONTAINER_CPUS:-}"
-CONTAINER_MEMORY="${CONTAINER_MEMORY:-}"
-REPOS_DIR="$REPOS_DIR"
-SECRET_DIR="$SECRET_DIR"
-SSH_KEY_PATH="$SECRET_DIR/ssh_key"
-TOKEN_FILE="$SECRET_DIR/github-token"
-NPMRC_PATH="$SECRET_DIR/.npmrc"
+CONTAINER_PROJECT="$esc_project"
+CONTAINER_OVERLAY_SCOPES="$esc_scopes"
+CONTAINER_IMAGE="$esc_image"
+CONTAINER_BACKEND="$esc_backend"
+CONTAINER_CPUS="$esc_cpus"
+CONTAINER_MEMORY="$esc_memory"
+REPOS_DIR="$esc_repos"
+SECRET_DIR="$esc_secret"
+SSH_KEY_PATH="$esc_ssh"
+TOKEN_FILE="$esc_token"
+NPMRC_PATH="$esc_npmrc"
 EOF
 
 if [[ ${#PORTS[@]} -gt 0 ]]; then
@@ -295,6 +320,10 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
 else
   echo "CONTAINER_HIDDEN_PATHS=()" >> "$CONFIG_FILE"
 fi
+
+# Owner-only permissions: the config holds secret paths and is a trusted input to
+# later loads, so it must never be group/other-writable (the loader rejects that).
+chmod 600 "$CONFIG_FILE"
 
 echo "✓ Config saved: $CONFIG_FILE"
 

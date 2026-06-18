@@ -111,7 +111,7 @@ declare -A SKIPPED_REPOS=()
 while IFS= read -r config_file; do
   [[ -z "$config_file" ]] && continue
 
-  scope_csv="$(bash -c 'source "$1" 2>/dev/null && printf "%s" "${CONTAINER_OVERLAY_SCOPES:-}"' _ "$config_file")"
+  scope_csv="$(dc_config_extract_scalar "$config_file" CONTAINER_OVERLAY_SCOPES)" || exit 1
   scope_csv="$(dc_normalize_scopes_csv "$scope_csv")" || exit 1
 
   image_ref="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$scope_csv")" || exit 1
