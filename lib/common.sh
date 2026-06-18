@@ -31,6 +31,12 @@ if [[ -n "${_DC_COMMON_SH_LOADED:-}" ]]; then
 fi
 declare -gr _DC_COMMON_SH_LOADED=1
 
+# Single source of truth for the dev-containers version. Sourced by every host
+# script (via the dc dispatcher and each subcommand), so both `dc --version` and
+# any subcommand can read $DC_VERSION. Bump this in the same commit that tags a
+# release (e.g. `git tag v0.1.0`) so the embedded string tracks the git tag.
+declare -gr DC_VERSION="0.1.0"
+
 # Print an error message to stderr and exit non-zero. Standard failure path.
 dc_die() {
   printf 'ERROR: %s\n' "$*" >&2

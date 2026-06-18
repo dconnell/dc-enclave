@@ -40,6 +40,7 @@ _dc_subcommands() {
     "rebuild-image" \
     "clean" \
     "install" \
+    "version" \
     "help"
 }
 

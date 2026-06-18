@@ -4,9 +4,25 @@
 # =============================================================================
 set -euo pipefail
 
+# Resolve real script dir (follows symlinks) and repo root, then load the shared
+# helpers so DC_VERSION is available to the summary output.
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+source "$ROOT_DIR/lib/common.sh"
+
 COMMAND="${1:-}"
 
 _show_summary() {
+  echo "dev-containers version $DC_VERSION"
+  echo ""
   echo "Usage: dc <command> [args]"
   echo ""
   echo "Commands:"
@@ -25,8 +41,10 @@ _show_summary() {
   echo "  rebuild-image [all|base]                          Rebuild managed images"
   echo "  clean [--dry-run] [--hidden-volumes [name]]       Remove old/orphan image tags or orphan hidden volumes"
   echo "  install <name> <path>                             Install dotfiles"
+  echo "  version                                           Print version (aliases: --version, -v)"
   echo "  help [command]                                    Show this help or detailed help"
   echo ""
+  echo "Run 'dc version' (or 'dc --version' / 'dc -v') to print the version."
   echo "Run 'dc help <command>' for detailed usage of a specific command."
 }
 
@@ -412,7 +430,7 @@ Description:
 Arguments:
   [command]  Optional command name to show detailed help for. One of:
              new, start, stop, status, list, shell, rebuild-container,
-             rebuild-image, clean, install, help
+             rebuild-image, clean, install, version, help
 
 Aliases:
   --help     Same as 'dc help'
@@ -423,8 +441,30 @@ Examples:
   dc help install
   dc help rebuild-container
 
-Notes:
+  Notes:
   - Running 'dc' with no arguments also shows the summary.
+EOF
+}
+
+_show_help_version() {
+  cat <<'EOF'
+Usage: dc version
+
+Description:
+  Prints the dev-containers version and exits.
+
+Aliases:
+  --version   same as 'dc version'
+  -v          same as 'dc version'
+
+Examples:
+  dc version
+  dc --version
+  dc -v
+
+Notes:
+  - The version string is the single source of truth in lib/common.sh (DC_VERSION).
+  - It is bumped in the same commit that tags a release (e.g. git tag v0.1.0).
 EOF
 }
 
@@ -444,6 +484,7 @@ case "$COMMAND" in
   rebuild-image)      _show_help_rebuild_image ;;
   clean)              _show_help_clean ;;
   install)            _show_help_install ;;
+  version|--version|-v) _show_help_version ;;
   help|--help|-h)     _show_help_help ;;
   *)
     echo "Unknown command: $COMMAND"

@@ -60,6 +60,9 @@ case "$SUBCOMMAND" in
   install)
     exec "$SCRIPT_DIR/install-dotfiles.sh" "$@"
     ;;
+  version|--version|-v)
+    echo "dc $DC_VERSION"
+    ;;
   help|--help|-h)
     exec "$SCRIPT_DIR/help.sh" "$@"
     ;;

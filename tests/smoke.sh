@@ -24,7 +24,39 @@ run_check() {
   fi
 }
 
+# Like run_check, but also asserts a regex appears in the command's combined
+# output. Used where exit code alone is not enough (e.g. version/help text).
+run_check_output() {
+  local label="$1"
+  local pattern="$2"
+  shift 2
+
+  local out=""
+  out="$("$@" 2>&1)" || true
+
+  echo "==> $label"
+  if [[ "$out" =~ $pattern ]]; then
+    echo "  ✓ pass"
+  else
+    echo "  ✗ fail: expected /$pattern/ in output"
+    echo "    command: $*"
+    echo "    output:  $out"
+    return 1
+  fi
+}
+
 run_check "dc help" "$DC_BIN" help
+
+echo ""
+echo "==> dc version"
+run_check "dc version" "$DC_BIN" version
+run_check "dc --version" "$DC_BIN" --version
+run_check "dc -v" "$DC_BIN" -v
+run_check_output "dc --version prints 'dc <semver>'" '^dc [0-9]+\.[0-9]+\.[0-9]+$' "$DC_BIN" --version
+run_check_output "dc help summary shows a version number" '[0-9]+\.[0-9]+\.[0-9]+' "$DC_BIN" help
+run_check_output "dc help documents the version command" 'version' "$DC_BIN" help
+run_check "dc help version" "$DC_BIN" help version
+
 run_check "hidden path helper checks" "$ROOT_DIR/tests/hidden-paths.sh"
 run_check "rebuild hidden-volume checks" "$ROOT_DIR/tests/rebuild-hidden-volumes.sh"
 run_check "config security checks" "$ROOT_DIR/tests/config-security.sh"
