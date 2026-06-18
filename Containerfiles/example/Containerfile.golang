@@ -2,9 +2,14 @@ FROM dev-base:latest
 
 USER root
 
-# Install Go (arm64 for Apple Silicon)
+# Install Go (arm64 for Apple Silicon).
+# GO_SHA256_ARM64 pins the checksum for go${GO_VERSION}.linux-arm64.tar.gz and
+# is verified before extraction; a mismatch fails the build fast. When bumping
+# GO_VERSION, update GO_SHA256_ARM64 to the matching published checksum.
 ARG GO_VERSION=1.22.5
+ARG GO_SHA256_ARM64=8d21325bfcf431be3660527c1a39d3d9ad71535fabdf5041c826e44e31642b5a
 RUN wget -q "https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz" && \
+    echo "${GO_SHA256_ARM64}  go${GO_VERSION}.linux-arm64.tar.gz" | sha256sum -c - && \
     tar -C /usr/local -xzf "go${GO_VERSION}.linux-arm64.tar.gz" && \
     rm "go${GO_VERSION}.linux-arm64.tar.gz"
 

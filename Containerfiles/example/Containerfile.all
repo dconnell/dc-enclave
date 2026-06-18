@@ -37,4 +37,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 USER dev
-RUN curl -fsSL https://opencode.ai/install | bash
+
+# opencode is intentionally NOT installed here. Fetching a remote install script
+# and piping it into a shell is a build-time supply-chain risk, so this template
+# omits any automatic install. To opt in, install it explicitly in your own
+# overlay after reviewing the source: either run the official installer
+# yourself, or download a pinned release tarball and verify its checksum before
+# extracting. See https://github.com/anomalyco/opencode for release artifacts.

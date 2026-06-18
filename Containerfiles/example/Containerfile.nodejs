@@ -2,10 +2,13 @@ FROM dev-base:latest
 
 USER root
 
-# Install Node.js LTS via NodeSource (arm64-native on Apple Silicon).
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
-    apt-get install -y nodejs && \
-    rm -rf /var/lib/apt/lists/*
+# Install Node.js from the Ubuntu archive (signed apt repo) instead of piping a
+# remote setup script into a shell. Ubuntu 24.04 ships a usable nodejs/npm; pin
+# a specific version in your own overlay if you need newer than the distro.
+RUN apt-get update && apt-get install -y \
+        nodejs \
+        npm \
+    && rm -rf /var/lib/apt/lists/*
 
 USER dev
 

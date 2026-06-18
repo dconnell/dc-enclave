@@ -28,6 +28,7 @@ run_check "dc help" "$DC_BIN" help
 run_check "hidden path helper checks" "$ROOT_DIR/tests/hidden-paths.sh"
 run_check "rebuild hidden-volume checks" "$ROOT_DIR/tests/rebuild-hidden-volumes.sh"
 run_check "config security checks" "$ROOT_DIR/tests/config-security.sh"
+run_check "supply-chain guard" "$ROOT_DIR/tests/supply-chain.sh"
 
 echo ""
 echo "==> dc help <command> (detailed help)"

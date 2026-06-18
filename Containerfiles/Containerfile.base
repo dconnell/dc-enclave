@@ -1,4 +1,9 @@
-FROM ubuntu:24.04
+# Base image is pinned by digest (multi-arch manifest list) instead of the
+# mutable `ubuntu:24.04` tag so a build reproduces the exact reviewed image.
+# Bumping the digest is an intentional, reviewed change: pull the current
+# multi-arch digest for ubuntu:24.04 and replace @sha256:... below, then run
+# `dc rebuild-image base`.
+FROM ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54
 
 # Avoid interactive prompts during apt installs
 ENV DEBIAN_FRONTEND=noninteractive
