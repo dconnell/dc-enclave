@@ -30,6 +30,7 @@ run_check "rebuild hidden-volume checks" "$ROOT_DIR/tests/rebuild-hidden-volumes
 run_check "config security checks" "$ROOT_DIR/tests/config-security.sh"
 run_check "supply-chain guard" "$ROOT_DIR/tests/supply-chain.sh"
 run_check "security token argv checks" "$ROOT_DIR/tests/security-token-argv.sh"
+run_check "SSH host trust guard" "$ROOT_DIR/tests/security-ssh-host-trust.sh"
 
 echo ""
 echo "==> dc help <command> (detailed help)"

@@ -84,7 +84,7 @@ _start_container() {
     if ! backend_exec "$project" test -f ~/.ssh/id_ed25519 2>/dev/null; then
       backend_exec "$project" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
       backend_exec_stdin "$project" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY_PATH"
-      backend_exec "$project" zsh -c "ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null && chmod 644 ~/.ssh/known_hosts"
+      # GitHub host keys are pinned in the base image; no runtime ssh-keyscan.
       echo "  ✓ SSH key injected"
     fi
   fi

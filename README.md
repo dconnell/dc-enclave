@@ -43,6 +43,18 @@ Each project container is set up with its own credentials and container state so
 
 If a container's state is ever suspect, `dc rebuild-container` replaces the container from a known-good image without touching your host repos.
 
+### GitHub SSH host key pinning
+
+GitHub's SSH host keys are **pinned in the base image** (`Containerfiles/ssh/github_known_hosts`), not learned at runtime. The base image sets `StrictHostKeyChecking yes` for `github.com` and points its `UserKnownHostsFile` at the pinned file, so an unknown or mismatched host key fails closed instead of being silently trusted on first contact. `dc new`, `dc start`, and `dc rebuild-container` only inject your deploy key — they no longer run `ssh-keyscan`.
+
+Rotating the pin (e.g. when GitHub changes a key) is a deliberate, reviewed change:
+
+1. Re-verify the new keys against three independent channels — see `plans/security/m4.md` ("Verification channels").
+2. Update `Containerfiles/ssh/github_known_hosts` **and** the `FP_*` constants in `tests/security-ssh-host-trust.sh` in the same change.
+3. `dc rebuild-image base` then `dc rebuild-container <name>` to pick up the new pin.
+
+The `tests/security-ssh-host-trust.sh` guard blocks a wrong/poisoned pin (it asserts the pinned fingerprints match GitHub's published values) and fails if `accept-new` or runtime `ssh-keyscan github.com` is reintroduced.
+
 ## Command reference
 
 The day-to-day interface is the `dc` command with subcommands. All subcommands dispatch to scripts under `scripts/`.

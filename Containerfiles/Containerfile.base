@@ -42,10 +42,21 @@ EOF
 
 RUN chown dev:dev /home/dev/.zshrc
 
-# Configure SSH client defaults for dev user
+# Pin GitHub SSH host keys in-image instead of trusting on first use.
+# Copying happens before `USER dev` since /etc/ssh is root-owned. The file is
+# world-readable (0644) so the dev user can read it; read-only is fine -- ssh
+# only rejects group/world-*writable* known_hosts files. See
+# Containerfiles/ssh/github_known_hosts for the three-channel verification.
+COPY Containerfiles/ssh/github_known_hosts /etc/ssh/ssh_known_hosts.github
+RUN chmod 644 /etc/ssh/ssh_known_hosts.github
+
+# Configure SSH client defaults for dev user.
+# github.com fails closed: StrictHostKeyChecking yes plus a pinned
+# UserKnownHostsFile means only these reviewed keys are accepted -- no runtime
+# ssh-keyscan, no accept-new. Other hosts keep ssh's default known_hosts.
 USER dev
 RUN mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-    printf 'Host github.com\n  StrictHostKeyChecking accept-new\n  IdentityFile ~/.ssh/id_ed25519\n' > ~/.ssh/config && \
+    printf 'Host github.com\n  StrictHostKeyChecking yes\n  UserKnownHostsFile /etc/ssh/ssh_known_hosts.github\n  IdentityFile ~/.ssh/id_ed25519\n' > ~/.ssh/config && \
     chmod 600 ~/.ssh/config
 
 # Force git to use SSH instead of HTTPS for github.com

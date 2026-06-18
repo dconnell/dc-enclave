@@ -373,7 +373,7 @@ fi
 echo "==> Injecting SSH deploy key..."
 backend_exec "$PROJECT" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
 backend_exec_stdin "$PROJECT" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY"
-backend_exec "$PROJECT" zsh -c "ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null && chmod 644 ~/.ssh/known_hosts"
+# GitHub host keys are pinned in the base image; no runtime ssh-keyscan.
 
 echo "==> Configuring git in container..."
 backend_exec "$PROJECT" git config --global url."git@github.com:".insteadOf "https://github.com/"
