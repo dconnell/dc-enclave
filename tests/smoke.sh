@@ -29,6 +29,7 @@ run_check "hidden path helper checks" "$ROOT_DIR/tests/hidden-paths.sh"
 run_check "rebuild hidden-volume checks" "$ROOT_DIR/tests/rebuild-hidden-volumes.sh"
 run_check "config security checks" "$ROOT_DIR/tests/config-security.sh"
 run_check "supply-chain guard" "$ROOT_DIR/tests/supply-chain.sh"
+run_check "security token argv checks" "$ROOT_DIR/tests/security-token-argv.sh"
 
 echo ""
 echo "==> dc help <command> (detailed help)"

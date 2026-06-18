@@ -48,11 +48,11 @@ fi
 # unfilled token file doesn't leak "ghp_REPLACE_ME" into the environment.
 GITHUB_TOKEN=""
 if [[ -n "${TOKEN_FILE:-}" ]] && [[ -f "$TOKEN_FILE" ]]; then
+  # Pattern on a single line: under mawk a multi-line `&&` pattern followed by
+  # a newline-prefixed `{` action parses the action as a separate unconditional
+  # rule, which would defeat the comment/placeholder filtering below.
   GITHUB_TOKEN="$(awk '
-    $0 !~ /^#/ &&
-    $0 !~ /^ghp_REPLACE_ME/ &&
-    $0 ~ /[^[:space:]]/
-    {
+    $0 !~ /^#/ && $0 !~ /^ghp_REPLACE_ME/ && $0 ~ /[^[:space:]]/ {
       gsub(/[[:space:]]+/, "", $0)
       print
       exit
@@ -70,12 +70,37 @@ else
 fi
 echo ""
 
+# Seed GITHUB_TOKEN into a short-lived file inside the container over stdin, so
+# the PAT value never appears in host process argv (readable via ps / /proc).
+# The raw value is written (not a shell assignment) and read back via command
+# substitution in the wrapper, so token-file metacharacters are never executed;
+# the file is deleted before the user shell is exec'd and best-effort removed
+# again on exit/interrupt.
+_dc_token_env_file=""
+
+_dc_seed_token_file() {
+  _dc_token_env_file="$(backend_exec "$PROJECT" mktemp "/tmp/dc-gh-token.XXXXXX")"
+  backend_exec "$PROJECT" chmod 600 "$_dc_token_env_file"
+  printf '%s' "$GITHUB_TOKEN" \
+    | backend_exec_stdin "$PROJECT" sh -c 'cat >"$1"' _ "$_dc_token_env_file"
+}
+
+_dc_cleanup_token_file() {
+  if [[ -n "$_dc_token_env_file" ]]; then
+    backend_exec "$PROJECT" rm -f "$_dc_token_env_file" 2>/dev/null || true
+  fi
+}
+# Best-effort cleanup on normal exit or launch-time interrupt; never let a failed
+# cleanup break normal shell usage.
+trap '_dc_cleanup_token_file' EXIT INT TERM
+
 if $HAS_COMMAND; then
   if [[ -n "$GITHUB_TOKEN" ]]; then
+    _dc_seed_token_file
     backend_exec "$PROJECT" env \
-      "GITHUB_TOKEN=$GITHUB_TOKEN" \
       "PS1=[${PROJECT}] %~ %# " \
-      zsh -ic "$COMMAND"
+      sh -lc 'export GITHUB_TOKEN="$(cat "$1")"; rm -f "$1"; exec zsh -ic "$2"' \
+      _ "$_dc_token_env_file" "$COMMAND"
   else
     backend_exec "$PROJECT" env \
       "PS1=[${PROJECT}] %~ %# " \
@@ -84,11 +109,12 @@ if $HAS_COMMAND; then
 else
   backend_exec "$PROJECT" sh -lc 'echo "  Connected to container: $(hostname) (user=$(whoami), pwd=$(pwd))"'
   if [[ -n "$GITHUB_TOKEN" ]]; then
+    _dc_seed_token_file
     backend_exec_interactive "$PROJECT" \
-      --env "GITHUB_TOKEN=$GITHUB_TOKEN" \
       --env "PS1=[${PROJECT}] %~ %# " \
       -- \
-      zsh -ic 'cd /workspace 2>/dev/null || true; exec zsh -i'
+      sh -lc 'export GITHUB_TOKEN="$(cat "$1")"; rm -f "$1"; cd /workspace 2>/dev/null || true; exec zsh -i' \
+      _ "$_dc_token_env_file"
   else
     backend_exec_interactive "$PROJECT" \
       --env "PS1=[${PROJECT}] %~ %# " \
