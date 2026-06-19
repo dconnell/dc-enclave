@@ -798,7 +798,14 @@ podman machine start
 
 ## Smoke tests
 
-Run the lightweight command smoke suite. Help, version, and security-guard checks always run; `dc list`, `dc status`, and `dc clean` checks run when a backend is reachable and are otherwise skipped:
+Run every test file in `tests/` with a single pass/fail summary (no fail-fast, so you see every failure in one run):
+
+```
+tests/run-all.sh
+tests/run-all.sh -v   # stream each file's output live
+```
+
+`tests/smoke.sh` is the lightweight command smoke suite. Help, version, and security-guard checks always run; `dc list`, `dc status`, and `dc clean` checks run when a backend is reachable and are otherwise skipped:
 
 ```
 tests/smoke.sh
@@ -807,7 +814,7 @@ tests/smoke.sh
 Optional backend override:
 
 ```
-CONTAINER_BACKEND=podman tests/smoke.sh
+CONTAINER_BACKEND=podman tests/run-all.sh
 CONTAINER_BACKEND=colima tests/smoke.sh
 ```
 

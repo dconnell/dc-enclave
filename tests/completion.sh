@@ -148,9 +148,16 @@ drive 3 dc rebuild-container alpha "--"; assert_reply "rebuild-container alpha -
 
 # install: one project, then a directory.
 drive 2 dc install "";     assert_reply "install <TAB>" alpha beta gamma
+# Directory completion is cwd-based (compgen -d), so run it from a controlled
+# dir with a known subdir instead of depending on wherever this test (or a
+# runner like run-all.sh) was invoked from.
+mkdir -p "$WORK/dirs/subdir"
+_prev_pwd="$PWD"
+cd "$WORK/dirs"
 drive 3 dc install alpha ""; COMPREPLY=("${COMPREPLY[@]/%//}")  # dirs get a trailing /
-[[ "${COMPREPLY[*]}" == */ ]] || fail "install pos3 should complete directories"
-# (don't assert exact dir contents; just that dir completion ran)
+[[ "${COMPREPLY[*]}" == *subdir/* ]] \
+  || fail "install pos3 should complete directories (got [${COMPREPLY[*]:-}])"
+cd "$_prev_pwd"
 pass "install pos3 completes directories"
 
 # rebuild-image targets.
