@@ -2,178 +2,208 @@
 # =============================================================================
 # scripts/dc-complete.bash - Bash tab completion for the `dc` command.
 #
-# Sourced into the interactive shell by setup.sh (not executed). Provides
+# Sourced into the interactive bash shell by setup.sh (not executed). Provides
 # subcommand, project-name, scope, and flag completion. Project/scope lists are
-# derived live from ~/.config/dev-containers and the configured overlays dir.
+# derived live via lib/complete-data.sh, which is shared with the native zsh
+# completion (scripts/_dc) so discovery logic -- including the hardened
+# global-config parser -- lives in exactly one place.
 # =============================================================================
 
-# Echo configured project names (dirs with a config file) matching the prefix.
-_dc_project_names() {
-  local cur="${1:-}"
-  local -a names=()
-  local d
-
-  for d in "$HOME"/.config/dev-containers/*; do
-    [[ -d "$d" && -f "$d/config" ]] || continue
-    local name=""
-    name="$(basename "$d")"
-    if [[ -z "$cur" || "$name" == "$cur"* ]]; then
-      names+=("$name")
-    fi
+# Resolve this file's directory so we can source the shared discovery library.
+# (The file is sourced from an absolute path in the shell profile, so
+# ${BASH_SOURCE[0]} is reliable here.)
+_dc_complete_self_dir() {
+  local src="${BASH_SOURCE[0]}"
+  local dir
+  while [[ -L "$src" ]]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
   done
-
-  printf '%s\n' "${names[@]}"
+  cd -P "$(dirname "$src")" && pwd
 }
-
-# Echo the static list of dc subcommands (including aliases).
-_dc_subcommands() {
-  printf '%s\n' \
-    "new" \
-    "start" \
-    "stop" \
-    "status" \
-    "s" \
-    "list" \
-    "ls" \
-    "shell" \
-    "rebuild-container" \
-    "rebuild-image" \
-    "clean" \
-    "install" \
-    "version" \
-    "--version" \
-    "-v" \
-    "help" \
-    "--help" \
-    "-h"
-}
-
-# Read DC_OVERLAYS_DIR from the global config WITHOUT sourcing/executing it.
-# Restricted line + quoted-value parsing only: a malicious config line can never
-# run code through completion. Echoes the value; returns 1 if absent/malformed.
-_dc_read_overlays_dir() {
-  local config="$1"
-  local line raw content
-
-  [[ -f "$config" ]] || return 1
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ ^[[:space:]]*DC_OVERLAYS_DIR= ]] || continue
-    raw="${line#*=}"
-    # Require a double-quoted value.
-    if [[ "$raw" != \"*\" ]]; then
-      return 1
-    fi
-    content="${raw#\"}"
-    content="${content%\"}"
-    # Reject any $/backtick outright (an overlays path never needs them), then
-    # undo the minimal escapes the serializer emits. No interpretation = no exec.
-    if [[ "$content" == *'$'* || "$content" == *'`'* ]]; then
-      return 1
-    fi
-    content="${content//\\\"/\"}"
-    content="${content//\\\\/\\}"
-    printf '%s' "$content"
-    return 0
-  done < "$config"
-  return 1
-}
-
-# Echo available overlay scope names discovered from team/ and user/ overlays,
-# applying the same DC_OVERLAYS_DIR resolution as the runtime helpers.
-_dc_scopes() {
-  local config="$HOME/.config/dev-containers/config"
-  local overlays_dir=""
-  local f name
-  local -A seen=()
-
-  if [[ -f "$config" ]]; then
-    overlays_dir="$(_dc_read_overlays_dir "$config")" || overlays_dir=""
-    if [[ -n "$overlays_dir" ]]; then
-      if [[ "$overlays_dir" == "~" || "$overlays_dir" == "~/"* ]]; then
-        overlays_dir="$HOME${overlays_dir#\~}"
-      elif [[ "$overlays_dir" != /* ]]; then
-        overlays_dir="$HOME/.config/dev-containers/$overlays_dir"
-      fi
-    fi
-  fi
-
-  if [[ -z "$overlays_dir" ]]; then
-    overlays_dir="$HOME/.config/dev-containers/overlays"
-  fi
-
-  for f in "$overlays_dir"/team/Containerfile.* "$overlays_dir"/user/Containerfile.*; do
-    [[ -f "$f" ]] || continue
-    name="$(basename "$f")"
-    name="${name#Containerfile.}"
-    [[ -z "$name" ]] && continue
-    [[ -n "${seen[$name]:-}" ]] && continue
-    seen["$name"]=1
-    printf '%s\n' "$name"
-  done
-}
-
-# Echo the valid targets for `dc rebuild-image`.
-_dc_rebuild_image_targets() {
-  printf '%s\n' "all" "base"
-}
+_dc_scripts_dir="$(_dc_complete_self_dir)"
+# shellcheck source=../lib/complete-data.sh
+source "$_dc_scripts_dir/../lib/complete-data.sh"
+unset -f _dc_complete_self_dir
+unset _dc_scripts_dir
 
 # Main completion entry point bound to `dc` via `complete -F`.
+#
+# Per-subcommand grammar mirrors the real argument parsing in scripts/*.sh:
+#   start|stop              : variadic project names (0 args == all)
+#   shell                   : exactly one project, then free-form command
+#   rebuild-container       : one project + --rotate-keys / --keep-hidden-volumes
+#   install                 : one project + one dotfiles directory
+#   rebuild-image           : one of {all, base}
+#   clean                   : --dry-run / --hidden-volumes, then at most one
+#                             project (only meaningful with --hidden-volumes)
+#   new                     : <name> [scope] [--repo-path <d>] [--cpus N]
+#                             [--memory V] [--hide <path>] [port:port ...]
 _dc_complete() {
-  local cur prev
+  local cur prev cmd
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
 
+  # First word is always a subcommand.
   if [[ $COMP_CWORD -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "$(_dc_subcommands)" -- "$cur") )
+    COMPREPLY=( $(compgen -W "$(dc_complete_subcommands)" -- "$cur") )
     return 0
   fi
 
-  local cmd="${COMP_WORDS[1]}"
+  cmd="${COMP_WORDS[1]}"
+
   case "$cmd" in
-    new)
-      if [[ $COMP_CWORD -eq 2 ]]; then
-        return 0
-      fi
-      if [[ "$prev" == "--repo-path" ]]; then
-        COMPREPLY=( $(compgen -d -- "$cur") )
-        return 0
-      fi
-      if [[ "$prev" == "--cpus" || "$prev" == "--memory" || "$prev" == "--hide" ]]; then
-        return 0
-      fi
-      local flags="--repo-path --cpus --memory --hide"
-      if [[ $COMP_CWORD -eq 3 ]]; then
-        COMPREPLY=( $(compgen -W "$(_dc_scopes) $flags" -- "$cur") )
-      else
-        COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
-      fi
+    start|stop)
+      # Variadic: complete a project at any position >= 2, excluding projects
+      # already typed on this line so `dc start a b <TAB>` offers the rest.
+      local -a used=()
+      local w
+      for w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
+        [[ -n "$w" ]] && used+=("$w")
+      done
+      _dc_reply_projects_excluding "$cur" "${used[@]}"
+      return 0
       ;;
-    start|stop|shell|rebuild-container|install)
+    shell)
+      # One project only; beyond it the user runs a free-form command.
       if [[ $COMP_CWORD -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "$(_dc_project_names "$cur")" -- "$cur") )
+        _dc_reply_projects "$cur"
+      fi
+      return 0
+      ;;
+    rebuild-container)
+      if [[ $COMP_CWORD -eq 2 ]]; then
+        _dc_reply_projects "$cur"
         return 0
       fi
-      if [[ "$cmd" == "rebuild-container" && $COMP_CWORD -ge 3 ]]; then
-        COMPREPLY=( $(compgen -W "--rotate-keys --keep-hidden-volumes" -- "$cur") )
-      fi
-      if [[ "$cmd" == "install" && $COMP_CWORD -eq 3 ]]; then
+      # >= 3: optional flags (order-independent).
+      COMPREPLY=( $(compgen -W "--rotate-keys --keep-hidden-volumes" -- "$cur") )
+      return 0
+      ;;
+    install)
+      if [[ $COMP_CWORD -eq 2 ]]; then
+        _dc_reply_projects "$cur"
+      elif [[ $COMP_CWORD -eq 3 ]]; then
         COMPREPLY=( $(compgen -d -- "$cur") )
       fi
+      return 0
       ;;
     rebuild-image)
       if [[ $COMP_CWORD -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "$(_dc_rebuild_image_targets)" -- "$cur") )
+        COMPREPLY=( $(compgen -W "$(dc_complete_rebuild_image_targets)" -- "$cur") )
       fi
+      return 0
       ;;
     clean)
-      if [[ $COMP_CWORD -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "--dry-run --hidden-volumes" -- "$cur") )
-      elif [[ "$prev" == "--hidden-volumes" ]]; then
-        COMPREPLY=( $(compgen -W "$(_dc_project_names "$cur")" -- "$cur") )
-      fi
+      _dc_complete_clean "$cur" "$prev"
+      return 0
+      ;;
+    new)
+      _dc_complete_new "$cur" "$prev"
+      return 0
       ;;
   esac
+}
+
+# Fill COMPREPLY with project names matching $1, optionally excluding the
+# project names passed in $2.. (already present on the command line).
+_dc_reply_projects() {
+  local cur="$1"
+  shift
+  _dc_reply_projects_excluding "$cur" "$@"
+}
+
+_dc_reply_projects_excluding() {
+  local cur="$1"
+  shift
+  local -A exclude=()
+  local p
+  for p in "$@"; do
+    exclude["$p"]=1
+  done
+
+  local -a out=()
+  local name
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    [[ -n "${exclude[$name]:-}" ]] && continue
+    out+=("$name")
+  done < <(dc_complete_projects "$cur")
+
+  COMPREPLY=("${out[@]}")
+}
+
+# `dc clean [--dry-run] [--hidden-volumes [name]]`: flags are always offered;
+# a single optional project is offered only after --hidden-volumes (and only if
+# one hasn't already been typed).
+_dc_complete_clean() {
+  local cur="$1" prev="$2"
+  local -a reply=()
+
+  # Always allow the two flags at any position.
+  local f
+  for f in --dry-run --hidden-volumes; do
+    if [[ -z "$cur" || "$f" == "$cur"* ]]; then
+      reply+=("$f")
+    fi
+  done
+
+  # Track whether --hidden-volumes is present and whether a project is typed.
+  local have_hv=0 have_proj=0 w
+  for ((i=2; i<COMP_CWORD; i++)); do
+    w="${COMP_WORDS[i]}"
+    case "$w" in
+      --dry-run|--hidden-volumes) ;;
+      --*) ;;
+      *)
+        if [[ $have_hv -eq 1 && $have_proj -eq 0 ]]; then
+          have_proj=1
+        fi
+        ;;
+    esac
+    [[ "$w" == "--hidden-volumes" ]] && have_hv=1
+  done
+
+  # Offer a project when the previous word was --hidden-volumes, or generally
+  # when --hidden-volumes is active and no project has been given yet.
+  if [[ "$prev" == "--hidden-volumes" ]] || { [[ $have_hv -eq 1 && $have_proj -eq 0 ]]; }; then
+    local name
+    while IFS= read -r name; do
+      [[ -z "$name" ]] && continue
+      reply+=("$name")
+    done < <(dc_complete_projects "$cur")
+  fi
+
+  COMPREPLY=("${reply[@]}")
+}
+
+# `dc new <name> [scope] [flags] [port:port ...]`.
+_dc_complete_new() {
+  local cur="$1" prev="$2"
+
+  # name (position 2) is free text -- no completion offered.
+  [[ $COMP_CWORD -eq 2 ]] && return 0
+
+  # Flags that consume a following value.
+  case "$prev" in
+    --repo-path)
+      COMPREPLY=( $(compgen -d -- "$cur") )
+      return 0
+      ;;
+    --cpus|--memory|--hide)
+      return 0
+      ;;
+  esac
+
+  local flags="--repo-path --cpus --memory --hide"
+  if [[ $COMP_CWORD -eq 3 ]]; then
+    # Second positional: a scope (with flags also accepted).
+    COMPREPLY=( $(compgen -W "$(dc_complete_scopes) $flags" -- "$cur") )
+  else
+    COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
+  fi
 }
 
 complete -F _dc_complete dc

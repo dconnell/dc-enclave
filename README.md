@@ -248,12 +248,14 @@ dev-containers/
 │   └── generated/                      # auto-generated composed files (project overlays)
 ├── lib/
 │   ├── common.sh                       # bash 4+ version guard, shared helpers
-│   ├── platform.sh                     # OS detection, path helpers
+│   ├── platform.sh                     # OS/shell detection, profile helpers
+│   ├── complete-data.sh                # shared completion discovery (bash + zsh)
 │   ├── container-backend.sh            # backend abstraction
 │   └── vscode.sh                       # VS Code attach-config seeding
 ├── scripts/
 │   ├── dc                               # CLI entry point
 │   ├── dc-complete.bash                 # bash tab completion
+│   ├── _dc                              # native zsh tab completion
 │   ├── setup.sh
 │   ├── help.sh                          # per-command help text (dc help <command>)
 │   ├── compose-containerfile.sh
@@ -350,11 +352,12 @@ chmod +x scripts/*.sh scripts/dc
 scripts/setup.sh
 ```
 
-4. Reload your shell profile:
+4. Reload your shell profile (setup detects your login shell via `$SHELL` and writes to the right file):
 
 ```
-source ~/.bashrc    # Linux, WSL2
-source ~/.bash_profile    # macOS
+source ~/.zshrc         # if your shell is zsh (macOS default)
+source ~/.bashrc        # Linux/WSL2 bash
+source ~/.bash_profile  # macOS bash
 ```
 
 Optional: force backend during setup:
@@ -364,9 +367,20 @@ CONTAINER_BACKEND=podman scripts/setup.sh
 CONTAINER_BACKEND=colima scripts/setup.sh
 ```
 
+### Shell completion
+
+`setup.sh` wires tab completion for `dc` into whichever shell your `$SHELL` points at:
+
+- **zsh** — setup defines `dc` as a shell function (`dc() { '<repo>/scripts/dc' "$@"; }`) and removes the legacy managed alias line, so `dc` cannot be shadowed by another PATH command. Native completion (`scripts/_dc`, a real `#compdef dc` function) is autoloaded by adding `scripts/` to `fpath` and binding both `dc` and `<repo>/scripts/dc`: `compdef _dc dc '<repo>/scripts/dc'`.
+- **bash** — `scripts/dc-complete.bash` is sourced. Setup writes to `~/.bash_profile` on macOS or `~/.bashrc` elsewhere.
+
+Both front-ends share one discovery layer (`lib/complete-data.sh`), including the hardened global-config parser, so project/scope lists and security guarantees are identical across shells. If you previously bridged the bash completion into zsh by hand, re-running `setup.sh` removes that stale line in favor of native zsh completion.
+
+Completion covers each command's real argument grammar, e.g. `dc start`/`dc stop` complete multiple project names (excluding ones already typed), `dc rebuild-container` offers `--rotate-keys`/`--keep-hidden-volumes`, and `dc install` completes a dotfiles directory after the project.
+
 ## Setup of a new repo
 
-Use dc new (alias), not direct script invocation.
+Use `dc new` (shell command), not direct script invocation.
 
 Base-only example (no scopes needed — base image plus `Containerfile.all` if present):
 

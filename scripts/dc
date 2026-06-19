@@ -2,15 +2,15 @@
 # =============================================================================
 # scripts/dc - The `dc` command entry point / subcommand dispatcher.
 #
-# Installed as an alias (alias dc='.../scripts/dc') by setup.sh. Each subcommand
-# execs a dedicated script under scripts/, so adding a command means: write
+# Exposed as the `dc` shell command by setup.sh (zsh function / bash alias).
+# Each subcommand execs a dedicated script under scripts/, so adding a command means: write
 # scripts/<cmd>.sh and add a case branch here (and to dc-complete.bash).
 # `dc` with no args shows help.
 # =============================================================================
 set -euo pipefail
 
 # Resolve the real location of this file (following symlinks) and the repo
-# root. Needed because `dc` is invoked via an alias and may be symlinked.
+# root. Needed because `dc` may be invoked via a shell wrapper and may be symlinked.
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"

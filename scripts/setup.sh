@@ -239,29 +239,132 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   fi
 fi
 
-# Add alias + completion to the right bash profile.
-PROFILE_FILE="$(platform_bash_profile)"
+# Add command shortcut + completion to the right shell profile. Profile selection is
+# shell-driven (via $SHELL), not platform-driven: macOS defaults to zsh, so the
+# old platform_bash_profile() choice wrote to ~/.bash_profile for users whose
+# login shell never reads it. See lib/platform.sh.
+USER_SHELL="$(platform_user_shell)"
+PROFILE_FILE="$(platform_profile_file "$USER_SHELL")"
 touch "$PROFILE_FILE"
+echo ""
+echo "==> Shell integration ($USER_SHELL -> $PROFILE_FILE)"
 
-ALIAS_LINE="alias dc='$ROOT_DIR/scripts/dc'"
-if ! grep -Fq "$ALIAS_LINE" "$PROFILE_FILE"; then
-  {
-    echo ""
-    echo "# dev-containers alias"
-    echo "$ALIAS_LINE"
-  } >> "$PROFILE_FILE"
-  echo ""
-  echo "✓ Added dc alias to $PROFILE_FILE"
-fi
+if [[ "$USER_SHELL" == "zsh" ]]; then
+  # zsh command wiring: use a shell function, not an alias. Some users disable
+  # alias expansion (`setopt no_aliases`) or have another `dc` on PATH
+  # (historically the desk calculator), which makes an alias-based setup brittle.
+  # A function is always resolved before PATH lookup and reliably forwards args.
+  DC_UNALIAS_LINE="unalias dc 2>/dev/null"
+  DC_FUNCTION_LINE="dc() { \"$ROOT_DIR/scripts/dc\" \"\$@\"; }"
+  LEGACY_ALIAS_LINE="alias dc='$ROOT_DIR/scripts/dc'"
 
-COMPLETION_LINE="source '$ROOT_DIR/scripts/dc-complete.bash'"
-if ! grep -Fq "$COMPLETION_LINE" "$PROFILE_FILE"; then
-  {
-    echo ""
-    echo "# dev-containers completion"
-    echo "$COMPLETION_LINE"
-  } >> "$PROFILE_FILE"
-  echo "✓ Added dc completion to $PROFILE_FILE"
+  if grep -Fxq "$DC_FUNCTION_LINE" "$PROFILE_FILE"; then
+    echo "  ✓ dc command function already present in $PROFILE_FILE"
+  else
+    {
+      echo ""
+      echo "# dev-containers command"
+      echo "$DC_UNALIAS_LINE"
+      echo "$DC_FUNCTION_LINE"
+    } >> "$PROFILE_FILE"
+    echo "  ✓ Added dc command function to $PROFILE_FILE"
+  fi
+
+  # Migration: remove the exact legacy alias line managed by older setup runs.
+  if grep -Fxq "$LEGACY_ALIAS_LINE" "$PROFILE_FILE"; then
+    tmp_profile="$(mktemp)"
+    grep -Fxv "$LEGACY_ALIAS_LINE" "$PROFILE_FILE" > "$tmp_profile"
+    cat "$tmp_profile" > "$PROFILE_FILE"
+    rm -f "$tmp_profile"
+    echo "  ✓ Removed legacy dc alias line from $PROFILE_FILE"
+  fi
+
+  # Native zsh completion: put scripts/ on fpath, autoload _dc, ensure
+  # compinit has run, and bind it to dc. Explicit compdef + autoload means this
+  # works regardless of whether the user's own compinit runs before or after.
+  # Bind _dc to `dc`. Because dc is a shell function (wired above), zsh
+  # resolves the command name directly and `_comps[dc]` is what fires on
+  # `dc <TAB>` -- no path-keyed binding is needed (that was an artifact of the
+  # old alias-based wiring, where completion could key off the expanded alias
+  # path). The path-qualified form is retained only as a legacy migration target.
+  COMPDEF_LINE="compdef _dc dc"
+  LEGACY_COMPDEF_LINE="compdef _dc dc '$ROOT_DIR/scripts/dc'"
+
+  # Exact-line match (-Fxq): the new line is a substring of the legacy
+  # path-qualified form, so a plain -F substring check would falsely report a
+  # legacy line as already migrated.
+  if grep -Fxq "$COMPDEF_LINE" "$PROFILE_FILE"; then
+    echo "  ✓ Native zsh completion already present in $PROFILE_FILE"
+  else
+    if grep -Fxq "$LEGACY_COMPDEF_LINE" "$PROFILE_FILE"; then
+      tmp_profile="$(mktemp)"
+      awk -v old="$LEGACY_COMPDEF_LINE" -v new="$COMPDEF_LINE" '
+        $0 == old { print new; next }
+        { print }
+      ' "$PROFILE_FILE" > "$tmp_profile"
+      cat "$tmp_profile" > "$PROFILE_FILE"
+      rm -f "$tmp_profile"
+      echo "  ✓ Updated zsh compdef mapping in $PROFILE_FILE"
+    else
+      {
+        echo ""
+        echo "# dev-containers completion (zsh)"
+        echo "fpath+=('$ROOT_DIR/scripts')"
+        echo "autoload -Uz _dc"
+        echo "autoload -Uz compinit"
+        echo "(( \${+_comps} )) || compinit -u"
+        echo "$COMPDEF_LINE"
+      } >> "$PROFILE_FILE"
+      echo "  ✓ Added native zsh completion to $PROFILE_FILE"
+    fi
+  fi
+
+  # Cleanup: if both legacy and new compdef lines exist, drop the legacy one.
+  if grep -Fxq "$LEGACY_COMPDEF_LINE" "$PROFILE_FILE" \
+     && grep -Fxq "$COMPDEF_LINE" "$PROFILE_FILE"; then
+    tmp_profile="$(mktemp)"
+    grep -Fxv "$LEGACY_COMPDEF_LINE" "$PROFILE_FILE" > "$tmp_profile"
+    cat "$tmp_profile" > "$PROFILE_FILE"
+    rm -f "$tmp_profile"
+    echo "  ✓ Removed legacy zsh compdef line from $PROFILE_FILE"
+  fi
+
+  # Migration: a previous (bash-targeted) setup, or a manual bridge, may have
+  # left a `source .../dc-complete.bash` line in ~/.zshrc. That file ends in the
+  # bash-only `complete -F` builtin, which errors under zsh. Remove our exact
+  # line if present; never touch anything else.
+  STALE_BASH_COMP="source '$ROOT_DIR/scripts/dc-complete.bash'"
+  if grep -Fq "$STALE_BASH_COMP" "$PROFILE_FILE"; then
+    tmp_profile="$(mktemp)"
+    grep -Fv "$STALE_BASH_COMP" "$PROFILE_FILE" > "$tmp_profile"
+    cat "$tmp_profile" > "$PROFILE_FILE"
+    rm -f "$tmp_profile"
+    echo "  ✓ Removed stale bash completion line from $PROFILE_FILE (replaced by native zsh completion)"
+  fi
+else
+  # bash command alias.
+  ALIAS_LINE="alias dc='$ROOT_DIR/scripts/dc'"
+  if ! grep -Fq "$ALIAS_LINE" "$PROFILE_FILE"; then
+    {
+      echo ""
+      echo "# dev-containers alias"
+      echo "$ALIAS_LINE"
+    } >> "$PROFILE_FILE"
+    echo "  ✓ Added dc alias to $PROFILE_FILE"
+  fi
+
+  # bash: source the bash completion file (unchanged behavior).
+  COMPLETION_LINE="source '$ROOT_DIR/scripts/dc-complete.bash'"
+  if ! grep -Fq "$COMPLETION_LINE" "$PROFILE_FILE"; then
+    {
+      echo ""
+      echo "# dev-containers completion"
+      echo "$COMPLETION_LINE"
+    } >> "$PROFILE_FILE"
+    echo "  ✓ Added dc completion to $PROFILE_FILE"
+  else
+    echo "  ✓ dc completion already present in $PROFILE_FILE"
+  fi
 fi
 
 REPOS_DIR_EXPORT_LINE="export DC_REPOS_DIR=\"$REPOS_DIR_PROMPT\""
@@ -301,5 +404,5 @@ else
 fi
 echo ""
 echo "Next:"
-echo "  1. source $PROFILE_FILE"
+echo "  1. source $PROFILE_FILE   (or start a new $USER_SHELL shell)"
 echo "  2. dc new <name> [scope] [port:port]"
