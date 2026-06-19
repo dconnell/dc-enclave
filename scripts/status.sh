@@ -3,8 +3,9 @@
 # scripts/status.sh - `dc status`: detailed status across all dev containers.
 #
 # Shows backend/system info, all containers, then per-project detail (running
-# state, scopes, repos dir, hidden paths, token/SSH-key presence, ports). Each
-# project may use a different backend, so the backend is resolved per project.
+# state, image, scopes, repos dir, resource limits, hidden paths, token/SSH-key
+# presence, ports). Each project may use a different backend, so the backend is
+# resolved per project.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -80,8 +81,12 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
 
     echo "  [$project]  $is_running"
     echo "    Backend:      $resolved_backend"
+    echo "    Image:        ${CONTAINER_IMAGE:-(none)}"
     echo "    Scopes:       $scope_value"
     echo "    Repos dir:    ${REPOS_DIR:-unknown}"
+    if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
+      echo "    Resources:    ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
+    fi
     if declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1 && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
       echo "    Hidden paths: ${CONTAINER_HIDDEN_PATHS[*]}"
     fi

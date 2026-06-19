@@ -62,17 +62,32 @@ The day-to-day interface is the `dc` command with subcommands. All subcommands d
 | Command | Description |
 |---|---|
 | `dc new` (forms below) | Create a new isolated container project |
-| `dc status` | Show overall status and per-project details |
-| `dc start [name]` | Start one project or all configured projects |
-| `dc stop [name]` | Stop one project or all configured projects |
+| `dc status` (`dc s`) | Show overall status and per-project details |
+| `dc start [name ...]` | Start one or more projects, or all configured projects if none given |
+| `dc stop [name ...]` | Stop one or more projects, or all configured projects if none given |
+| `dc list` (`dc ls`) | List dev-containers and their running/stopped state |
 | `dc shell <name> [command]` | Open a shell or run one command inside a project container |
 | `dc rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]` | Destroy and recreate container from selected image |
 | `dc rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
 | `dc clean [--dry-run] [--hidden-volumes [name]]` | Remove old/orphan managed image tags or orphan managed hidden volumes |
 | `dc install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
-| `dc help` | Show usage information |
+| `dc version` (`dc --version`, `dc -v`) | Print the dev-containers version |
+| `dc help [command]` (`dc --help`, `dc -h`) | Show usage summary or detailed help for a specific command |
 
 `<scope>` values in `dc new` are overlay scopes that match `Containerfile.<scope>` files in your overlay directories. Scope is optional — `dc new <name>` creates a base-only project. The `all` scope is always auto-layered when `Containerfile.all` exists.
+
+### Command aliases
+
+Several commands have short aliases:
+
+| Command | Aliases |
+|---|---|
+| `dc status` | `dc s` |
+| `dc list` | `dc ls` |
+| `dc version` | `dc --version`, `dc -v` |
+| `dc help` | `dc --help`, `dc -h` |
+
+`dc start` and `dc stop` accept multiple project names (for example `dc start web api db`) — when no names are given they operate on every configured project.
 
 **`dc new` forms** — `<scope>` can be any scope name matching a `Containerfile.<scope>` in your overlays or a comma-separated combination:
 
@@ -223,6 +238,8 @@ Selected backend is stored per project in `~/.config/dev-containers/<name>/confi
 dev-containers/
 ├── Containerfiles/
 │   ├── Containerfile.base
+│   ├── ssh/
+│   │   └── github_known_hosts         # pinned, three-channel-verified GitHub SSH host keys
 │   ├── example/
 │   │   ├── Containerfile.nodejs        # overlay template example
 │   │   ├── Containerfile.golang        # overlay template example
@@ -232,11 +249,13 @@ dev-containers/
 ├── lib/
 │   ├── common.sh                       # bash 4+ version guard, shared helpers
 │   ├── platform.sh                     # OS detection, path helpers
-│   └── container-backend.sh            # backend abstraction
+│   ├── container-backend.sh            # backend abstraction
+│   └── vscode.sh                       # VS Code attach-config seeding
 ├── scripts/
 │   ├── dc                               # CLI entry point
 │   ├── dc-complete.bash                 # bash tab completion
 │   ├── setup.sh
+│   ├── help.sh                          # per-command help text (dc help <command>)
 │   ├── compose-containerfile.sh
 │   ├── new-container.sh
 │   ├── start.sh
@@ -600,7 +619,7 @@ Rebuild while preserving hidden volumes (skip dependency re-install):
 dc rebuild-container myapp-monorepo --keep-hidden-volumes
 ```
 
-For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. Combining `--rotate-keys` with `--keep-hidden-volumes` triggers a loud warning.
+For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. When the project has hidden paths configured, combining `--rotate-keys` with `--keep-hidden-volumes` triggers a loud warning (key rotation implies incident response, where preserving volumes may be unsafe).
 
 ## Rebuilding after Containerfile changes
 
@@ -765,7 +784,7 @@ podman machine start
 
 ## Smoke tests
 
-Run the lightweight command smoke suite (requires a configured backend and at least one sample project where applicable):
+Run the lightweight command smoke suite. Help, version, and security-guard checks always run; `dc list`, `dc status`, and `dc clean` checks run when a backend is reachable and are otherwise skipped:
 
 ```
 tests/smoke.sh

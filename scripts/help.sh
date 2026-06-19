@@ -27,15 +27,15 @@ _show_summary() {
   echo ""
   echo "Commands:"
   echo "  new <name> [scope[,scope...]] [host:container ...]"
-  echo "                                                    Create new project"
+  echo "                                                    Create a new isolated container project"
   echo "  new <name> [scope[,scope...]] [--repo-path <path>]"
   echo "       [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]"
   echo "                                                    With resource limits"
-  echo "  start [name]                                      Start project(s)"
-  echo "  stop [name]                                       Stop project(s)"
+  echo "  start [name ...]                                  Start one or more projects, or all"
+  echo "  stop [name ...]                                   Stop one or more projects, or all"
   echo "  list                                              List containers and status"
-  echo "  status                                            Show detailed status"
-  echo "  shell <name> [cmd]                                Open shell or run command"
+  echo "  status                                            Show overall status and per-project details"
+  echo "  shell <name> [command]                            Open shell or run command"
   echo "  rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]"
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
@@ -180,7 +180,7 @@ Usage: dc status
 Description:
   Shows detailed status of all configured dev containers, including:
   - Container name and running state
-  - Backend (Docker, Colima, OrbStack, Podman, apple/container)
+  - Backend (apple/container, Docker, OrbStack, Colima, Podman)
   - Image and overlay scopes
   - Resource limits (CPU/memory) if set
   - Port mappings
@@ -294,13 +294,14 @@ Options:
               you to add to GitHub. The command pauses for you to update
               GitHub before continuing.
 
-  --keep-hidden-volumes
+   --keep-hidden-volumes
               Preserve existing hidden volumes instead of removing them.
               By default, hidden volumes are removed during rebuild for a
               clean slate (dependency re-install, no stale caches).
-              WARNING: combining this with --rotate-keys will produce a
-              loud warning, since key rotation implies incident response
-              where preserving volumes may be unsafe.
+              WARNING: when the project has hidden paths configured,
+              combining this with --rotate-keys produces a loud warning,
+              since key rotation implies incident response where
+              preserving volumes may be unsafe.
 
 Examples:
   dc rebuild-container myapp
@@ -441,7 +442,7 @@ Examples:
   dc help install
   dc help rebuild-container
 
-  Notes:
+Notes:
   - Running 'dc' with no arguments also shows the summary.
 EOF
 }

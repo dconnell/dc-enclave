@@ -41,7 +41,11 @@ _dc_subcommands() {
     "clean" \
     "install" \
     "version" \
-    "help"
+    "--version" \
+    "-v" \
+    "help" \
+    "--help" \
+    "-h"
 }
 
 # Read DC_OVERLAYS_DIR from the global config WITHOUT sourcing/executing it.
