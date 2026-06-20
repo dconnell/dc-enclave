@@ -144,6 +144,14 @@ if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
   mapfile -t NETWORK_ARGS < <(dc_networks_create_args "${CONTAINER_NETWORKS[@]}")
 fi
 
+# Detect the host timezone once so the rebuilt container mirrors the developer's
+# local time, identical to `dc new` (keeps new/rebuild create-argv in parity).
+HOST_TZ="$(dc_host_timezone)" || HOST_TZ=""
+TZ_ARGS=()
+if [[ -n "$HOST_TZ" ]]; then
+  TZ_ARGS+=(--env "TZ=$HOST_TZ")
+fi
+
 echo "======================================================================"
 echo "Rebuilding container: $PROJECT"
 if $ROTATE_KEYS; then
@@ -169,6 +177,11 @@ if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
 fi
 if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
   echo "  Resources:  ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
+fi
+if [[ -n "$HOST_TZ" ]]; then
+  echo "  Timezone:   $HOST_TZ (synced from host via --env TZ)"
+else
+  echo "  Timezone:   (host zone undetectable - container stays on image default)"
 fi
 echo ""
 
@@ -286,7 +299,7 @@ if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
   RESOURCE_ARGS+=(--memory "$CONTAINER_MEMORY")
 fi
 
-backend_create "$PROJECT" "$CONTAINER_IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
+backend_create "$PROJECT" "$CONTAINER_IMAGE" "${TZ_ARGS[@]}" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
 echo "  ✓ Container created"
 
 # Re-attach every network beyond the primary so the rebuilt container lands on

@@ -277,11 +277,26 @@ if [[ "$IMAGE" != "dev-base:latest" ]]; then
   fi
 fi
 
+# Detect the host timezone once so the container mirrors the developer's local
+# time (per-developer at create time, never baked into the shared image). Empty
+# means no clean zone was found; we then omit --env TZ and leave the image
+# default untouched. The result feeds both the create flag and devcontainer.json.
+HOST_TZ="$(dc_host_timezone)" || HOST_TZ=""
+TZ_ARGS=()
+if [[ -n "$HOST_TZ" ]]; then
+  TZ_ARGS+=(--env "TZ=$HOST_TZ")
+fi
+
 echo "======================================================================"
 echo "Creating container: $PROJECT"
 echo "Overlay scope(s): ${SCOPE_CSV:-(none)} | Image: $IMAGE | Backend: $ACTIVE_BACKEND"
 if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
   echo "Resources: ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
+fi
+if [[ -n "$HOST_TZ" ]]; then
+  echo "Timezone: $HOST_TZ (synced from host via --env TZ)"
+else
+  echo "Timezone: (host zone undetectable - container stays on image default)"
 fi
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   echo "Hidden paths: ${CONTAINER_HIDDEN_PATHS[*]}"
@@ -417,7 +432,7 @@ done
 
 echo ""
 echo "==> Creating container from image: $IMAGE"
-backend_create "$PROJECT" "$IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
+backend_create "$PROJECT" "$IMAGE" "${TZ_ARGS[@]}" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
 
 # Attach any networks beyond the primary (Docker-compatible backends). On apple
 # the limits check already restricted membership to a single primary network.
@@ -529,6 +544,14 @@ if $DOCKER_COMPATIBLE; then
       RUNARGS_BLOCK+="]"
     fi
 
+    # containerEnv carries the detected host TZ so a VS Code "Reopen in
+    # Container" build lands on the same timezone as the dc-created container.
+    # HOST_TZ is charset-validated (no quotes/backslashes), so it is JSON-safe.
+    CONTAINERENV_BLOCK=""
+    if [[ -n "$HOST_TZ" ]]; then
+      CONTAINERENV_BLOCK=$',\n  "containerEnv": {\n    "TZ": "'"$HOST_TZ"$'"\n  }'
+    fi
+
     cat > "$DEVCONTAINER_FILE" <<EOF
 {
   "name": "dev-$PROJECT",
@@ -539,7 +562,7 @@ if $DOCKER_COMPATIBLE; then
   "workspaceMount": "source=\${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
   "remoteUser": "dev",
-  "postCreateCommand": "true"$FORWARD_PORTS_BLOCK$MOUNTS_BLOCK$RUNARGS_BLOCK
+  "postCreateCommand": "true"$FORWARD_PORTS_BLOCK$MOUNTS_BLOCK$RUNARGS_BLOCK$CONTAINERENV_BLOCK
 }
 EOF
 

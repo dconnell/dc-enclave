@@ -97,9 +97,11 @@ stub_path() { export PATH="$STUB_DIR:$ORIG_PATH"; }
 # Pin DC_REPOS_DIR so an ambient value in the caller's env cannot redirect the
 # host workspace out of the fake HOME (the script falls back to $HOME/repos
 # only when DC_REPOS_DIR is unset, which we cannot guarantee across shells).
+# TZ is pinned so host-timezone detection is deterministic (see --env TZ).
 run_script() {
   HOME="$WORK/home" \
   DC_REPOS_DIR="$WORK/home/repos" \
+  TZ="America/New_York" \
   DC_STUB_LOG="$LOG" DC_STUB_IMAGES="$IMAGES" \
   PATH="$STUB_DIR:$ORIG_PATH" \
   CONTAINER_BACKEND="$BACKEND" \
@@ -196,12 +198,25 @@ first_cpu="$(grep -bo -- '--cpus' <<<"$NEW_CREATE" | head -1 | cut -d: -f1)"
 [[ "$last_vol" -lt "$first_pub" ]] || fail "create: volume group must precede publish group"
 [[ "$first_pub" -lt "$first_cpu" ]] || fail "create: publish group must precede resource group"
 
+# --- host timezone synced via --env TZ (precedes every other flag group) ----
+grep -Fq -- "--env TZ=America/New_York" <<<"$NEW_CREATE" \
+  || fail "create: --env TZ=<host zone> missing
+$NEW_CREATE"
+first_tz="$(grep -bo -- '--env TZ=' <<<"$NEW_CREATE" | head -1 | cut -d: -f1)"
+first_vol2="$(grep -bo -- '--volume' <<<"$NEW_CREATE" | head -1 | cut -d: -f1)"
+[[ "$first_tz" -lt "$first_vol2" ]] \
+  || fail "create: --env TZ must precede the volume group (env is fundamental)"
+
 # --- devcontainer.json (docker-compatible branch) ------------------------
 dc_json="$REPOS_DIR/.devcontainer/devcontainer.json"
 [[ -f "$dc_json" ]] || fail "devcontainer.json missing"
 grep -Fq '"workspaceFolder": "/workspace"' "$dc_json" || fail "devcontainer.json: workspaceFolder"
 grep -Fq '"remoteUser": "dev"' "$dc_json" || fail "devcontainer.json: remoteUser"
 grep -Fq "source=$hidden_vol" "$dc_json" || fail "devcontainer.json: hidden volume mount entry"
+# The VS Code "Reopen in Container" recipe must carry the same TZ so a rebuild
+# from VS Code matches a dc-created container.
+grep -Fq '"containerEnv"' "$dc_json" || fail "devcontainer.json: containerEnv block missing"
+grep -Fq '"TZ": "America/New_York"' "$dc_json" || fail "devcontainer.json: TZ not set in containerEnv"
 
 pass "dc new (docker): config, secrets, layer order, create argv, devcontainer.json"
 
@@ -350,6 +365,11 @@ grep -Fq "scripts/shell.sh $APROJ" "$vs_settings" \
 # apple branch must NOT write a Dev Containers devcontainer.json.
 [[ ! -f "$WORK/home/repos/$APROJ/.devcontainer/devcontainer.json" ]] \
   || fail "apple: must not write devcontainer.json"
+# apple/container also receives the host TZ via --env (backend-agnostic).
+APPLE_CREATE="$(grep -E 'create --name appleproj' "$LOG" | head -n1)"
+grep -Fq -- "--env TZ=America/New_York" <<<"$APPLE_CREATE" \
+  || fail "apple create: --env TZ missing
+$APPLE_CREATE"
 
 pass "dc new (apple): VS Code terminal-profile settings.json branch"
 
