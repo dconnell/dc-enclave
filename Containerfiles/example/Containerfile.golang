@@ -2,18 +2,28 @@ FROM dev-base:latest
 
 USER root
 
-# Install Go (arm64 for Apple Silicon).
-# GO_SHA256_ARM64 pins the checksum for go${GO_VERSION}.linux-arm64.tar.gz and
-# is verified before extraction; a mismatch fails the build fast. When bumping
-# GO_VERSION, update GO_SHA256_ARM64 to the matching published checksum.
+# Install Go from the official tarball, verifying a pinned SHA256 before
+# extraction (no `curl|bash`; a checksum mismatch fails the build fast).
+# Multi-arch: TARGETARCH is injected by BuildKit (arm64/amd64) and falls back to
+# the host arch. When bumping GO_VERSION, update BOTH checksums to the matching
+# published values from https://go.dev/dl/ or the build fails fast.
+ARG TARGETARCH
 ARG GO_VERSION=1.22.5
 ARG GO_SHA256_ARM64=8d21325bfcf431be3660527c1a39d3d9ad71535fabdf5041c826e44e31642b5a
-RUN wget -q "https://go.dev/dl/go${GO_VERSION}.linux-arm64.tar.gz" && \
-    echo "${GO_SHA256_ARM64}  go${GO_VERSION}.linux-arm64.tar.gz" | sha256sum -c - && \
-    tar -C /usr/local -xzf "go${GO_VERSION}.linux-arm64.tar.gz" && \
-    rm "go${GO_VERSION}.linux-arm64.tar.gz"
+ARG GO_SHA256_AMD64=904b924d435eaea086515bc63235b192ea441bd8c9b198c507e85009e6e4c7f0
+RUN set -eu; \
+    arch="${TARGETARCH:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"; \
+    case "$arch" in \
+      arm64|aarch64) goarch=arm64; sha="$GO_SHA256_ARM64";; \
+      amd64|x86_64)  goarch=amd64; sha="$GO_SHA256_AMD64";; \
+      *) echo "unsupported arch: $arch" >&2; exit 1;; \
+    esac; \
+    wget -q "https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz" && \
+    echo "${sha}  go${GO_VERSION}.linux-${goarch}.tar.gz" | sha256sum -c - && \
+    tar -C /usr/local -xzf "go${GO_VERSION}.linux-${goarch}.tar.gz" && \
+    rm "go${GO_VERSION}.linux-${goarch}.tar.gz"
 
-# Install additional build tools
+# Additional build tools (cgo, go vet tool dependencies, etc.)
 RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
@@ -25,6 +35,12 @@ ENV GOPATH="/home/dev/go"
 ENV GOBIN="/home/dev/go/bin"
 ENV PATH="$PATH:/home/dev/go/bin"
 
+# Redirect the Go module + build caches under /workspace so `dc --hide` (which is
+# /workspace-relative) can cover them. Operators then hide:
+#   dc new <project> golang --hide .cache/go/mod,.cache/go/build [ports...]
+ENV GOMODCACHE="/workspace/.cache/go/mod"
+ENV GOCACHE="/workspace/.cache/go/build"
+
 RUN mkdir -p "$GOPATH"
 
 # Verify
@@ -32,4 +48,76 @@ RUN go version
 
 WORKDIR /workspace
 
-CMD ["sleep", "infinity"]
+# This overlay supports the dc hidden-volume feature and installs a
+# dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
+# scripts/compose-containerfile.sh). To use it:
+#
+#   dc new <project> golang --hide .cache/go/mod,.cache/go/build [ports...]
+#
+# The sync hook:
+# - skips install when go.mod is absent,
+# - runs `go mod download` (modules verified against go.sum + sum.golang.org),
+# - hashes go.mod/go.sum + Go version to avoid unnecessary re-downloads,
+# - fails soft by default; set DC_GO_INSTALL_STRICT=1 to make errors fatal.
+# `go mod download` does not execute fetched module code, so unlike npm/uv there
+# is no lifecycle-script risk at install time.
+
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-go-entrypoint.sh <<'ENTRYPOINT_EOF'
+#!/bin/sh
+set -eu
+
+APP_DIR="${APP_DIR:-/workspace}"
+STRICT="${DC_GO_INSTALL_STRICT:-0}"
+GOMODCACHE_DIR="${GOMODCACHE:-/workspace/.cache/go/mod}"
+HASH_FILE="$GOMODCACHE_DIR/.dc-install-hash"
+
+log() { printf '%s\n' "[go-hide] $*"; }
+
+compute_hash() {
+  {
+    printf 'go=%s\n' "$(go version 2>/dev/null || printf unknown)"
+    for f in go.mod go.sum; do
+      if [ -f "$APP_DIR/$f" ]; then
+        printf 'file=%s sha256=%s\n' "$f" "$(sha256sum "$APP_DIR/$f" | cut -d' ' -f1)"
+      else
+        printf 'file=%s missing\n' "$f"
+      fi
+    done
+  } | sha256sum | cut -d' ' -f1
+}
+
+if [ ! -f "$APP_DIR/go.mod" ]; then
+  log "no go.mod at $APP_DIR; skipping dependency sync"
+  exit 0
+fi
+
+current_hash="$(compute_hash)"
+saved_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
+
+if [ "$saved_hash" != "$current_hash" ]; then
+  if ! mkdir -p "$GOMODCACHE_DIR" 2>/dev/null; then
+    log "warning: cannot write $GOMODCACHE_DIR yet; skipping sync for this start"
+    exit 0
+  fi
+
+  # go mod download verifies module checksums (go.sum + sum.golang.org) and does
+  # not perform script execution -- it never runs fetched module code.
+  log "note: go mod download verifies checksums; no script execution of fetched modules"
+  log "running: go mod download"
+  if ( cd "$APP_DIR" && go mod download ); then
+    current_hash="$(compute_hash)"
+    printf '%s' "$current_hash" > "$HASH_FILE"
+    log "dependency sync complete"
+  else
+    if [ "$STRICT" = "1" ]; then
+      log "error: dependency sync failed (strict mode)"
+      exit 1
+    fi
+    log "warning: dependency sync failed; container remains running"
+  fi
+fi
+
+exit 0
+ENTRYPOINT_EOF
+
+RUN chmod +x /home/dev/.local/bin/dc-go-entrypoint.sh

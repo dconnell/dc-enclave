@@ -248,6 +248,9 @@ dev-containers/
 │   ├── example/
 │   │   ├── Containerfile.nodejs        # overlay template example
 │   │   ├── Containerfile.golang        # overlay template example
+│   │   ├── Containerfile.rust          # overlay template example
+│   │   ├── Containerfile.dotnet        # overlay template example
+│   │   ├── Containerfile.python        # overlay template example
 │   │   ├── Containerfile.all           # overlay template example
 │   │   └── README.md
 │   └── generated/                      # auto-generated composed files (project overlays)
@@ -547,14 +550,29 @@ dc new monorepo nodejs,golang \
 
 ### Overlay integration
 
-Scope-specific overlays can build on hidden volumes. For example, the Node.js overlay (`Containerfile.nodejs`) includes an entrypoint that:
+Scope-specific overlays can build on hidden volumes. The Node.js overlay
+(`Containerfile.nodejs`) includes an entrypoint that:
 
 - detects a hidden `node_modules` volume
 - runs `npm ci` (if a lockfile exists) or `npm install` automatically on container start
 - writes a hash sentinel so deps are only re-installed when `package.json` or `package-lock.json` changes
 - fails soft by default; set `DC_NODE_INSTALL_STRICT=1` to make install errors fatal
 
+The `golang`, `rust`, `dotnet`, and `python` example overlays follow the same
+shape with their own package manager (`go mod download`, `cargo fetch`,
+`dotnet restore`, `uv sync`) and a matching `DC_<LANG>_INSTALL_STRICT=1` env.
+See `Containerfiles/example/README.md` for each overlay's `--hide` paths and
+sync command.
+
 This means you get fast, correct dependency sync without any `node_modules` files touching your host.
+
+> **Install-on-start can run code (security).** For `nodejs` and `python`, the
+> sync step can execute lifecycle/build scripts (`npm` hooks; uv/PEP 517 source
+> builds) — so an untrusted dependency can run code at container start. The
+> `golang`/`rust`/`dotnet` sync steps only download and do not run fetched code.
+> For untrusted inputs, disable install-time code with `DC_NODE_IGNORE_SCRIPTS=1`
+> or `DC_PYTHON_IGNORE_SCRIPTS=1`. See the *Trusted vs untrusted overlays*
+> section in `Containerfiles/example/README.md`.
 
 ### Cleaning up hidden volumes
 

@@ -1,0 +1,139 @@
+FROM dev-base:latest
+
+USER root
+
+# Python 3.12 from the Ubuntu 24.04 signed archive, plus headers and a compiler
+# so C-extension source builds work when a wheel is unavailable.
+RUN apt-get update && apt-get install -y \
+        python3 \
+        python3-venv \
+        python3-dev \
+        python3-pip \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+USER dev
+
+ENV PATH="/home/dev/.local/bin:$PATH"
+
+# Install uv from a pinned GitHub release tarball, verifying its SHA256 before
+# extraction (not the uv `curl|sh` installer). Multi-arch: TARGETARCH is injected
+# by BuildKit and falls back to the host arch. When bumping UV_VERSION, update
+# BOTH checksums from the matching *.sha256 assets on the release page:
+#   https://github.com/astral-sh/uv/releases/download/<ver>/uv-<triple>.tar.gz.sha256
+ARG TARGETARCH
+ARG UV_VERSION=0.11.23
+ARG UV_SHA256_ARM64=1873a77350f6621279ae1a0d2227f2bd8b67131598f14a7eb0ba2215d3da2c98
+ARG UV_SHA256_AMD64=e12c4cda2fe8c305510a78380a88f2c32a27e90cdcd123cefd2873388f0ebb5f
+RUN set -eu; \
+    arch="${TARGETARCH:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"; \
+    case "$arch" in \
+      arm64|aarch64) triple=aarch64-unknown-linux-gnu; sha="$UV_SHA256_ARM64";; \
+      amd64|x86_64)  triple=x86_64-unknown-linux-gnu; sha="$UV_SHA256_AMD64";; \
+      *) echo "unsupported arch: $arch" >&2; exit 1;; \
+    esac; \
+    mkdir -p /home/dev/.local/bin && \
+    wget -q -O /tmp/uv.tar.gz "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${triple}.tar.gz" && \
+    echo "${sha}  /tmp/uv.tar.gz" | sha256sum -c - && \
+    tar -C /tmp -xzf /tmp/uv.tar.gz && \
+    install -m 0755 "/tmp/uv-${triple}/uv" /home/dev/.local/bin/uv && \
+    rm -rf /tmp/uv.tar.gz "/tmp/uv-${triple}"
+
+# uv's project venv defaults to ./.venv (/workspace-relative, hideable). Point
+# its download cache under /workspace too so both can be hidden:
+#   dc new <project> python --hide .venv,.cache/uv [ports...]
+ENV UV_CACHE_DIR="/workspace/.cache/uv"
+# Prefer the apt-installed interpreter rather than uv downloading its own.
+ENV UV_PYTHON="python3"
+
+# Verify
+RUN uv --version
+
+WORKDIR /workspace
+
+# This overlay supports the dc hidden-volume feature and installs a
+# dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
+# scripts/compose-containerfile.sh). To use it:
+#
+#   dc new <project> python --hide .venv,.cache/uv [ports...]
+#
+# The sync hook:
+# - skips install when pyproject.toml is absent,
+# - runs `uv sync --frozen` (uv.lock present) or `uv sync`,
+# - hashes pyproject.toml/uv.lock + uv version to avoid unnecessary reinstalls,
+# - fails soft by default; set DC_PYTHON_INSTALL_STRICT=1 to make errors fatal.
+#
+# Script execution: installing wheels does not run code, but
+# uv will build source distributions via PEP 517 backends (setup.py) when no
+# wheel is available -- the same class of risk as npm lifecycle scripts. Set
+# DC_PYTHON_IGNORE_SCRIPTS=1 to pass `--no-build` (wheel-only; packages without a
+# matching wheel will fail instead of executing build code).
+
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-python-entrypoint.sh <<'ENTRYPOINT_EOF'
+#!/bin/sh
+set -eu
+
+APP_DIR="${APP_DIR:-/workspace}"
+STRICT="${DC_PYTHON_INSTALL_STRICT:-0}"
+IGNORE_SCRIPTS="${DC_PYTHON_IGNORE_SCRIPTS:-0}"
+VENV="${APP_DIR}/.venv"
+HASH_FILE="$VENV/.dc-install-hash"
+
+log() { printf '%s\n' "[python-hide] $*"; }
+
+compute_hash() {
+  {
+    printf 'uv=%s\n' "$(uv --version 2>/dev/null || printf unknown)"
+    for f in pyproject.toml uv.lock; do
+      if [ -f "$APP_DIR/$f" ]; then
+        printf 'file=%s sha256=%s\n' "$f" "$(sha256sum "$APP_DIR/$f" | cut -d' ' -f1)"
+      else
+        printf 'file=%s missing\n' "$f"
+      fi
+    done
+  } | sha256sum | cut -d' ' -f1
+}
+
+if [ ! -f "$APP_DIR/pyproject.toml" ]; then
+  log "no pyproject.toml at $APP_DIR; skipping dependency sync"
+  exit 0
+fi
+
+current_hash="$(compute_hash)"
+saved_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
+
+if [ "$saved_hash" != "$current_hash" ] || [ ! -d "$VENV" ]; then
+  # Wheels install without running code, but source distributions build via
+  # PEP 517 hooks (setup.py), which can execute arbitrary code. Warn, and offer
+  # the wheel-only safe mode.
+  if [ "$IGNORE_SCRIPTS" = "1" ]; then
+    log "safe mode: source builds disabled (DC_PYTHON_IGNORE_SCRIPTS=1); wheel-only, no script execution"
+  else
+    log "note: dependency install may build source distributions; set DC_PYTHON_IGNORE_SCRIPTS=1 to skip script execution"
+  fi
+
+  if [ -f "$APP_DIR/uv.lock" ]; then
+    sync_cmd="uv sync --frozen"
+  else
+    sync_cmd="uv sync"
+  fi
+  [ "$IGNORE_SCRIPTS" = "1" ] && sync_cmd="$sync_cmd --no-build"
+
+  log "running: $sync_cmd"
+  if ( cd "$APP_DIR" && $sync_cmd ); then
+    current_hash="$(compute_hash)"
+    printf '%s' "$current_hash" > "$HASH_FILE"
+    log "dependency sync complete"
+  else
+    if [ "$STRICT" = "1" ]; then
+      log "error: dependency sync failed (strict mode)"
+      exit 1
+    fi
+    log "warning: dependency sync failed; container remains running"
+  fi
+fi
+
+exit 0
+ENTRYPOINT_EOF
+
+RUN chmod +x /home/dev/.local/bin/dc-python-entrypoint.sh

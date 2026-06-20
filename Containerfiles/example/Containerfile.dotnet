@@ -1,0 +1,131 @@
+FROM dev-base:latest
+
+USER root
+
+# Install the .NET 8 SDK from the Ubuntu 24.04 archive (the `main` component,
+# signed) rather than Microsoft's dotnet-install.sh (`curl|sh`). Canonical and
+# Microsoft ship .NET in the Ubuntu archive for 24.04, so this is both the
+# signed-repo path and the simplest. apt resolves arm64/amd64 automatically.
+# If you need a newer SDK than the archive carries, pin a downloaded Microsoft
+# tarball with a verified checksum in your own overlay.
+RUN apt-get update && apt-get install -y \
+        dotnet-sdk-8.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+USER dev
+
+# Sensible dev-container defaults: opt out of first-run telemetry/notice and skip
+# the per-user ASP.NET dev cert prompt.
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
+ENV DOTNET_NOLOGO=true
+ENV DOTNET_GENERATE_ASPNET_CERTIFICATE=0
+
+# dotnet global tools live here.
+ENV PATH="/home/dev/.dotnet/tools:$PATH"
+
+# Redirect the NuGet global packages cache under /workspace so `dc --hide` (which
+# is /workspace-relative) can cover it. This is the node_modules-equivalent for
+# .NET: large, shareable, and worth keeping off the host bind mount. Operators
+# then hide:
+#   dc new <project> dotnet --hide .nuget [ports...]
+ENV NUGET_PACKAGES="/workspace/.nuget/packages"
+
+# Verify
+RUN dotnet --version
+
+WORKDIR /workspace
+
+# This overlay supports the dc hidden-volume feature and installs a
+# dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
+# scripts/compose-containerfile.sh). To use it:
+#
+#   dc new <project> dotnet --hide .nuget [ports...]
+#
+# The sync hook:
+# - skips install when no project/solution file is found,
+# - runs `dotnet restore --locked-mode` (when a packages.lock.json is present)
+#   or `dotnet restore`,
+# - hashes project/solution + lock files + SDK version to avoid unnecessary
+#   restores,
+# - fails soft by default; set DC_DOTNET_INSTALL_STRICT=1 to make errors fatal.
+# `dotnet restore` does not execute NuGet package code, so unlike npm/uv there
+# is no lifecycle-script risk at install time. Note: NuGet
+# has no lockfile by default; `--locked-mode` requires you to opt into
+# packages.lock.json (set RestorePackagesWithLockFile=true in your project).
+
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-dotnet-entrypoint.sh <<'ENTRYPOINT_EOF'
+#!/bin/sh
+set -eu
+
+APP_DIR="${APP_DIR:-/workspace}"
+STRICT="${DC_DOTNET_INSTALL_STRICT:-0}"
+NUGET_CACHE="${NUGET_PACKAGES:-/workspace/.nuget/packages}"
+HASH_FILE="$NUGET_CACHE/.dc-install-hash"
+
+log() { printf '%s\n' "[dotnet-hide] $*"; }
+
+# Any .NET project/solution manifest within a shallow tree.
+has_project() {
+  find "$APP_DIR" -maxdepth 3 \( \
+      -name '*.sln' -o -name '*.csproj' -o -name '*.fsproj' \
+      -o -name '*.vbproj' -o -name 'packages.config' \) -print 2>/dev/null \
+    | grep -q .
+}
+
+has_lockfile() {
+  find "$APP_DIR" -maxdepth 3 -name 'packages.lock.json' -print 2>/dev/null | grep -q .
+}
+
+compute_hash() {
+  {
+    printf 'dotnet=%s\n' "$(dotnet --version 2>/dev/null || printf unknown)"
+    # Content-address project/solution + lock files. -exec ... {} + runs once
+    # per batch (and not at all if nothing matches, so there is no stdin hang).
+    find "$APP_DIR" -maxdepth 3 \( \
+        -name '*.sln' -o -name '*.csproj' -o -name '*.fsproj' \
+        -o -name '*.vbproj' -o -name 'packages.lock.json' \) \
+      -exec sha256sum {} + 2>/dev/null | sort
+  } | sha256sum | cut -d' ' -f1
+}
+
+if ! has_project; then
+  log "no .NET project/solution at $APP_DIR; skipping dependency sync"
+  exit 0
+fi
+
+current_hash="$(compute_hash)"
+saved_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
+
+if [ "$saved_hash" != "$current_hash" ]; then
+  if ! mkdir -p "$NUGET_CACHE" 2>/dev/null; then
+    log "warning: cannot write $NUGET_CACHE yet; skipping sync for this start"
+    exit 0
+  fi
+
+  if has_lockfile; then
+    restore_cmd="dotnet restore --locked-mode"
+  else
+    restore_cmd="dotnet restore"
+  fi
+
+  # dotnet restore downloads and resolves packages but does not execute their
+  # code, so there is no script execution risk at install time.
+  log "note: dotnet restore resolves packages only; no script execution at install time"
+  log "running: $restore_cmd"
+  if ( cd "$APP_DIR" && $restore_cmd ); then
+    current_hash="$(compute_hash)"
+    printf '%s' "$current_hash" > "$HASH_FILE"
+    log "dependency sync complete"
+  else
+    if [ "$STRICT" = "1" ]; then
+      log "error: dependency sync failed (strict mode)"
+      exit 1
+    fi
+    log "warning: dependency sync failed; container remains running"
+  fi
+fi
+
+exit 0
+ENTRYPOINT_EOF
+
+RUN chmod +x /home/dev/.local/bin/dc-dotnet-entrypoint.sh

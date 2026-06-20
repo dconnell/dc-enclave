@@ -4,9 +4,10 @@
 # one generated Containerfile for a derived (dev-img-<hash>) image.
 #
 # This implements the layering contract: team/all, user/all, then team/<scope>,
-# user/<scope> for each requested scope, in that fixed order. FROM and CMD from
-# overlay fragments are stripped (we own the base image and the final CMD);
-# COPY/ADD are rejected (overlays must not couple to an external build context).
+# user/<scope> for each requested scope, in that fixed order. FROM, CMD, and
+# ENTRYPOINT from overlay fragments are stripped (the composed file owns the
+# base image, the final CMD, and a single chained ENTRYPOINT); COPY/ADD are
+# rejected (overlays must not couple to an external build context).
 # =============================================================================
 set -euo pipefail
 
@@ -67,7 +68,10 @@ OUTPUT_DIR="$(cd -P "$OUTPUT_DIR" && pwd)"
 OUTPUT_FILE="$OUTPUT_DIR/$(basename "$OUTPUT_FILE")"
 
 # Emit one overlay fragment into the composed file with begin/end markers.
-# Strips a leading FROM (we always build FROM dev-base) and any CMD lines.
+# Strips a leading FROM (we always build FROM dev-base) plus any CMD and
+# ENTRYPOINT lines: the composed file owns one CMD and one chained ENTRYPOINT,
+# so per-fragment ENTRYPOINTs would otherwise collide -- Docker keeps only the
+# last in a stage, silently dropping the other ecosystems' sync hooks.
 emit_fragment() {
   local fragment_file="$1"
   local label="$2"
@@ -77,6 +81,7 @@ emit_fragment() {
   awk '
     NR == 1 && toupper($1) == "FROM" { next }
     toupper($1) == "CMD" { next }
+    toupper($1) == "ENTRYPOINT" { next }
     { print }
   ' "$fragment_file"
   echo "# --- end $label ---"
@@ -138,7 +143,8 @@ else
 fi
 
 # Emit the composed file: always FROM dev-base:latest, each overlay fragment in
-# layered order, then force USER dev and a long-running CMD.
+# layered order, then force USER dev, a single chained ENTRYPOINT that runs
+# every installed per-language sync hook, and a long-running CMD.
 {
   echo "FROM dev-base:latest"
   echo ""
@@ -150,6 +156,27 @@ fi
 
   echo ""
   echo "USER dev"
+  # One ENTRYPOINT owned by the composed image: run every dc-*-entrypoint.sh
+  # hook the overlays installed, then exec CMD. With no overlays the glob is
+  # empty and it simply execs CMD. A hook exiting non-zero (e.g. a
+  # DC_*_INSTALL_STRICT=1 failure) aborts startup via set -e so the container
+  # does not run with broken dependencies. Quoted heredoc so the inner heredoc
+  # and shell variables reach the image verbatim.
+  cat <<'RUNNER_EOF'
+RUN mkdir -p /home/dev/.local/bin
+RUN cat > /home/dev/.local/bin/dc-entrypoint <<'DC_ENTRYPOINT_EOF'
+#!/bin/sh
+set -eu
+# Chain every installed per-language dependency-sync hook, then run CMD.
+for ep in /home/dev/.local/bin/dc-*-entrypoint.sh; do
+  [ -x "$ep" ] || continue
+  "$ep"
+done
+exec "$@"
+DC_ENTRYPOINT_EOF
+RUN chmod +x /home/dev/.local/bin/dc-entrypoint
+ENTRYPOINT ["/home/dev/.local/bin/dc-entrypoint"]
+RUNNER_EOF
   echo 'CMD ["sleep", "infinity"]'
 } > "$OUTPUT_FILE"
 

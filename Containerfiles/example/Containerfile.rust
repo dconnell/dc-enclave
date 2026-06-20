@@ -1,0 +1,139 @@
+FROM dev-base:latest
+
+USER root
+
+# Linker/CC for native crates (rustc needs a system linker). apt from the signed
+# Ubuntu archive; no remote fetch.
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+USER dev
+
+# Install Rust via a pinned rustup-init binary (not the `curl|sh` installer),
+# verifying its SHA256 before execution; a mismatch fails the build fast.
+# rustup then downloads the default toolchain from signed rust-lang
+# infrastructure and verifies it against the published manifest itself.
+# Multi-arch: TARGETARCH is injected by BuildKit and falls back to the host
+# arch. When bumping RUSTUP_VERSION, update BOTH checksums from the matching
+# files at https://static.rust-lang.org/rustup/archive/<ver>/<triple>/rustup-init.sha256
+ARG TARGETARCH
+ARG RUSTUP_VERSION=1.29.0
+ARG RUST_VERSION=1.96.0
+ARG RUSTUP_SHA256_ARM64=9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792
+ARG RUSTUP_SHA256_AMD64=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
+RUN set -eu; \
+    arch="${TARGETARCH:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"; \
+    case "$arch" in \
+      arm64|aarch64) triple=aarch64-unknown-linux-gnu; sha="$RUSTUP_SHA256_ARM64";; \
+      amd64|x86_64)  triple=x86_64-unknown-linux-gnu; sha="$RUSTUP_SHA256_AMD64";; \
+      *) echo "unsupported arch: $arch" >&2; exit 1;; \
+    esac; \
+    wget -q -O /tmp/rustup-init "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${triple}/rustup-init" && \
+    echo "${sha}  /tmp/rustup-init" | sha256sum -c - && \
+    chmod +x /tmp/rustup-init && \
+    /tmp/rustup-init -y --profile minimal --default-toolchain "${RUST_VERSION}" --no-modify-path && \
+    rm /tmp/rustup-init
+
+# CARGO_HOME / RUSTUP_HOME stay in the container home (NOT redirected under
+# /workspace): the cargo/rustc binaries are installed here at build time and
+# must remain visible at runtime, whereas /workspace is a host bind mount that
+# shadows image-layer contents. The dependency registry ($CARGO_HOME/registry)
+# therefore lives in the container too -- it never touches the host, so it needs
+# no hiding for host cleanliness. The one /workspace-relative generated path
+# worth hiding is the project `target/` dir (see --hide note below).
+ENV CARGO_HOME="/home/dev/.cargo"
+ENV RUSTUP_HOME="/home/dev/.rustup"
+ENV PATH="/home/dev/.cargo/bin:$PATH"
+
+# Verify
+RUN cargo --version && rustc --version
+
+WORKDIR /workspace
+
+# This overlay supports the dc hidden-volume feature and installs a
+# dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
+# scripts/compose-containerfile.sh). To use it:
+#
+#   dc new <project> rust --hide target [ports...]
+#
+# `target/` is the node_modules-equivalent for Rust: large, native, and lives on
+# the /workspace bind mount, so hiding it restores native filesystem speed and
+# keeps build artifacts off the host. The cargo registry cache
+# ($CARGO_HOME/registry) already lives inside the container and is not on the
+# host bind mount.
+#
+# The sync hook:
+# - skips install when Cargo.toml is absent,
+# - runs `cargo fetch --locked` (Cargo.lock present) or `cargo fetch`,
+# - hashes Cargo.toml/Cargo.lock + cargo version to avoid unnecessary refetches,
+# - fails soft by default; set DC_RUST_INSTALL_STRICT=1 to make errors fatal.
+# `cargo fetch` downloads crates but does not build them, so unlike npm/uv there
+# is no lifecycle-script risk at install time.
+
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-rust-entrypoint.sh <<'ENTRYPOINT_EOF'
+#!/bin/sh
+set -eu
+
+APP_DIR="${APP_DIR:-/workspace}"
+STRICT="${DC_RUST_INSTALL_STRICT:-0}"
+CARGO_REGISTRY="${CARGO_HOME:-/home/dev/.cargo}/registry"
+HASH_FILE="$CARGO_REGISTRY/.dc-install-hash"
+
+log() { printf '%s\n' "[rust-hide] $*"; }
+
+compute_hash() {
+  {
+    printf 'cargo=%s\n' "$(cargo --version 2>/dev/null || printf unknown)"
+    for f in Cargo.toml Cargo.lock; do
+      if [ -f "$APP_DIR/$f" ]; then
+        printf 'file=%s sha256=%s\n' "$f" "$(sha256sum "$APP_DIR/$f" | cut -d' ' -f1)"
+      else
+        printf 'file=%s missing\n' "$f"
+      fi
+    done
+  } | sha256sum | cut -d' ' -f1
+}
+
+if [ ! -f "$APP_DIR/Cargo.toml" ]; then
+  log "no Cargo.toml at $APP_DIR; skipping dependency sync"
+  exit 0
+fi
+
+current_hash="$(compute_hash)"
+saved_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
+
+if [ "$saved_hash" != "$current_hash" ]; then
+  if ! mkdir -p "$CARGO_REGISTRY" 2>/dev/null; then
+    log "warning: cannot write $CARGO_REGISTRY yet; skipping sync for this start"
+    exit 0
+  fi
+
+  if [ -f "$APP_DIR/Cargo.lock" ]; then
+    fetch_cmd="cargo fetch --locked"
+  else
+    fetch_cmd="cargo fetch"
+  fi
+
+  # cargo fetch resolves and downloads crates but does not compile them, so it
+  # does not perform script execution (build.rs runs only during cargo build).
+  log "note: cargo fetch downloads crates only; no script execution at install time"
+  log "running: $fetch_cmd"
+  if ( cd "$APP_DIR" && $fetch_cmd ); then
+    current_hash="$(compute_hash)"
+    printf '%s' "$current_hash" > "$HASH_FILE"
+    log "dependency sync complete"
+  else
+    if [ "$STRICT" = "1" ]; then
+      log "error: dependency sync failed (strict mode)"
+      exit 1
+    fi
+    log "warning: dependency sync failed; container remains running"
+  fi
+fi
+
+exit 0
+ENTRYPOINT_EOF
+
+RUN chmod +x /home/dev/.local/bin/dc-rust-entrypoint.sh

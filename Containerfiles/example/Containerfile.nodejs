@@ -32,12 +32,15 @@ WORKDIR /workspace
 #   --volume dc-hide-<project>-<hash>:/workspace/node_modules
 #
 # This keeps node_modules off the host bind mount for native-filesystem speed
-# and platform-correct binaries.  This overlay ships a dependency-sync
-# entrypoint that:
+# and platform-correct binaries.  This overlay installs a dependency-sync hook
+# (chained by the composed image's single ENTRYPOINT; see
+# scripts/compose-containerfile.sh) that:
 # - skips install when package.json is absent,
 # - uses npm ci when lockfile exists, otherwise npm install,
 # - hashes package files + Node version to avoid unnecessary reinstalls,
-# - fails soft by default, with strict mode opt-in.
+# - fails soft by default, with strict mode opt-in (`DC_NODE_INSTALL_STRICT=1`),
+# - warns that install may run npm lifecycle scripts; set
+#   `DC_NODE_IGNORE_SCRIPTS=1` to install with `--ignore-scripts`.
 
 RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-node-entrypoint.sh <<'ENTRYPOINT_EOF'
 #!/bin/sh
@@ -45,6 +48,7 @@ set -eu
 
 APP_DIR="${APP_DIR:-/workspace}"
 STRICT="${DC_NODE_INSTALL_STRICT:-0}"
+IGNORE_SCRIPTS="${DC_NODE_IGNORE_SCRIPTS:-0}"
 HASH_FILE="$APP_DIR/node_modules/.dc-install-hash"
 
 log() { printf '%s\n' "[node-hide] $*"; }
@@ -64,7 +68,7 @@ compute_hash() {
 
 if [ ! -f "$APP_DIR/package.json" ]; then
   log "no package.json at $APP_DIR; skipping dependency sync"
-  exec "$@"
+  exit 0
 fi
 
 current_hash="$(compute_hash)"
@@ -73,7 +77,16 @@ saved_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
 if [ "$saved_hash" != "$current_hash" ] || [ ! -d "$APP_DIR/node_modules" ]; then
   if ! mkdir -p "$APP_DIR/node_modules" 2>/dev/null; then
     log "warning: cannot write $APP_DIR/node_modules yet; skipping sync for this start"
-    exec "$@"
+    exit 0
+  fi
+
+  # npm lifecycle scripts (preinstall/install/postinstall/prepare/...) run
+  # by design during install, so an untrusted package.json can execute code at
+  # start. Warn so operators know, and surface the safe-mode opt-out.
+  if [ "$IGNORE_SCRIPTS" = "1" ]; then
+    log "safe mode: package script execution disabled (DC_NODE_IGNORE_SCRIPTS=1)"
+  else
+    log "note: dependency install may run package lifecycle scripts; set DC_NODE_IGNORE_SCRIPTS=1 to skip script execution"
   fi
 
   if [ -f "$APP_DIR/package-lock.json" ] || [ -f "$APP_DIR/npm-shrinkwrap.json" ]; then
@@ -81,6 +94,7 @@ if [ "$saved_hash" != "$current_hash" ] || [ ! -d "$APP_DIR/node_modules" ]; the
   else
     install_cmd="npm install"
   fi
+  [ "$IGNORE_SCRIPTS" = "1" ] && install_cmd="$install_cmd --ignore-scripts"
 
   log "running: $install_cmd"
   if sh -lc "$install_cmd"; then
@@ -96,10 +110,7 @@ if [ "$saved_hash" != "$current_hash" ] || [ ! -d "$APP_DIR/node_modules" ]; the
   fi
 fi
 
-exec "$@"
+exit 0
 ENTRYPOINT_EOF
 
 RUN chmod +x /home/dev/.local/bin/dc-node-entrypoint.sh
-
-ENTRYPOINT ["/home/dev/.local/bin/dc-node-entrypoint.sh"]
-CMD ["sleep", "infinity"]

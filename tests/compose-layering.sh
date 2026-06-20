@@ -92,9 +92,9 @@ grep -Fxq 'CMD ["sleep", "infinity"]' "$WORK/out.Containerfile" \
 pass "FROM dev-base / USER dev / CMD bookends"
 
 # ---------------------------------------------------------------------------
-# FROM (leading) + CMD stripping from overlay fragments
+# FROM (leading) + CMD + ENTRYPOINT stripping from overlay fragments
 # ---------------------------------------------------------------------------
-printf 'FROM dev-base:latest\nRUN echo STRIPEME\ncmd ["echo", "cmdme"]\n' \
+printf 'FROM dev-base:latest\nRUN echo STRIPEME\ncmd ["echo", "cmdme"]\nENTRYPOINT ["/tmp/leakme"]\n' \
   > "$OV/team/Containerfile.nodejs"
 rm -f "$OV/user/Containerfile.nodejs" "$OV/team/Containerfile.golang" "$OV/team/Containerfile.all" "$OV/user/Containerfile.all"
 
@@ -103,11 +103,19 @@ grep -Fq 'STRIPEME' "$WORK/out.Containerfile" \
   || fail "strip: RUN line from fragment must survive"
 ! grep -Fqi 'cmdme' "$WORK/out.Containerfile" \
   || fail "strip: CMD line must be stripped from fragment"
+! grep -Fqi 'leakme' "$WORK/out.Containerfile" \
+  || fail "strip: ENTRYPOINT line must be stripped from fragment"
 # Exactly one FROM (the emitted dev-base); the fragment's leading FROM is gone.
 from_count="$(grep -Eci '^FROM ' "$WORK/out.Containerfile")"
 [[ "$from_count" -eq 1 ]] || fail "strip: expected exactly one FROM (got $from_count)"
+# Exactly one ENTRYPOINT (the composed chained runner); the fragment's own
+# ENTRYPOINT is gone, so multi-overlay containers don't clobber each other.
+ep_count="$(grep -Eci '^ENTRYPOINT ' "$WORK/out.Containerfile")"
+[[ "$ep_count" -eq 1 ]] || fail "strip: expected exactly one ENTRYPOINT (got $ep_count)"
+grep -Eq 'ENTRYPOINT \["/home/dev/.local/bin/dc-entrypoint"\]' "$WORK/out.Containerfile" \
+  || fail "strip: single ENTRYPOINT must be the composed runner"
 
-pass "FROM/CMD stripping from overlay fragments"
+pass "FROM/CMD/ENTRYPOINT stripping from overlay fragments"
 
 # ---------------------------------------------------------------------------
 # COPY / ADD rejection
