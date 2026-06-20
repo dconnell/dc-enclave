@@ -33,6 +33,10 @@ dc_complete_subcommands() {
     "list" \
     "ls" \
     "shell" \
+    "logs" \
+    "exec" \
+    "restart" \
+    "rm" \
     "rebuild-container" \
     "rebuild-image" \
     "clean" \

@@ -81,7 +81,7 @@ _dc_load_complete_data() {
 # so $words[1] is the subcommand and numbered specs target the right slots.
 _dc_dispatch() {
   case "$1" in
-    start|stop)
+    start|stop|restart)
       # Variadic projects; exclude names already typed on the line. After the
       # *:: reset, $words[1] is the subcommand and typed projects begin at
       # $words[2], so the exclude slice is words[2,CURRENT-1].
@@ -90,6 +90,27 @@ _dc_dispatch() {
     shell)
       # One project, then a free-form command (no completion past it).
       _arguments '1:project:_dc_projects_simple'
+      ;;
+    logs)
+      _arguments \
+        '1:project:_dc_projects_simple' \
+        '--follow[follow log output]' \
+        '-f[follow log output]' \
+        '--tail+[last N lines]:N:'
+      ;;
+    exec)
+      # Optional --root, then one project, then a free-form command.
+      _arguments \
+        '--root[run as uid 0 (non-interactive)]' \
+        '1:project:_dc_projects_simple'
+      ;;
+    rm)
+      _arguments \
+        '1:project:_dc_projects_simple' \
+        '--yes[skip confirmation]' \
+        '-y[skip confirmation]' \
+        '--keep-config[preserve config and secrets dir]' \
+        '--keep-volumes[preserve hidden volumes]'
       ;;
     rebuild-container)
       _arguments \

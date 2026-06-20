@@ -66,8 +66,8 @@ scopes_out="$(dc_complete_scopes | sort)"
 pass "scopes dedup + membership"
 
 subs="$(dc_complete_subcommands | sort)"
-for c in new start stop status s list ls shell rebuild-container \
-         rebuild-image clean install version help; do
+for c in new start stop status s list ls shell logs exec restart rm \
+         rebuild-container rebuild-image clean install version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
 pass "subcommands list"
@@ -162,6 +162,25 @@ pass "install pos3 completes directories"
 
 # rebuild-image targets.
 drive 2 dc rebuild-image ""; assert_reply "rebuild-image <TAB>" all base
+
+# logs: one project, then log flags (--tail's value is not completed).
+drive 2 dc logs "";                assert_reply "logs <TAB>" alpha beta gamma
+drive 3 dc logs alpha "";          assert_reply "logs alpha <TAB>" --follow -f --tail
+drive 3 dc logs alpha "--";        assert_reply "logs alpha --<TAB>" --follow --tail
+drive 4 dc logs alpha --tail "";   assert_empty "logs alpha --tail <val> (no completion)"
+
+# exec: optional leading --root, one project, then a free-form command.
+drive 2 dc exec "";                assert_reply "exec <TAB>" --root alpha beta gamma
+drive 3 dc exec --root "";         assert_reply "exec --root <TAB>" alpha beta gamma
+drive 3 dc exec alpha "";          assert_empty "exec alpha <cmd> (free-form)"
+
+# restart: variadic projects (excludes already-typed), like start/stop.
+drive 2 dc restart "";             assert_reply "restart <TAB>" alpha beta gamma
+drive 3 dc restart alpha "";       assert_reply "restart alpha <TAB>" beta gamma
+
+# rm: one project, then removal flags.
+drive 2 dc rm "";                  assert_reply "rm <TAB>" alpha beta gamma
+drive 3 dc rm alpha "";            assert_reply "rm alpha <TAB>" --yes -y --keep-config --keep-volumes
 
 # clean: flags + a single project when --hidden-volumes is active.
 drive 2 dc clean "--"; assert_reply "clean --<TAB>" --dry-run --hidden-volumes
@@ -298,7 +317,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dc_subcommands
-    local want="--help --version -h -v clean help install list ls new rebuild-container rebuild-image s shell start status stop version"
+    local want="--help --version -h -v clean exec help install list logs ls new rebuild-container rebuild-image restart rm s shell start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -307,6 +326,13 @@ if command -v zsh >/dev/null 2>&1; then
     chk() { SPEC=(); _dc_dispatch "$1"; [[ "${SPEC[*]}" == *"$2"* ]] || { print "FAIL: zsh $1 spec missing [$2] got [${SPEC[*]}]"; exit 1 }; }
     chk start            "*:project:"
     chk shell            "1:project:"
+    chk logs             "1:project:"
+    chk logs             "--follow["
+    chk exec             "--root["
+    chk exec             "1:project:"
+    chk restart          "*:project:"
+    chk rm               "1:project:"
+    chk rm               "--keep-config["
     chk rebuild-container "--rotate-keys["
     chk install          "2:dotfiles directory:_files -/"
     chk rebuild-image    "1:target:_dc_rebuild_image_targets"

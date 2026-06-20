@@ -55,7 +55,7 @@ _dc_complete() {
   cmd="${COMP_WORDS[1]}"
 
   case "$cmd" in
-    start|stop)
+    start|stop|restart)
       # Variadic: complete a project at any position >= 2, excluding projects
       # already typed on this line so `dc start a b <TAB>` offers the rest.
       local -a used=()
@@ -71,6 +71,37 @@ _dc_complete() {
       if [[ $COMP_CWORD -eq 2 ]]; then
         _dc_reply_projects "$cur"
       fi
+      return 0
+      ;;
+    logs)
+      # One project, then log flags (--tail takes a value, not completed).
+      if [[ $COMP_CWORD -eq 2 ]]; then
+        _dc_reply_projects "$cur"
+        return 0
+      fi
+      [[ "$prev" == "--tail" ]] && return 0
+      COMPREPLY=( $(compgen -W "--follow -f --tail" -- "$cur") )
+      return 0
+      ;;
+    exec)
+      # Optional leading --root, then one project, then a free-form command.
+      if [[ $COMP_CWORD -eq 2 ]]; then
+        _dc_reply_projects "$cur"
+        [[ -z "$cur" || "--root" == "$cur"* ]] && COMPREPLY+=("--root")
+        return 0
+      fi
+      if [[ "$prev" == "--root" ]]; then
+        _dc_reply_projects "$cur"
+      fi
+      return 0
+      ;;
+    rm)
+      # One project, then removal flags.
+      if [[ $COMP_CWORD -eq 2 ]]; then
+        _dc_reply_projects "$cur"
+        return 0
+      fi
+      COMPREPLY=( $(compgen -W "--yes -y --keep-config --keep-volumes" -- "$cur") )
       return 0
       ;;
     rebuild-container)

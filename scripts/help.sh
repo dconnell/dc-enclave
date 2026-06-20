@@ -36,6 +36,11 @@ _show_summary() {
   echo "  list                                              List containers and status"
   echo "  status                                            Show overall status and per-project details"
   echo "  shell <name> [command]                            Open shell or run command"
+  echo "  logs <name> [-f|--follow] [--tail N]              Fetch container log stream"
+  echo "  exec [--root] <name> <command...>                 Run a command in a running container"
+  echo "  restart [name ...]                                Restart one or more projects, or all"
+  echo "  rm <name> [--yes] [--keep-config] [--keep-volumes]"
+  echo "                                                    Remove a project (container, volumes, config)"
   echo "  rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]"
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
@@ -263,6 +268,165 @@ Notes:
 EOF
 }
 
+_show_help_logs() {
+  cat <<'EOF'
+Usage: dc logs <name> [-f|--follow] [--tail N]
+
+Description:
+  Fetches a container's stdout/stderr log stream from the backend's log
+  driver. This is the container process output (entrypoint, startup banners,
+  the Node overlay's npm-install sentinel, credential-injection messages from
+  `dc start`, and crash output) - none of which is visible from an interactive
+  shell or a VS Code terminal attached to the container.
+
+  Works on stopped containers, so a container that failed to start (or exited
+  shortly after) can be diagnosed: run `dc logs <name>` after `dc start`
+  reports the container is no longer running.
+
+Arguments:
+  <name>     Project/container name. Must already exist.
+
+Options:
+  -f, --follow
+             Follow log output (block, streaming new lines until interrupted).
+
+  --tail N   Show only the last N lines. N must be a non-negative integer.
+             May also be given as --tail=N.
+
+Examples:
+  dc logs myapp                       Dump the full log stream once
+  dc logs myapp --tail 100            Last 100 lines
+  dc logs myapp -f                    Follow live output
+  dc logs myapp --follow --tail 50    Last 50 lines, then follow
+
+Notes:
+  - Flag support (-f, --tail) depends on the backend version. dev-containers
+    targets the latest stable release of each backend.
+  - To see container state rather than logs, use `dc status` or `dc list`.
+EOF
+}
+
+_show_help_exec() {
+  cat <<'EOF'
+Usage: dc exec [--root] <name> <command...>
+
+Description:
+  Runs a single command in a running container, docker-exec style: the command
+  executes directly as the dev user with no GITHUB_TOKEN seeding, no shell
+  prompt prefix, and no zsh -ic wrapping.
+
+  A TTY is allocated automatically only when both stdin and stdout are
+  interactive, so piped commands are not corrupted:
+
+      dc exec myapp cat /etc/os-release | grep PRETTY
+      dc exec myapp top            # interactive -> gets a TTY
+
+  This is distinct from `dc shell <name> "command"`, which wraps the command
+  in zsh -ic (loading aliases/interactive config) and seeds GITHUB_TOKEN. Use
+  `dc shell` for token-dependent or alias-dependent one-shots; use `dc exec`
+  for raw, scriptable commands.
+
+Arguments:
+  <name>        Project/container name. Must already be running.
+
+  <command...>  The command and its arguments, passed through verbatim
+                (so args beginning with '-' reach the command untouched).
+
+Options:
+  --root        Run as uid 0 (root), non-interactively. Useful for permission
+                debugging (chown, package installs to system paths). Maps to
+                the same root-exec path rebuild-container uses.
+
+Examples:
+  dc exec myapp whoami
+  dc exec myapp node -v
+  dc exec myapp ls -la /workspace
+  dc exec --root myapp chown -R dev:dev /workspace/build
+
+Notes:
+  - The container must be running. Start it first with `dc start <name>`.
+  - --root never allocates a TTY; for a root interactive session, use
+    `dc shell <name>` and then `sudo`.
+  - For an interactive dev shell, use `dc shell <name>`.
+EOF
+}
+
+_show_help_restart() {
+  cat <<'EOF'
+Usage: dc restart [name ...]
+
+Description:
+  Restarts one or more dev containers. If no project name is given, all
+  configured containers are restarted.
+
+  Implemented as stop -> start, so it reuses the proven per-project flows:
+  backend bring-up, hidden-volume re-verification (important on backends like
+  OrbStack), and SSH-key re-injection all apply. Functionally equivalent to
+  `dc stop <name> && dc start <name>`.
+
+Arguments:
+  [name ...]  One or more project names to restart. If omitted, all
+              configured containers are restarted.
+
+Examples:
+  dc restart              Restart all containers
+  dc restart myapp        Restart only myapp
+  dc restart web api db   Restart multiple containers
+
+Notes:
+  - A stopped container is started; a running container is stopped and started.
+  - Restarting preserves the container filesystem (no rebuild). Use
+    `dc rebuild-container` to recreate from the image.
+EOF
+}
+
+_show_help_rm() {
+  cat <<'EOF'
+Usage: dc rm <name> [--yes|-y] [--keep-config] [--keep-volumes]
+
+Description:
+  Removes a dev container project. By default this performs a full teardown:
+
+    1. stops the container if it is running, then deletes it
+    2. removes every managed hidden volume (dc-hide-<project>-<hash>)
+    3. removes the per-project config + secrets directory
+       (~/.config/dev-containers/<name>), including the SSH key, GitHub token,
+       and .npmrc
+
+  Your host code directory ($REPOS_DIR) is NEVER touched by this command.
+
+  This is destructive and prompts for confirmation (type 'yes') unless --yes
+  is given.
+
+Options:
+  --yes, -y          Skip the confirmation prompt.
+
+  --keep-config      Preserve the config + secrets directory. Only the
+                     container and hidden volumes are removed.
+
+  --keep-volumes     Preserve managed hidden volumes. Only the container and
+                     config + secrets are removed.
+
+Arguments:
+  <name>     Project/container name.
+
+Examples:
+  dc rm myapp                       Remove everything (prompts to confirm)
+  dc rm myapp --yes                 Remove everything without prompting
+  dc rm myapp --keep-config         Remove container + volumes, keep config/secrets
+  dc rm myapp --keep-volumes        Remove container + config/secrets, keep volumes
+
+Notes:
+  - Host code at $REPOS_DIR is preserved. Remove it manually if no longer
+    needed:  rm -rf "${DC_REPOS_DIR:-$HOME/repos}/<name>"
+  - The generated .devcontainer/devcontainer.json lives under $REPOS_DIR and is
+    likewise preserved.
+  - To recreate a removed project, run `dc new <name> [scope] ...` again.
+  - To wipe only the container filesystem while keeping config and code, use
+    `dc rebuild-container <name>` instead.
+EOF
+}
+
 _show_help_rebuild_container() {
   cat <<'EOF'
 Usage: dc rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]
@@ -430,8 +594,8 @@ Description:
 
 Arguments:
   [command]  Optional command name to show detailed help for. One of:
-             new, start, stop, status, list, shell, rebuild-container,
-             rebuild-image, clean, install, version, help
+             new, start, stop, status, list, shell, logs, exec, restart, rm,
+             rebuild-container, rebuild-image, clean, install, version, help
 
 Aliases:
   --help     Same as 'dc help'
@@ -481,6 +645,10 @@ case "$COMMAND" in
   status|s)           _show_help_status ;;
   list|ls)            _show_help_list ;;
   shell)              _show_help_shell ;;
+  logs)               _show_help_logs ;;
+  exec)               _show_help_exec ;;
+  restart)            _show_help_restart ;;
+  rm)                 _show_help_rm ;;
   rebuild-container)  _show_help_rebuild_container ;;
   rebuild-image)      _show_help_rebuild_image ;;
   clean)              _show_help_clean ;;

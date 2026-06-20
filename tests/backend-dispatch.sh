@@ -110,6 +110,7 @@ dispatch_expected() {
     create)           s="$bin create --name myproj --volume src:dst img:latest" ;;
     start)            s="$bin start myproj" ;;
     stop)             s="$bin stop myproj" ;;
+    logs)             s="$bin logs -f --tail 50 myproj" ;;
     delete)
       [[ "$backend" == apple ]] && s="container delete myproj"              || s="$bin rm -f myproj" ;;
     exec)             s="$bin exec myproj whoami" ;;
@@ -138,6 +139,7 @@ call_func() {
     create)           backend_create myproj img:latest --volume src:dst ;;
     start)            backend_start myproj ;;
     stop)             backend_stop myproj ;;
+    logs)             backend_logs myproj true 50 ;;
     delete)           backend_delete myproj ;;
     exec)             backend_exec myproj whoami ;;
     exec_as_root)     backend_exec_as_root myproj whoami ;;
@@ -148,7 +150,7 @@ call_func() {
 }
 
 FUNCS=(build_image image_exists list_images remove_image list_volumes remove_volume \
-       list_running list_all exists is_running create start stop delete \
+       list_running list_all exists is_running create start stop logs delete \
        exec exec_as_root exec_stdin exec_interactive)
 
 # ---------------------------------------------------------------------------

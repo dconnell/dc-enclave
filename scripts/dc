@@ -48,6 +48,18 @@ case "$SUBCOMMAND" in
   shell)
     exec "$SCRIPT_DIR/shell.sh" "$@"
     ;;
+  logs)
+    exec "$SCRIPT_DIR/logs.sh" "$@"
+    ;;
+  exec)
+    exec "$SCRIPT_DIR/exec.sh" "$@"
+    ;;
+  restart)
+    exec "$SCRIPT_DIR/restart.sh" "$@"
+    ;;
+  rm)
+    exec "$SCRIPT_DIR/rm.sh" "$@"
+    ;;
   rebuild-container)
     exec "$SCRIPT_DIR/rebuild-container.sh" "$@"
     ;;

@@ -67,6 +67,10 @@ The day-to-day interface is the `dc` command with subcommands. All subcommands d
 | `dc stop [name ...]` | Stop one or more projects, or all configured projects if none given |
 | `dc list` (`dc ls`) | List dev-containers and their running/stopped state |
 | `dc shell <name> [command]` | Open a shell or run one command inside a project container |
+| `dc logs <name> [-f\|--follow] [--tail N]` | Fetch a container's stdout/stderr log stream (works on stopped containers) |
+| `dc exec [--root] <name> <command...>` | Run a single command in a running container (docker-exec style; auto-TTY) |
+| `dc restart [name ...]` | Restart one or more projects, or all configured projects |
+| `dc rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, and config+secrets (host code preserved) |
 | `dc rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]` | Destroy and recreate container from selected image |
 | `dc rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
 | `dc clean [--dry-run] [--hidden-volumes [name]]` | Remove old/orphan managed image tags or orphan managed hidden volumes |
@@ -263,6 +267,10 @@ dev-containers/
 │   ├── start.sh
 │   ├── stop.sh
 │   ├── shell.sh
+│   ├── logs.sh
+│   ├── exec.sh
+│   ├── restart.sh
+│   ├── rm.sh
 │   ├── status.sh
 │   ├── rebuild-container.sh
 │   ├── rebuild-image.sh
@@ -588,6 +596,15 @@ go test ./...
 # one-shot command
 dc shell myapp-monorepo "go run ./cmd/server"
 
+# raw one-off command in the running container (no token/zsh wrapping)
+dc exec myapp-monorepo node -v
+
+# check why a container exited (works on stopped containers)
+dc logs myapp-monorepo --tail 100
+
+# restart (re-applies hidden mounts and SSH key, like stop+start)
+dc restart myapp-monorepo
+
 # stop when done
 dc stop myapp-monorepo
 ```
@@ -690,6 +707,32 @@ Safety and cleanup scope:
 - For orphan managed repos, it removes all tags (including `:latest`).
 - It does not remove unrelated images (for example VS Code `vsc-*` images).
 - If a tag is still referenced by a container, removal may fail and is reported (no force delete).
+
+## Removing a project
+
+`dc rm` removes a dev container project outright. By default it performs a full teardown:
+
+1. stops the container if it is running, then deletes it
+2. removes every managed hidden volume (`dc-hide-<project>-<hash>`)
+3. removes the per-project config + secrets directory (`~/.config/dev-containers/<name>`), including the SSH key, GitHub token, and `.npmrc`
+
+```
+dc rm myapp                       # remove everything (prompts to confirm)
+dc rm myapp --yes                 # remove everything without prompting
+dc rm myapp --keep-config         # remove container + volumes, keep config/secrets
+dc rm myapp --keep-volumes        # remove container + config/secrets, keep volumes
+```
+
+Safety notes:
+
+- **Your host code is never touched.** The repo directory at `${DC_REPOS_DIR:-$HOME/repos}/<name>` (including the generated `.devcontainer/devcontainer.json`) is preserved. Remove it manually if it is no longer needed:
+  ```
+  rm -rf "${DC_REPOS_DIR:-$HOME/repos}/myapp"
+  ```
+- `dc rm` is destructive and prompts for confirmation (type `yes`) unless `--yes`/`-y` is given.
+- The project name is validated and the secrets directory's real path is checked to reside under the dev-containers config root, so a symlinked project directory cannot redirect deletion elsewhere.
+- If the backend is unreachable, container/volume removal is skipped with a warning, but the config + secrets are still removed (unless `--keep-config`).
+- To wipe only the container filesystem while keeping config and code, use `dc rebuild-container <name>` instead.
 
 ## Personal configuration (dotfiles)
 

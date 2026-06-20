@@ -77,6 +77,10 @@ run_check "dc help stop" "$DC_BIN" help stop
 run_check "dc help status" "$DC_BIN" help status
 run_check "dc help list" "$DC_BIN" help list
 run_check "dc help shell" "$DC_BIN" help shell
+run_check "dc help logs" "$DC_BIN" help logs
+run_check "dc help exec" "$DC_BIN" help exec
+run_check "dc help restart" "$DC_BIN" help restart
+run_check "dc help rm" "$DC_BIN" help rm
 run_check "dc help rebuild-container" "$DC_BIN" help rebuild-container
 run_check "dc help rebuild-image" "$DC_BIN" help rebuild-image
 run_check "dc help clean" "$DC_BIN" help clean

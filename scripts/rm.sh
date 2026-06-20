@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# =============================================================================
+# scripts/rm.sh - `dc rm`: fully remove a dev container project.
+#
+# Default (full teardown) removes, for the named project:
+#   - the container (stopped first if running)
+#   - every managed hidden volume (dc-hide-<project>-<hash>)
+#   - the per-project config + secrets dir (~/.config/dev-containers/<name>)
+# Escape hatches: --keep-config preserves config+secrets; --keep-volumes
+# preserves hidden volumes. --yes/-y skips the confirmation prompt.
+#
+# Safety:
+#   - The host code directory ($REPOS_DIR) is NEVER touched by this command.
+#   - The project name is validated and the secrets dir's real path is checked
+#     to be under the dev-containers config root before any rm -rf, so a
+#     symlinked project dir cannot redirect deletion elsewhere.
+#   - Destructive: requires typing 'yes' to confirm (unless --yes).
+# =============================================================================
+set -euo pipefail
+
+PROJECT=""
+ASSUME_YES=false
+KEEP_CONFIG=false
+KEEP_VOLUMES=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --yes|-y)
+      ASSUME_YES=true
+      shift
+      ;;
+    --keep-config)
+      KEEP_CONFIG=true
+      shift
+      ;;
+    --keep-volumes)
+      KEEP_VOLUMES=true
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "ERROR: Unknown option: $1" >&2
+      echo "Usage: dc rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -z "$PROJECT" ]]; then
+        PROJECT="$1"
+      else
+        echo "ERROR: Unexpected argument: $1" >&2
+        echo "Usage: dc rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$PROJECT" ]]; then
+  echo "ERROR: Project name is required." >&2
+  echo "Usage: dc rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
+  exit 1
+fi
+
+# Reject anything outside the identifier grammar new-container accepts, so the
+# constructed secrets path can never contain traversal/escape sequences.
+if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "ERROR: Invalid project name: $PROJECT" >&2
+  exit 1
+fi
+
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+source "$ROOT_DIR/lib/common.sh"
+source "$ROOT_DIR/lib/container-backend.sh"
+
+SECRET_DIR="$HOME/.config/dev-containers/$PROJECT"
+CONFIG="$SECRET_DIR/config"
+
+HIDDEN_PATHS=()
+REPOS_DIR_VAL=""
+BACKEND_OK=false
+ACTIVE_BACKEND=""
+
+if [[ -f "$CONFIG" ]]; then
+  dc_load_project_config "$CONFIG"
+  if ! declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1; then
+    CONTAINER_HIDDEN_PATHS=()
+  fi
+  HIDDEN_PATHS=("${CONTAINER_HIDDEN_PATHS[@]}")
+  REPOS_DIR_VAL="${REPOS_DIR:-}"
+  if backend_use "${CONTAINER_BACKEND:-}" >/dev/null 2>&1; then
+    BACKEND_OK=true
+    ACTIVE_BACKEND="$(backend_name)"
+  fi
+else
+  echo "WARN: No config for '$PROJECT' at $CONFIG; attempting best-effort removal by name."
+  if backend_use "${CONTAINER_BACKEND:-}" >/dev/null 2>&1; then
+    BACKEND_OK=true
+    ACTIVE_BACKEND="$(backend_name)"
+  fi
+fi
+
+if ! $BACKEND_OK; then
+  echo "WARN: Backend not reachable; skipping container/volume removal."
+  echo "      Config + secrets will still be removed (unless --keep-config)."
+fi
+
+echo "======================================================================"
+echo "Removing project: $PROJECT"
+echo "======================================================================"
+echo "  Backend:        ${ACTIVE_BACKEND:-(unreachable)}"
+echo "  Config/secrets: $SECRET_DIR"
+if $KEEP_CONFIG; then
+  echo "                 -> PRESERVED (--keep-config)"
+else
+  echo "                 -> REMOVED"
+fi
+if [[ ${#HIDDEN_PATHS[@]} -gt 0 ]]; then
+  echo "  Hidden paths:   ${HIDDEN_PATHS[*]}"
+  if $KEEP_VOLUMES; then
+    echo "                 -> volumes PRESERVED (--keep-volumes)"
+  else
+    echo "                 -> volumes REMOVED"
+  fi
+fi
+echo "  Host code dir:  ${REPOS_DIR_VAL:-(unknown)}  (NEVER touched by dc rm)"
+echo ""
+echo "This will remove the container, hidden volumes, and config+secrets for '$PROJECT'."
+if ! $ASSUME_YES; then
+  echo ""
+  read -r -p "Type 'yes' to continue: " confirm
+  if [[ "$confirm" != "yes" ]]; then
+    echo "Aborted."
+    exit 0
+  fi
+fi
+
+echo ""
+
+if $BACKEND_OK; then
+  if backend_exists "$PROJECT"; then
+    if backend_is_running "$PROJECT"; then
+      echo "==> Stopping container..."
+      backend_stop "$PROJECT"
+      echo "  ✓ Stopped"
+    fi
+    echo "==> Removing container..."
+    if backend_delete "$PROJECT" 2>/dev/null; then
+      echo "  ✓ Container removed"
+    else
+      echo "  ✗ Could not remove container '$PROJECT' (backend: $ACTIVE_BACKEND)"
+    fi
+  else
+    echo "==> Container already absent"
+  fi
+
+  if [[ ${#HIDDEN_PATHS[@]} -gt 0 ]] && ! $KEEP_VOLUMES; then
+    echo "==> Removing hidden volumes..."
+    for hidden_path in "${HIDDEN_PATHS[@]}"; do
+      [[ -z "$hidden_path" ]] && continue
+      hidden_volume="$(dc_hidden_volume_name "$PROJECT" "$hidden_path")"
+      if backend_remove_volume "$hidden_volume" 2>/dev/null; then
+        echo "  ✓ Removed: $hidden_volume ($hidden_path)"
+      else
+        echo "  - Already gone or in use: $hidden_volume ($hidden_path)"
+      fi
+    done
+  fi
+fi
+
+if ! $KEEP_CONFIG; then
+  echo "==> Removing config + secrets dir..."
+  if [[ -d "$SECRET_DIR" ]]; then
+    # Guard against a symlinked project dir escaping the config root: resolve
+    # both and require the secrets dir to live under the dev-containers root.
+    dc_root_real="$(cd -P "$HOME/.config/dev-containers" 2>/dev/null && pwd)"
+    secret_real="$(cd -P "$SECRET_DIR" 2>/dev/null && pwd)"
+    if [[ -n "$dc_root_real" && -n "$secret_real" ]]; then
+      if [[ "$secret_real" != "$dc_root_real" && "$secret_real" != "$dc_root_real"/* ]]; then
+        echo "ERROR: Refusing to remove '$SECRET_DIR': resolves outside the dev-containers config root." >&2
+        exit 1
+      fi
+    fi
+    rm -rf "$SECRET_DIR"
+    echo "  ✓ Removed: $SECRET_DIR"
+  else
+    echo "  ✓ Config dir already absent: $SECRET_DIR"
+  fi
+else
+  echo "==> Preserving config + secrets dir (--keep-config): $SECRET_DIR"
+fi
+
+echo ""
+echo "======================================================================"
+echo "Removal complete: $PROJECT"
+echo "======================================================================"
+if [[ -n "$REPOS_DIR_VAL" ]]; then
+  echo "Host code preserved at: $REPOS_DIR_VAL"
+  echo "Remove it manually if no longer needed:  rm -rf \"$REPOS_DIR_VAL\""
+fi
