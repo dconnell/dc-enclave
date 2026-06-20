@@ -70,6 +70,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
+source "$ROOT_DIR/lib/network.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 
 CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
@@ -125,6 +126,24 @@ if [[ "${CONTAINER_IMAGE:-}" != "$DERIVED_IMAGE" ]]; then
   dc_set_config_key "$CONFIG" "CONTAINER_IMAGE" "$CONTAINER_IMAGE"
 fi
 
+# Re-validate the persisted network membership before destroying anything: a
+# missing network (deleted out of band) or an apple limit violation must fail
+# fast so the container is not destroyed into an un-reattachable state. The
+# primary network is re-applied at create; extras are re-connected after.
+NETWORK_ARGS=()
+if ! declare -p CONTAINER_NETWORKS >/dev/null 2>&1; then
+  CONTAINER_NETWORKS=()
+fi
+if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+  if ! dc_network_check_backend_limits "$ACTIVE_BACKEND" "${CONTAINER_NETWORKS[@]}"; then
+    exit 1
+  fi
+  if ! dc_networks_ensure_exist "${CONTAINER_NETWORKS[@]}"; then
+    exit 1
+  fi
+  mapfile -t NETWORK_ARGS < <(dc_networks_create_args "${CONTAINER_NETWORKS[@]}")
+fi
+
 echo "======================================================================"
 echo "Rebuilding container: $PROJECT"
 if $ROTATE_KEYS; then
@@ -144,6 +163,9 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   else
     echo "  Hidden volumes: REMOVED (clean rebuild)"
   fi
+fi
+if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+  echo "  Networks: ${CONTAINER_NETWORKS[*]}"
 fi
 if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
   echo "  Resources:  ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
@@ -264,8 +286,17 @@ if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
   RESOURCE_ARGS+=(--memory "$CONTAINER_MEMORY")
 fi
 
-backend_create "$PROJECT" "$CONTAINER_IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}"
+backend_create "$PROJECT" "$CONTAINER_IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
 echo "  ✓ Container created"
+
+# Re-attach every network beyond the primary so the rebuilt container lands on
+# the same private networks (with the same static IPs) as before.
+if [[ ${#CONTAINER_NETWORKS[@]} -gt 1 ]]; then
+  echo "  -> Re-attaching additional networks..."
+  if ! dc_networks_attach_extras "$PROJECT" "${CONTAINER_NETWORKS[@]}"; then
+    exit 1
+  fi
+fi
 
 echo ""
 echo "==> Step 5: Starting container and injecting credentials..."

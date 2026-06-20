@@ -36,6 +36,8 @@ fi
 PORTS=()
 REPO_PATH_OVERRIDE=""
 HIDDEN_PATH_INPUTS=()
+NETWORK_INPUT=""
+NETWORK_IP=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-path)
@@ -70,6 +72,22 @@ while [[ $# -gt 0 ]]; do
       HIDDEN_PATH_INPUTS+=("$2")
       shift 2
       ;;
+    --network)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        echo "ERROR: --network requires a value (e.g. myapp or myapp,obs or myapp:10.0.0.5)"
+        exit 1
+      fi
+      NETWORK_INPUT="$2"
+      shift 2
+      ;;
+    --ip)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        echo "ERROR: --ip requires an IPv4 address (e.g. 10.0.0.5)"
+        exit 1
+      fi
+      NETWORK_IP="$2"
+      shift 2
+      ;;
     *)
       PORTS+=("$1")
       shift
@@ -89,6 +107,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
+source "$ROOT_DIR/lib/network.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 
 # Fail fast on resource flags: validate immediately after the helpers are
@@ -117,6 +136,31 @@ HIDDEN_PATHS_CSV="$(dc_normalize_hidden_paths_values "${HIDDEN_PATH_INPUTS[@]:-}
 CONTAINER_HIDDEN_PATHS=()
 if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
   IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
+fi
+
+# Resolve the network membership requested via --network (with optional --ip on
+# the primary). The result is a CONTAINER_NETWORKS array of `name[:ip]` entries;
+# backend-existence and limit checks run later, once the backend is selected.
+CONTAINER_NETWORKS=()
+if [[ -n "$NETWORK_INPUT" ]]; then
+  NETWORKS_CSV="$(dc_normalize_network_arg "$NETWORK_INPUT")" || exit 1
+  if [[ -n "$NETWORKS_CSV" ]]; then
+    IFS=',' read -r -a CONTAINER_NETWORKS <<< "$NETWORKS_CSV"
+  fi
+fi
+if [[ -n "$NETWORK_IP" ]]; then
+  dc_validate_ip_value "$NETWORK_IP" || exit 1
+  if [[ ${#CONTAINER_NETWORKS[@]} -eq 0 ]]; then
+    echo "ERROR: --ip requires --network (no networks requested)."
+    exit 1
+  fi
+  primary="${CONTAINER_NETWORKS[0]}"
+  if [[ "$primary" == *:* ]]; then
+    echo "ERROR: --ip conflicts with an explicit IP on the primary network ('$primary')."
+    echo "       Use either --ip <addr> or the 'name:ip' syntax, not both."
+    exit 1
+  fi
+  CONTAINER_NETWORKS[0]="${primary}:${NETWORK_IP}"
 fi
 
 PORT_ARGS=()
@@ -165,6 +209,23 @@ if backend_exists "$PROJECT"; then
   echo "ERROR: Container '$PROJECT' already exists."
   echo "To rebuild: dc rebuild-container $PROJECT"
   exit 1
+fi
+
+# Validate the requested network membership against the selected backend: enforce
+# apple's single-network/no-static-IP limits, and require every network to exist
+# (networks are created explicitly via `dc network create`). Then derive the
+# create-time args; extras are attached after the container exists.
+if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+  if ! dc_network_check_backend_limits "$ACTIVE_BACKEND" "${CONTAINER_NETWORKS[@]}"; then
+    exit 1
+  fi
+  if ! dc_networks_ensure_exist "${CONTAINER_NETWORKS[@]}"; then
+    exit 1
+  fi
+fi
+NETWORK_ARGS=()
+if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+  mapfile -t NETWORK_ARGS < <(dc_networks_create_args "${CONTAINER_NETWORKS[@]}")
 fi
 
 if [[ -n "$REPO_PATH_OVERRIDE" ]]; then
@@ -224,6 +285,9 @@ if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
 fi
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   echo "Hidden paths: ${CONTAINER_HIDDEN_PATHS[*]}"
+fi
+if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+  echo "Networks: ${CONTAINER_NETWORKS[*]}"
 fi
 echo "======================================================================"
 echo ""
@@ -321,6 +385,14 @@ else
   echo "CONTAINER_HIDDEN_PATHS=()" >> "$CONFIG_FILE"
 fi
 
+if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+  printf 'CONTAINER_NETWORKS=(' >> "$CONFIG_FILE"
+  printf '%q ' "${CONTAINER_NETWORKS[@]}" >> "$CONFIG_FILE"
+  printf ')\n' >> "$CONFIG_FILE"
+else
+  echo "CONTAINER_NETWORKS=()" >> "$CONFIG_FILE"
+fi
+
 # Owner-only permissions: the config holds secret paths and is a trusted input to
 # later loads, so it must never be group/other-writable (the loader rejects that).
 chmod 600 "$CONFIG_FILE"
@@ -345,7 +417,16 @@ done
 
 echo ""
 echo "==> Creating container from image: $IMAGE"
-backend_create "$PROJECT" "$IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}"
+backend_create "$PROJECT" "$IMAGE" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
+
+# Attach any networks beyond the primary (Docker-compatible backends). On apple
+# the limits check already restricted membership to a single primary network.
+if [[ ${#CONTAINER_NETWORKS[@]} -gt 1 ]]; then
+  echo "==> Attaching additional networks..."
+  if ! dc_networks_attach_extras "$PROJECT" "${CONTAINER_NETWORKS[@]}"; then
+    exit 1
+  fi
+fi
 
 echo ""
 echo "==> Starting container for initial SSH key injection..."
@@ -425,6 +506,29 @@ if $DOCKER_COMPATIBLE; then
       MOUNTS_BLOCK+=$'\n  ]'
     fi
 
+    # runArgs carries the network membership so a VS Code "Reopen in Container"
+    # build attaches to the same private network(s) as `dc new` did. The primary
+    # network is listed first (with its optional static IP), extras after.
+    RUNARGS_BLOCK=""
+    if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+      _ra_primary="${CONTAINER_NETWORKS[0]}"
+      _ra_name="$(dc_network_entry_name "$_ra_primary")"
+      _ra_ip="$(dc_network_entry_ip "$_ra_primary")"
+      RUNARGS_ENTRIES=("--network" "$_ra_name")
+      [[ -n "$_ra_ip" ]] && RUNARGS_ENTRIES+=("--ip" "$_ra_ip")
+      for ((_ra_i = 1; _ra_i < ${#CONTAINER_NETWORKS[@]}; _ra_i++)); do
+        RUNARGS_ENTRIES+=("--network" "$(dc_network_entry_name "${CONTAINER_NETWORKS[$_ra_i]}")")
+      done
+      RUNARGS_BLOCK=$',\n  "runArgs": ['
+      _ra_first=true
+      for _ra_e in "${RUNARGS_ENTRIES[@]}"; do
+        $_ra_first || RUNARGS_BLOCK+=", "
+        RUNARGS_BLOCK+="\"$_ra_e\""
+        _ra_first=false
+      done
+      RUNARGS_BLOCK+="]"
+    fi
+
     cat > "$DEVCONTAINER_FILE" <<EOF
 {
   "name": "dev-$PROJECT",
@@ -435,7 +539,7 @@ if $DOCKER_COMPATIBLE; then
   "workspaceMount": "source=\${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
   "remoteUser": "dev",
-  "postCreateCommand": "true"$FORWARD_PORTS_BLOCK$MOUNTS_BLOCK
+  "postCreateCommand": "true"$FORWARD_PORTS_BLOCK$MOUNTS_BLOCK$RUNARGS_BLOCK
 }
 EOF
 

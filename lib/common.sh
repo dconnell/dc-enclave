@@ -613,7 +613,7 @@ declare -gra _DC_CONFIG_SCALAR_KEYS=(
   CONTAINER_CPUS CONTAINER_MEMORY REPOS_DIR SECRET_DIR
   SSH_KEY_PATH TOKEN_FILE NPMRC_PATH
 )
-declare -ga _DC_CONFIG_ARRAY_KEYS=(PORTS CONTAINER_HIDDEN_PATHS)
+declare -ga _DC_CONFIG_ARRAY_KEYS=(PORTS CONTAINER_HIDDEN_PATHS CONTAINER_NETWORKS)
 
 # Supported container backend names (mirrors lib/container-backend.sh selection).
 declare -ga _DC_KNOWN_BACKENDS=(apple docker orbstack colima podman)
@@ -656,6 +656,80 @@ dc_validate_memory_value() {
 
   if [[ "$value" =~ ^0+[kKmMgG]?$ ]]; then
     printf 'ERROR: memory value must be greater than zero: %s\n' "$value" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+# Validate a network name. Networks are user-defined objects shared across
+# containers and embedded in backend `network create/connect` flags, so they use
+# the same conservative identifier pattern as overlay scopes (no shell
+# metacharacters, no whitespace, no leading dash). Returns 0 (valid) / 1 silent.
+dc_validate_network_name() {
+  local name="$1"
+  [[ -n "$name" ]] || return 1
+  [[ "$name" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
+}
+
+# Validate an IPv4 address value: empty (means "auto-allocate") or a dotted-quad
+# with each octet in 0-255. Rejects zero-octet padding beyond leading-zero rules,
+# whitespace, exponents, and any shell metacharacter. Prints a diagnostic and
+# returns 1 on rejection. (Mirrors dc_validate_cpus_value / dc_validate_memory_value.)
+dc_validate_ip_value() {
+  local value="$1"
+
+  [[ -n "$value" ]] || return 0
+
+  if [[ ! "$value" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    printf 'ERROR: Invalid IPv4 address: %q\n' "$value" >&2
+    printf '  Expected dotted-quad (e.g. 10.20.30.40).\n' >&2
+    return 1
+  fi
+
+  local octet=""
+  local IFS=.
+  local -a octets=()
+  # shellcheck disable=SC2206
+  octets=($value)
+  for octet in "${octets[@]}"; do
+    # Reject leading zeros like 010 (ambiguous octal) while allowing single 0.
+    if [[ "$octet" =~ ^0[0-9]+$ ]]; then
+      printf 'ERROR: Invalid IPv4 octet (leading zero): %s in %s\n' "$octet" "$value" >&2
+      return 1
+    fi
+    if [[ "$octet" -gt 255 ]]; then
+      printf 'ERROR: Invalid IPv4 octet (>255): %s in %s\n' "$octet" "$value" >&2
+      return 1
+    fi
+  done
+
+  return 0
+}
+
+# Validate an IPv4 CIDR subnet value: empty (means "auto-allocate by backend") or
+# dotted-quad / prefix with octets 0-255 and prefix 0-32. Prints a diagnostic and
+# returns 1 on rejection.
+dc_validate_subnet_value() {
+  local value="$1"
+
+  [[ -n "$value" ]] || return 0
+
+  if [[ ! "$value" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]]; then
+    printf 'ERROR: Invalid IPv4 subnet (expected A.B.C.D/N): %q\n' "$value" >&2
+    return 1
+  fi
+
+  local prefix="${value##*/}"
+  local addr="${value%/*}"
+
+  if [[ "$prefix" -gt 32 ]]; then
+    printf 'ERROR: Invalid subnet prefix (>32): %s in %s\n' "$prefix" "$value" >&2
+    return 1
+  fi
+
+  if ! dc_validate_ip_value "$addr" 2>/dev/null; then
+    printf 'ERROR: Invalid subnet address in %s\n' "$value" >&2
     return 1
   fi
 
@@ -872,6 +946,35 @@ dc_validate_config_values() {
     fi
   fi
 
+  # Each persisted network entry is "<name>" or "<name>:<ipv4>". Names and IPs are
+  # validated independently; an invalid entry is rejected rather than reaching the
+  # backend create/connect flags.
+  if declare -p CONTAINER_NETWORKS >/dev/null 2>&1 && [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+    local nentry=""
+    local nname=""
+    local nip=""
+    for nentry in "${CONTAINER_NETWORKS[@]}"; do
+      [[ -n "$nentry" ]] || continue
+      if [[ "$nentry" == *:* ]]; then
+        nname="${nentry%%:*}"
+        nip="${nentry#*:}"
+      else
+        nname="$nentry"
+        nip=""
+      fi
+      if ! dc_validate_network_name "$nname"; then
+        printf 'ERROR: Invalid network name in CONTAINER_NETWORKS entry %q in %s\n' "$nentry" "$config_file" >&2
+        return 1
+      fi
+      if [[ -n "$nip" ]]; then
+        if ! dc_validate_ip_value "$nip" >&2; then
+          printf '  in CONTAINER_NETWORKS entry %q in %s\n' "$nentry" "$config_file" >&2
+          return 1
+        fi
+      fi
+    done
+  fi
+
   # Persisted paths must be absolute and free of control characters.
   local path_key=""
   local path_val=""
@@ -934,6 +1037,7 @@ Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
   # stale values; plain assignments sourced below become globals automatically.
   PORTS=()
   CONTAINER_HIDDEN_PATHS=()
+  CONTAINER_NETWORKS=()
 
   # shellcheck disable=SC1090
   source "$config_file"
@@ -1027,6 +1131,48 @@ dc_set_config_key() {
   if [[ "$updated" -eq 0 ]]; then
     printf '%s="%s"\n' "$key" "$escaped" >> "$tmp_file"
   fi
+
+  mv "$tmp_file" "$config_file"
+}
+
+# Replace (or append) an array assignment line `KEY=(...)` in a project config.
+# Elements are serialized with `printf '%q'` exactly as new-container.sh emits
+# them, so the result round-trips inertly through dc_load_project_config. An empty
+# element list writes `KEY=()`. Uses mktemp (not a PID-based name) for the atomic
+# rewrite. Returns non-zero if the temp file cannot be created.
+dc_set_config_array() {
+  local config_file="$1"
+  local key="$2"
+  shift 2
+
+  local tmp_file=""
+  tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")" || return 1
+  local updated=0
+  local line=""
+
+  {
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == "$key="* ]]; then
+        if [[ "$updated" -eq 0 ]]; then
+          printf '%s=(' "$key"
+          if [[ $# -gt 0 ]]; then
+            printf ' %q' "$@"
+          fi
+          printf ' )\n'
+        fi
+        updated=1
+      else
+        printf '%s\n' "$line"
+      fi
+    done < "$config_file"
+    if [[ "$updated" -eq 0 ]]; then
+      printf '%s=(' "$key"
+      if [[ $# -gt 0 ]]; then
+        printf ' %q' "$@"
+      fi
+      printf ' )\n'
+    fi
+  } > "$tmp_file"
 
   mv "$tmp_file" "$config_file"
 }

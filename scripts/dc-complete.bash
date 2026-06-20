@@ -131,6 +131,10 @@ _dc_complete() {
       _dc_complete_clean "$cur" "$prev"
       return 0
       ;;
+    network|net)
+      _dc_complete_network "$cur" "$prev"
+      return 0
+      ;;
     new)
       _dc_complete_new "$cur" "$prev"
       return 0
@@ -223,18 +227,39 @@ _dc_complete_new() {
       COMPREPLY=( $(compgen -d -- "$cur") )
       return 0
       ;;
-    --cpus|--memory|--hide)
+    --cpus|--memory|--hide|--network|--ip)
       return 0
       ;;
   esac
 
-  local flags="--repo-path --cpus --memory --hide"
+  local flags="--repo-path --cpus --memory --hide --network --ip"
   if [[ $COMP_CWORD -eq 3 ]]; then
     # Second positional: a scope (with flags also accepted).
     COMPREPLY=( $(compgen -W "$(dc_complete_scopes) $flags" -- "$cur") )
   else
     COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
   fi
+}
+
+# `dc network <subaction> ...`: subactions at position 2; afterwards a network
+# name or project (free text) is not completed, so only the subaction slot and
+# the --force/--ip flags are offered.
+_dc_complete_network() {
+  local cur="$1" prev="$2"
+
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    COMPREPLY=( $(compgen -W "$(dc_complete_network_subactions)" -- "$cur") )
+    return 0
+  fi
+
+  case "$prev" in
+    --subnet|--subnet-v6|--ip)
+      return 0
+      ;;
+  esac
+
+  COMPREPLY=( $(compgen -W "--force --ip --subnet --subnet-v6" -- "$cur") )
+  return 0
 }
 
 complete -F _dc_complete dc

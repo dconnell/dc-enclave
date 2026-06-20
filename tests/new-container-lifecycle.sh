@@ -148,12 +148,16 @@ expected_img="$(dc_image_ref_from_scopes "$OV" "nodejs,golang")"
 
 # --- secrets bootstrap (perms) -------------------------------------------
 [[ -d "$SECRET_DIR" ]] || fail "secrets: dir missing"
-[[ "$(stat -f '%Lp' "$SECRET_DIR" 2>/dev/null || stat -c '%a' "$SECRET_DIR")" == "700" ]] || fail "secrets: dir must be 700"
+# Portable octal mode: GNU stat (-c) first, BSD stat (-f) second. (The reverse
+# order is wrong on Linux, where `stat -f '%Lp'` succeeds with filesystem junk.)
+_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
+
+[[ "$(_mode "$SECRET_DIR")" == "700" ]] || fail "secrets: dir must be 700"
 [[ -f "$SECRET_DIR/ssh_key" ]] && [[ -f "$SECRET_DIR/ssh_key.pub" ]] || fail "secrets: ssh keypair missing"
 [[ -f "$SECRET_DIR/github-token" ]] || fail "secrets: token placeholder missing"
 [[ -f "$SECRET_DIR/.npmrc" ]] || fail "secrets: npmrc missing"
 for f in ssh_key github-token .npmrc; do
-  [[ "$(stat -f '%Lp' "$SECRET_DIR/$f" 2>/dev/null || stat -c '%a' "$SECRET_DIR/$f")" == "600" ]] \
+  [[ "$(_mode "$SECRET_DIR/$f")" == "600" ]] \
     || fail "secrets: $f must be 600"
 done
 

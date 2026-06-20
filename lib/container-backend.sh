@@ -849,3 +849,112 @@ backend_exec_interactive() {
       ;;
   esac
 }
+
+# =============================================================================
+# Network management. User-defined networks are first-class objects on both
+# backend families: docker/orbstack/colima/podman via the Docker CLI, and
+# apple/container via `container network` (macOS 26+). The CLI shapes diverge
+# (apple uses `delete` not `rm`; apple resolves peers as `<name>.test`; apple
+# cannot live-attach a network to an existing container), so every divergence
+# is pinned in tests/backend-dispatch.sh.
+# =============================================================================
+
+# Create a user-defined network. Extra args (e.g. --subnet <cidr>) are appended
+# after the name, matching apple/container's documented form and docker's lenient
+# ordering. Idempotent callers should check backend_network_exists first.
+backend_network_create() {
+  local name="$1"
+  shift
+
+  case "$(backend_name)" in
+    apple)
+      container network create "$name" "$@"
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" network create "$name" "$@" >/dev/null
+      ;;
+  esac
+}
+
+# List user-defined network names, one per line. docker emits names directly via
+# --format; apple prints a columned table (NETWORK/STATE/SUBNET) whose header is
+# skipped only when the first field is literally "NETWORK" (robust to reordering).
+backend_network_list() {
+  case "$(backend_name)" in
+    apple)
+      container network list 2>/dev/null \
+        | awk 'NR==1 && $1=="NETWORK" {next} NF {print $1}'
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" network ls --format '{{.Name}}' 2>/dev/null
+      ;;
+  esac
+}
+
+# Return 0 if a named network exists on the active backend, 1 if absent.
+# Returns 2 if the underlying list call itself failed.
+backend_network_exists() {
+  local name="$1"
+  local listed=""
+
+  if ! listed="$(backend_network_list 2>/dev/null)"; then
+    return 2
+  fi
+
+  local n=""
+  while IFS= read -r n; do
+    [[ "$n" == "$name" ]] && return 0
+  done <<< "$listed"
+
+  return 1
+}
+
+# Remove a user-defined network (silently succeeds if already absent on docker).
+backend_network_rm() {
+  local name="$1"
+
+  case "$(backend_name)" in
+    apple)
+      container network delete "$name" >/dev/null 2>&1 || true
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" network rm "$name" >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
+# Live-attach an existing container to a network. Extra args (e.g. --ip <addr>)
+# are Docker connect options and precede NETWORK CONTAINER per docker syntax.
+# apple/container sets networks only at create time, so live-attach is refused.
+backend_network_connect() {
+  local name="$1"
+  local container="$2"
+  shift 2
+
+  case "$(backend_name)" in
+    apple)
+      echo "ERROR: apple/container cannot live-attach a network to an existing container." >&2
+      echo "       Re-create with: dc rebuild-container $container (after adding the network to its config)." >&2
+      return 1
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" network connect "$@" "$name" "$container" >/dev/null
+      ;;
+  esac
+}
+
+# Detach a container from a network. Unsupported on apple/container (see connect).
+backend_network_disconnect() {
+  local name="$1"
+  local container="$2"
+
+  case "$(backend_name)" in
+    apple)
+      echo "ERROR: apple/container cannot detach a network from an existing container." >&2
+      return 1
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" network disconnect "$name" "$container" >/dev/null 2>&1 || true
+      ;;
+  esac
+}

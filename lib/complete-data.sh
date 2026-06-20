@@ -40,6 +40,8 @@ dc_complete_subcommands() {
     "rebuild-container" \
     "rebuild-image" \
     "clean" \
+    "network" \
+    "net" \
     "install" \
     "version" \
     "--version" \
@@ -156,4 +158,17 @@ dc_complete_scopes() {
 # Print the valid targets for `dc rebuild-image`.
 dc_complete_rebuild_image_targets() {
   printf '%s\n' "all" "base"
+}
+
+# Print the subactions of `dc network` (create/ls/members/rm/add/remove and
+# aliases). Mirrors the dispatch table in scripts/network.sh.
+dc_complete_network_subactions() {
+  printf '%s\n' \
+    "create" \
+    "ls" \
+    "list" \
+    "members" \
+    "rm" \
+    "add" \
+    "remove"
 }

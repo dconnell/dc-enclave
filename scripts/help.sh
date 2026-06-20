@@ -45,6 +45,7 @@ _show_summary() {
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
   echo "  clean [--dry-run] [--hidden-volumes [name]]       Remove old/orphan image tags or orphan hidden volumes"
+  echo "  network <create|ls|members|rm|add|remove> ...     Manage private networks between containers"
   echo "  install <name> <path>                             Install dotfiles"
   echo "  version                                           Print version (aliases: --version, -v)"
   echo "  help [command]                                    Show this help or detailed help"
@@ -98,6 +99,16 @@ Options:
                Examples:
                  --hide node_modules
                  --hide apps/web/node_modules,apps/api/node_modules
+
+  --network <name[,name...]>
+               Attach the container to one or more private dc networks so it can
+               reach other containers on the same network by name, without
+               publishing ports to the host. Each entry is a network name, or
+               name:ip to pin a static IPv4. Example: --network myapp,obs
+
+  --ip <addr>  Static IPv4 for the primary (first) network, e.g. 10.0.0.5.
+               Equivalent to writing name:ip on the first --network entry. Not
+               supported on the apple/container backend.
 
   host:container
               Port mapping(s) to publish, in Docker syntax. A bare port number
@@ -551,6 +562,57 @@ Notes:
 EOF
 }
 
+_show_help_network() {
+  cat <<'EOF'
+Usage: dc network <create|ls|members|rm|add|remove> ...
+
+Description:
+  Manages private networks that let dc containers talk to each other without
+  publishing any port to the host. Linking is explicit: containers are isolated
+  by default and only reach peers when placed on the same network on purpose.
+
+  Create a network, then attach containers to it:
+    dc network create myapp
+    dc new myapp-db --network myapp
+    dc new myapp-web --network myapp
+    # now myapp-web can reach myapp-db by name (no port published)
+
+Addressing:
+  Containers on the same network resolve each other by project name.
+    - docker / orbstack / colima / podman: bare name (e.g. myapp-db)
+    - apple/container: <name>.test (e.g. myapp-db.test); macOS 26+ required.
+  Static IPs are opt-in (--ip) and supported on Docker-compatible backends only.
+
+Subcommands:
+  create <name> [--subnet <cidr>] [--subnet-v6 <cidr>]
+                              Create a private network. The subnet is
+                              auto-allocated unless --subnet is given.
+
+  ls | list                   List networks and their dc members.
+
+  members <name>              Show which projects are on a network.
+
+  rm <name> [--force]         Remove a network. Refuses while dc projects still
+                              reference it; --force disconnects them first
+                              (Docker-compatible backends only) and warns that
+                              their configs still reference the network.
+
+  add <name> <project> [--ip <addr>]
+                              Attach an existing container to a network and
+                              record it in the project config (so rebuilds
+                              re-attach). Docker-compatible backends only.
+
+  remove <name> <project>     Detach a container from a network and drop it from
+                              the project config. Docker-compatible backends only.
+
+Notes:
+  - Networks are daemon objects; use `dc network ls` to see them.
+  - On apple/container, use --network at `dc new` time (live add/remove and
+    static IPs are not supported); a single network per container.
+  - Containers with no --network are not linked to any dc peer.
+EOF
+}
+
 _show_help_install() {
   cat <<'EOF'
 Usage: dc install <name> <path>
@@ -595,7 +657,7 @@ Description:
 Arguments:
   [command]  Optional command name to show detailed help for. One of:
              new, start, stop, status, list, shell, logs, exec, restart, rm,
-             rebuild-container, rebuild-image, clean, install, version, help
+             rebuild-container, rebuild-image, clean, network, install, version, help
 
 Aliases:
   --help     Same as 'dc help'
@@ -652,6 +714,7 @@ case "$COMMAND" in
   rebuild-container)  _show_help_rebuild_container ;;
   rebuild-image)      _show_help_rebuild_image ;;
   clean)              _show_help_clean ;;
+  network|net)        _show_help_network ;;
   install)            _show_help_install ;;
   version|--version|-v) _show_help_version ;;
   help|--help|-h)     _show_help_help ;;

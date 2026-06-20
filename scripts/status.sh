@@ -90,6 +90,9 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
     if declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1 && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
       echo "    Hidden paths: ${CONTAINER_HIDDEN_PATHS[*]}"
     fi
+    if declare -p CONTAINER_NETWORKS >/dev/null 2>&1 && [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+      echo "    Networks:     ${CONTAINER_NETWORKS[*]}"
+    fi
     echo "    GitHub token: $token_set"
     echo "    SSH key:      $ssh_key_exists"
     if declare -p PORTS >/dev/null 2>&1 && [[ ${#PORTS[@]} -gt 0 ]]; then

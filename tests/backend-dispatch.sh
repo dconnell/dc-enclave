@@ -205,5 +205,67 @@ backend_exec_interactive myproj --env FOO=bar --env BAZ=qux -- run-server arg1 \
 expect_logged "docker / exec_interactive (-- option/cmd split)" \
   "docker exec -it --env FOO=bar --env BAZ=qux myproj run-server arg1"
 
+# ---------------------------------------------------------------------------
+# Network management dispatch: pins the per-backend argv divergence for
+# network create/list/rm/connect/disconnect. apple uses `delete` (not `rm`),
+# resolves peers as `<name>.test`, and CANNOT live-attach/detach -- those two
+# must return non-zero WITHOUT invoking the CLI (no CALL line).
+# ---------------------------------------------------------------------------
+network_dispatch_expected() {
+  local backend="$1" bin="$2" func="$3"
+  case "$func" in
+    network_create)
+      [[ "$backend" == apple ]] && s="container network create mynet --subnet 10.0.0.0/24" \
+                                || s="$bin network create mynet --subnet 10.0.0.0/24" ;;
+    network_list)
+      [[ "$backend" == apple ]] && s="container network list" \
+                                || s="$bin network ls --format {{.Name}}" ;;
+    network_rm)
+      [[ "$backend" == apple ]] && s="container network delete mynet" \
+                                || s="$bin network rm mynet" ;;
+    network_connect)    s="$bin network connect --ip 10.0.0.5 mynet myproj" ;;
+    network_disconnect) s="$bin network disconnect mynet myproj" ;;
+    *) fail "network_dispatch_expected: unknown func $func" ;;
+  esac
+  printf '%s\n' "$s"
+}
+
+network_call_func() {
+  case "$1" in
+    network_create)     backend_network_create mynet --subnet 10.0.0.0/24 ;;
+    network_list)       backend_network_list ;;
+    network_rm)         backend_network_rm mynet ;;
+    network_connect)    backend_network_connect mynet myproj --ip 10.0.0.5 ;;
+    network_disconnect) backend_network_disconnect mynet myproj ;;
+    *) fail "network_call_func: unknown func $1" ;;
+  esac
+}
+
+for spec in "apple container" "docker docker" "orbstack docker" "colima docker" "podman podman"; do
+  read -r backend bin <<< "$spec"
+  DEV_CONTAINERS_BACKEND="$backend"
+  _DC_CLI="$bin"
+  _DC_PODMAN_HOST_GATEWAY_WARNED=0
+
+  for func in network_create network_list network_rm network_connect network_disconnect; do
+    # apple live-attach/detach are unsupported: no CLI call, must return non-zero.
+    if [[ "$backend" == apple && ( "$func" == network_connect || "$func" == network_disconnect ) ]]; then
+      : > "$LOG"
+      if network_call_func "$func" >/dev/null 2>&1 </dev/null; then
+        fail "$backend / $func: unsupported op must return non-zero"
+      fi
+      if [[ -s "$LOG" ]]; then
+        fail "$backend / $func: unsupported op must not invoke the CLI
+$(cat "$LOG")"
+      fi
+      pass "$backend / $func: refused without invoking CLI"
+      continue
+    fi
+    : > "$LOG"
+    network_call_func "$func" >/dev/null 2>&1 </dev/null || true
+    expect_logged "$backend / $func" "$(network_dispatch_expected "$backend" "$bin" "$func")"
+  done
+done
+
 echo ""
 echo "All backend dispatch matrix checks passed."

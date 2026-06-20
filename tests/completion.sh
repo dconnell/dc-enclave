@@ -67,7 +67,7 @@ pass "scopes dedup + membership"
 
 subs="$(dc_complete_subcommands | sort)"
 for c in new start stop status s list ls shell logs exec restart rm \
-         rebuild-container rebuild-image clean install version help; do
+         rebuild-container rebuild-image clean network net install version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
 pass "subcommands list"
@@ -163,6 +163,10 @@ pass "install pos3 completes directories"
 # rebuild-image targets.
 drive 2 dc rebuild-image ""; assert_reply "rebuild-image <TAB>" all base
 
+# network: subactions at position 2.
+drive 2 dc network ""; assert_reply "network <TAB>" \
+  add create list ls members remove rm
+
 # logs: one project, then log flags (--tail's value is not completed).
 drive 2 dc logs "";                assert_reply "logs <TAB>" alpha beta gamma
 drive 3 dc logs alpha "";          assert_reply "logs alpha <TAB>" --follow -f --tail
@@ -193,7 +197,9 @@ drive 4 dc clean --hidden-volumes alpha "--"; assert_reply "clean --hidden-volum
 # new: name is free text (no completion), pos3 = scope + flags.
 drive 2 dc new "";               assert_empty "new <name> (free text, no completion)"
 drive 3 dc new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
-  --cpus --hide --memory --repo-path all golang node
+  --cpus --hide --ip --memory --network --repo-path all golang node
+# --network/--ip consume a value (no completion offered for the value).
+drive 4 dc new foo --network ""; assert_empty "new foo --network <val> (no completion)"
 
 # ---------------------------------------------------------------------------
 # Section 3 - zsh completion (scripts/_dc), gated on zsh being installed
@@ -317,7 +323,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dc_subcommands
-    local want="--help --version -h -v clean exec help install list logs ls new rebuild-container rebuild-image restart rm s shell start status stop version"
+    local want="--help --version -h -v clean exec help install list logs ls net network new rebuild-container rebuild-image restart rm s shell start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
