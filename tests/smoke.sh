@@ -72,6 +72,10 @@ run_check "new/rebuild lifecycle checks" "$ROOT_DIR/tests/new-container-lifecycl
 run_check "internal-networking checks" "$ROOT_DIR/tests/networks.sh"
 
 echo ""
+echo "==> dc doctor --help (usage, no backend required)"
+run_check_output "dc doctor --help shows usage" 'doctor \[backend\|project\]' "$DC_BIN" doctor --help
+
+echo ""
 echo "==> dc help <command> (detailed help)"
 run_check "dc help new" "$DC_BIN" help new
 run_check "dc help start" "$DC_BIN" help start
@@ -86,6 +90,7 @@ run_check "dc help rm" "$DC_BIN" help rm
 run_check "dc help rebuild-container" "$DC_BIN" help rebuild-container
 run_check "dc help rebuild-image" "$DC_BIN" help rebuild-image
 run_check "dc help clean" "$DC_BIN" help clean
+run_check "dc help doctor" "$DC_BIN" help doctor
 run_check "dc help network" "$DC_BIN" help network
 run_check "dc help install" "$DC_BIN" help install
 run_check "dc help help" "$DC_BIN" help help

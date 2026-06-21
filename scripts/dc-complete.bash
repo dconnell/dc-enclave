@@ -131,6 +131,10 @@ _dc_complete() {
       _dc_complete_clean "$cur" "$prev"
       return 0
       ;;
+    doctor)
+      COMPREPLY=( $(compgen -W "$(dc_complete_doctor_targets "$cur")" -- "$cur") )
+      return 0
+      ;;
     network|net)
       _dc_complete_network "$cur" "$prev"
       return 0

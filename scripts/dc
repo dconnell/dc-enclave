@@ -69,6 +69,9 @@ case "$SUBCOMMAND" in
   clean)
     exec "$SCRIPT_DIR/clean.sh" "$@"
     ;;
+  doctor)
+    exec "$SCRIPT_DIR/doctor.sh" "$@"
+    ;;
   network|net)
     exec "$SCRIPT_DIR/network.sh" "$@"
     ;;

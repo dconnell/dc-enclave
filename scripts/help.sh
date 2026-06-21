@@ -45,6 +45,7 @@ _show_summary() {
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
   echo "  clean [--dry-run] [--hidden-volumes [name]]       Remove old/orphan image tags or orphan hidden volumes"
+  echo "  doctor [backend|project]                          Run preflight checks and report pass/fail"
   echo "  network <create|ls|members|rm|add|remove> ...     Manage private networks between containers"
   echo "  install <name> <path>                             Install dotfiles"
   echo "  version                                           Print version (aliases: --version, -v)"
@@ -645,6 +646,55 @@ Notes:
 EOF
 }
 
+_show_help_doctor() {
+  cat <<'EOF'
+Usage: dc doctor [backend|project]
+
+Description:
+  Runs read-only preflight checks and prints pass/fail per subsystem, so you get
+  a single diagnosis instead of assembling one from `dc status` plus tribal
+  knowledge. It catches the common drift classes: wrong bash version, missing or
+  broken global config / overlay root, a missing backend CLI, an unreachable
+  runtime, a stale or missing dev-base image, Colima context drift, a non-docker
+  Colima runtime, and (for a project) a broken config, missing image, or missing
+  secrets.
+
+  doctor NEVER starts or mutates anything (unlike setup.sh, it will not run
+  `colima start`, `podman machine start`, etc.); it only inspects and reports
+  the exact command to run for each failure.
+
+  The exit code is nonzero if any check fails, so doctor is CI- and
+  preflight-friendly: `dc doctor && dc start` only proceeds when healthy.
+
+Scope:
+  (none)        Every detected backend CLI, plus host checks (bash, global
+                config, overlays). Each backend gets its own section with
+                CLI / runtime / Colima-specific / dev-base checks.
+  <backend>     One of: apple, docker, orbstack, colima, podman.
+  <project>     A configured project name: checks that project's backend plus
+                project-specific state (config loads, image present, secrets
+                set, container state).
+
+Arguments:
+  [backend|project]
+                Optional scope. A known backend name selects that backend; any
+                other name is treated as a project (it must have a config under
+                ~/.config/dev-containers/<name>/config). An unknown name errors.
+
+Examples:
+  dc doctor              check all detected backends + host environment
+  dc doctor colima       check only the Colima backend
+  dc doctor myapp        check the myapp project and its backend
+
+Notes:
+  - Read-only: no daemon/machine is started and nothing is written.
+  - Per-backend image stores are independent; a missing dev-base is reported per
+    backend (run CONTAINER_BACKEND=<b> scripts/setup.sh to build it there).
+  - Container state for a project is informational only (a stopped project is
+    normal) and does not count as a failure.
+EOF
+}
+
 _show_help_help() {
   cat <<'EOF'
 Usage: dc help [command]
@@ -655,9 +705,9 @@ Description:
   for that specific command including arguments, options, examples, and notes.
 
 Arguments:
-  [command]  Optional command name to show detailed help for. One of:
+             [command]  Optional command name to show detailed help for. One of:
              new, start, stop, status, list, shell, logs, exec, restart, rm,
-             rebuild-container, rebuild-image, clean, network, install, version, help
+             rebuild-container, rebuild-image, clean, doctor, network, install, version, help
 
 Aliases:
   --help     Same as 'dc help'
@@ -714,6 +764,7 @@ case "$COMMAND" in
   rebuild-container)  _show_help_rebuild_container ;;
   rebuild-image)      _show_help_rebuild_image ;;
   clean)              _show_help_clean ;;
+  doctor)             _show_help_doctor ;;
   network|net)        _show_help_network ;;
   install)            _show_help_install ;;
   version|--version|-v) _show_help_version ;;

@@ -42,6 +42,7 @@ dc_complete_subcommands() {
     "clean" \
     "network" \
     "net" \
+    "doctor" \
     "install" \
     "version" \
     "--version" \
@@ -171,4 +172,18 @@ dc_complete_network_subactions() {
     "rm" \
     "add" \
     "remove"
+}
+
+# Print the candidate targets for `dc doctor`: the five backend names followed by
+# configured project names. A backend name takes priority at runtime when a
+# project happens to share one, but completion offers both.
+dc_complete_doctor_targets() {
+  local cur="${1:-}"
+  local name
+  printf '%s\n' apple docker orbstack colima podman
+  for d in "$HOME/.config/dev-containers"/*; do
+    [[ -d "$d" && -f "$d/config" ]] || continue
+    name="$(basename "$d")"
+    [[ -z "$cur" || "$name" == "$cur"* ]] && printf '%s\n' "$name"
+  done 2>/dev/null
 }

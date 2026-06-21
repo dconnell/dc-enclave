@@ -130,6 +130,9 @@ _dc_dispatch() {
     clean)
       _dc_clean
       ;;
+    doctor)
+      _dc_doctor
+      ;;
     network|net)
       _dc_network
       ;;
@@ -209,6 +212,18 @@ _dc_clean() {
   if (( have_hv )) && (( ! have_proj )); then
     _dc_projects_simple
   fi
+}
+
+# `dc doctor [backend|project]`: one optional target (backend or project).
+_dc_doctor() {
+  if ! _dc_load_complete_data; then
+    _message "dc completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+
+  local -a all
+  all=("${(@f)$(dc_complete_doctor_targets)}")
+  _wanted targets expl 'backend or project' compadd -a all
 }
 
 # `dc new <name> [scope] [--repo-path <d>] [--cpus N] [--memory V] [--hide <p>] [--network <n>[,...]] [--ip <addr>] [ports]`.

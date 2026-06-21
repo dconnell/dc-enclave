@@ -74,6 +74,7 @@ The day-to-day interface is the `dc` command with subcommands. All subcommands d
 | `dc rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]` | Destroy and recreate container from selected image |
 | `dc rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
 | `dc clean [--dry-run] [--hidden-volumes [name]]` | Remove old/orphan managed image tags or orphan managed hidden volumes |
+| `dc doctor [backend\|project]` | Run read-only preflight checks and report pass/fail per subsystem (nonzero if any fail) |
 | `dc install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
 | `dc version` (`dc --version`, `dc -v`) | Print the dev-containers version |
 | `dc help [command]` (`dc --help`, `dc -h`) | Show usage summary or detailed help for a specific command |
@@ -827,6 +828,14 @@ Copies the dotfiles directory into the running container and executes its `insta
 See `templates/dotfiles/` in this repo for a ready-to-fork example.
 
 ## Troubleshooting
+
+Run `dc doctor` first. It runs read-only preflight checks across the host environment and every detected backend (or one backend / one project if given) and prints a pass/fail per subsystem — bash version, global config and overlay root, backend CLI presence, runtime reachability, Colima context/runtime drift, and a per-backend `dev-base:latest`. It never starts or mutates anything and exits nonzero if anything fails, so it pinpoints drift (Colima context drifted, Podman machine stopped, stale dev-base, wrong bash) in one shot.
+
+```
+dc doctor              # all detected backends + host checks
+dc doctor colima       # one backend
+dc doctor myapp        # one project + its backend
+```
 
 Bash version too old:
 

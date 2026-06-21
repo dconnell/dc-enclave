@@ -67,10 +67,14 @@ pass "scopes dedup + membership"
 
 subs="$(dc_complete_subcommands | sort)"
 for c in new start stop status s list ls shell logs exec restart rm \
-         rebuild-container rebuild-image clean network net install version help; do
+         rebuild-container rebuild-image clean network net doctor install version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
 pass "subcommands list"
+
+# doctor targets: the five backend names plus configured projects.
+expect_sorted "doctor targets" \
+  "$(dc_complete_doctor_targets)" apple docker orbstack colima podman alpha beta gamma
 
 # Hardened global-config parser: must accept a clean quoted value and reject
 # anything that could execute ($, backtick, or unquoted).
@@ -166,6 +170,11 @@ drive 2 dc rebuild-image ""; assert_reply "rebuild-image <TAB>" all base
 # network: subactions at position 2.
 drive 2 dc network ""; assert_reply "network <TAB>" \
   add create list ls members remove rm
+
+# doctor: one optional target (backend or project). Backends are always offered;
+# configured projects (alpha/beta/gamma) appear too.
+drive 2 dc doctor ""; assert_reply "doctor <TAB>" \
+  apple colima docker gamma orbstack podman alpha beta
 
 # logs: one project, then log flags (--tail's value is not completed).
 drive 2 dc logs "";                assert_reply "logs <TAB>" alpha beta gamma
@@ -323,7 +332,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dc_subcommands
-    local want="--help --version -h -v clean exec help install list logs ls net network new rebuild-container rebuild-image restart rm s shell start status stop version"
+    local want="--help --version -h -v clean doctor exec help install list logs ls net network new rebuild-container rebuild-image restart rm s shell start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
