@@ -142,11 +142,48 @@ else
   SELECTED_SCOPE_SUMMARY="(none)"
 fi
 
-# Emit the composed file: always FROM dev-base:latest, each overlay fragment in
-# layered order, then force USER dev, a single chained ENTRYPOINT that runs
-# every installed per-language sync hook, and a long-running CMD.
+# Provenance: detect each overlay source dir independently (plans/versioning.md).
+# Per side we always have a content fingerprint; git commit/dirty/source are added
+# when the dir is a git checkout. Values are scrubbed before inlining into LABELs
+# (no quotes/backslash/dollar reach the Dockerfile). base.id and built.utc cannot
+# be known at compose time (no backend), so they are declared as ARGs and injected
+# at build time by the caller via --build-arg.
+TEAM_CONTENT_HASH="$(dc_provenance_content_hash "$DC_OVERLAYS_DIR" team "$EFFECTIVE_SCOPES_CSV")"
+USER_CONTENT_HASH="$(dc_provenance_content_hash "$DC_OVERLAYS_DIR" user "$EFFECTIVE_SCOPES_CSV")"
+COMBINED_CONTENT_HASH="$(dc_provenance_combined_hash "$TEAM_CONTENT_HASH" "$USER_CONTENT_HASH")"
+TEAM_GIT_COMMIT="$(dc_provenance_git_commit "$DC_OVERLAYS_DIR/team")"
+TEAM_GIT_DIRTY="$(dc_provenance_git_dirty "$DC_OVERLAYS_DIR/team")"
+TEAM_GIT_SOURCE="$(dc_provenance_git_source "$DC_OVERLAYS_DIR/team")"
+USER_GIT_COMMIT="$(dc_provenance_git_commit "$DC_OVERLAYS_DIR/user")"
+USER_GIT_DIRTY="$(dc_provenance_git_dirty "$DC_OVERLAYS_DIR/user")"
+USER_GIT_SOURCE="$(dc_provenance_git_source "$DC_OVERLAYS_DIR/user")"
+
+# Emit the composed file: always FROM dev-base:latest, a provenance LABEL block
+# capturing overlay state, each overlay fragment in layered order, then force
+# USER dev, a single chained ENTRYPOINT that runs every installed per-language
+# sync hook, and a long-running CMD.
 {
   echo "FROM dev-base:latest"
+  echo ""
+  echo "# Provenance labels (plans/versioning.md): overlay state at compose time."
+  echo "# base.id / built.utc are injected at build time via --build-arg."
+  echo 'ARG DC_BASE_ID=""'
+  echo 'ARG DC_BUILT_UTC=""'
+  echo "LABEL devcontainers.dc.version=\"$(dc_label_scrub "$DC_VERSION")\""
+  echo "LABEL devcontainers.scopes=\"$(dc_label_scrub "$EFFECTIVE_SCOPES_CSV")\""
+  echo "LABEL devcontainers.base.image=\"dev-base:latest\""
+  echo "LABEL devcontainers.base.id=\"\${DC_BASE_ID}\""
+  echo "LABEL devcontainers.team.content_hash=\"$(dc_label_scrub "$TEAM_CONTENT_HASH")\""
+  echo "LABEL devcontainers.team.git_commit=\"$(dc_label_scrub "$TEAM_GIT_COMMIT")\""
+  echo "LABEL devcontainers.team.git_dirty=\"$(dc_label_scrub "$TEAM_GIT_DIRTY")\""
+  echo "LABEL devcontainers.team.source=\"$(dc_label_scrub "$TEAM_GIT_SOURCE")\""
+  echo "LABEL devcontainers.user.content_hash=\"$(dc_label_scrub "$USER_CONTENT_HASH")\""
+  echo "LABEL devcontainers.user.git_commit=\"$(dc_label_scrub "$USER_GIT_COMMIT")\""
+  echo "LABEL devcontainers.user.git_dirty=\"$(dc_label_scrub "$USER_GIT_DIRTY")\""
+  echo "LABEL devcontainers.user.source=\"$(dc_label_scrub "$USER_GIT_SOURCE")\""
+  echo "LABEL devcontainers.content.hash=\"$(dc_label_scrub "$COMBINED_CONTENT_HASH")\""
+  echo "LABEL devcontainers.built.utc=\"\${DC_BUILT_UTC}\""
+  echo "LABEL org.opencontainers.image.revision=\"$(dc_label_scrub "$COMBINED_CONTENT_HASH")\""
   echo ""
   echo "# Selected overlay scopes: $SELECTED_SCOPE_SUMMARY"
 

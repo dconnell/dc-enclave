@@ -73,6 +73,7 @@ The day-to-day interface is the `dc` command with subcommands. All subcommands d
 | `dc rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, and config+secrets (host code preserved) |
 | `dc rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]` | Destroy and recreate container from selected image |
 | `dc rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
+| `dc provenance <name> [--history]` | Show image provenance: team/user overlay commits + content fingerprints + base id + build time for the project's image |
 | `dc clean [--dry-run] [--hidden-volumes [name]]` | Remove old/orphan managed image tags or orphan managed hidden volumes |
 | `dc doctor [backend\|project]` | Run read-only preflight checks and report pass/fail per subsystem (nonzero if any fail) |
 | `dc install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
@@ -729,6 +730,25 @@ Notes:
 - `dc rebuild-image` is backend-agnostic (apple/colima/docker/orbstack/podman via `CONTAINER_BACKEND` detection/override).
 - `dc rebuild-image all` rebuilds `dev-base` and all configured derived images.
 - `dc rebuild-container <project>` never rebuilds images. If the required image is missing, it fails and instructs you to run `dc rebuild-image all`.
+
+## Image provenance
+
+Each derived image (`dev-img-*`) is rebuilt in place and `:latest` is overwritten on every rebuild by design, so to answer *"what state were my overlay repos in when this image was built?"* dev-containers records provenance:
+
+- **OCI labels on the image** — `docker image inspect <img>` / `podman image inspect <img>` show `devcontainers.team.git_commit`, `devcontainers.user.git_commit`, `devcontainers.team.content_hash`, `devcontainers.content.hash`, `devcontainers.base.id`, `devcontainers.scopes`, `devcontainers.built.utc`, and `org.opencontainers.image.revision`. Per overlay source (`team/`, `user/`) the git HEAD commit is recorded when that directory is a git checkout; a content fingerprint of the layered files is always recorded.
+- **A per-project log** — `~/.config/dev-containers/<name>/provenance.jsonl` (JSON Lines, owner-only) appends one entry per distinct image state, so the history survives the `:latest` overwrite. It is written when a derived image is actually built (`dc new`, `dc rebuild-image`), not on `dc rebuild-container` (which does not build) or base-only projects.
+
+Read it back with:
+
+```
+dc provenance myapp                 # current build's provenance (pretty)
+dc provenance myapp --history       # full timeline as a table
+dc status                           # one-line provenance summary per project
+```
+
+To reproduce a build for debugging: read the `team`/`user` commit from `dc provenance`, check it out in the corresponding overlay repo (`git -C "$DC_OVERLAYS_DIR/team" checkout <sha>`), then `dc rebuild-image all && dc rebuild-container <name>`. A side not under git shows only its content fingerprint — no commit to check out, but the fingerprint still tells you whether your current files match that build.
+
+`git_dirty: true` (label / log) means the image includes uncommitted overlay edits at build time.
 
 ## Cleaning old dev-container images
 

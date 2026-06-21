@@ -44,6 +44,7 @@ _show_summary() {
   echo "  rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]"
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
+  echo "  provenance <name> [--history|--all]               Show image provenance (overlay commits + build state)"
   echo "  clean [--dry-run] [--hidden-volumes [name]]       Remove old/orphan image tags or orphan hidden volumes"
   echo "  doctor [backend|project]                          Run preflight checks and report pass/fail"
   echo "  network <create|ls|members|rm|add|remove> ...     Manage private networks between containers"
@@ -522,6 +523,57 @@ Notes:
 EOF
 }
 
+_show_help_provenance() {
+  cat <<'EOF'
+Usage: dc provenance <project> [--history|--all]
+
+Description:
+  Shows the provenance of a project's current image: the team and user overlay
+  state that produced it. For each overlay source (team/, user/) it reports the
+  git HEAD commit (when that directory is a git checkout) and a content
+  fingerprint of the layered files (always available), plus the base image id,
+  scope list, dev-containers version, and build time.
+
+  This lets you answer "what state were my overlay repos in when this image was
+  built?" without archaeology: read the team/user commit, check it out in the
+  overlay repo, and rebuild to reproduce a build for debugging.
+
+  The same data is stamped on the image as OCI labels
+  (devcontainers.team.git_commit, devcontainers.content.hash, ...), so it is
+  also available via `docker image inspect` / `podman image inspect`.
+
+Source:
+  The per-project append-only log ~/.config/dev-containers/<project>/provenance.jsonl,
+  written by `dc new` and `dc rebuild-image` whenever a derived image is built.
+  (dc rebuild-container does not build images and so does not log.)
+
+Arguments:
+  <project>   Project/container name. Must already exist.
+
+Options:
+  --history, --all
+              Print every recorded build as a table (oldest first) instead of
+              just the current one. Useful to see how the overlay state moved
+              over time.
+
+Output:
+  Pretty-printed when jq is installed; otherwise the raw JSONL line(s) are
+  printed so the command never hard-requires jq.
+
+Examples:
+  dc provenance myapp                 Show the current image's provenance
+  dc provenance myapp --history       Show the full build timeline
+
+Notes:
+  - A project created before provenance logging existed has no log; the command
+    says so and tells you which command records one.
+  - git_dirty: true means the image includes uncommitted overlay edits.
+  - A side whose directory is not a git repo shows only its content fingerprint
+    (content:<hash>); there is no commit to check out, but the fingerprint still
+    tells you whether your current files match that build.
+EOF
+}
+
 _show_help_clean() {
   cat <<'EOF'
 Usage: dc clean [--dry-run]
@@ -705,9 +757,9 @@ Description:
   for that specific command including arguments, options, examples, and notes.
 
 Arguments:
-             [command]  Optional command name to show detailed help for. One of:
-             new, start, stop, status, list, shell, logs, exec, restart, rm,
-             rebuild-container, rebuild-image, clean, doctor, network, install, version, help
+              [command]  Optional command name to show detailed help for. One of:
+              new, start, stop, status, list, shell, logs, exec, restart, rm,
+              rebuild-container, rebuild-image, provenance, clean, doctor, network, install, version, help
 
 Aliases:
   --help     Same as 'dc help'
@@ -763,6 +815,7 @@ case "$COMMAND" in
   rm)                 _show_help_rm ;;
   rebuild-container)  _show_help_rebuild_container ;;
   rebuild-image)      _show_help_rebuild_image ;;
+  provenance)         _show_help_provenance ;;
   clean)              _show_help_clean ;;
   doctor)             _show_help_doctor ;;
   network|net)        _show_help_network ;;

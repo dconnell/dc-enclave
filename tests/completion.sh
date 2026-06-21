@@ -67,7 +67,7 @@ pass "scopes dedup + membership"
 
 subs="$(dc_complete_subcommands | sort)"
 for c in new start stop status s list ls shell logs exec restart rm \
-         rebuild-container rebuild-image clean network net doctor install version help; do
+         rebuild-container rebuild-image provenance clean network net doctor install version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
 pass "subcommands list"
@@ -166,6 +166,10 @@ pass "install pos3 completes directories"
 
 # rebuild-image targets.
 drive 2 dc rebuild-image ""; assert_reply "rebuild-image <TAB>" all base
+
+# provenance: one project, then --history/--all flags.
+drive 2 dc provenance "";              assert_reply "provenance <TAB>" alpha beta gamma
+drive 3 dc provenance alpha "--";      assert_reply "provenance alpha --<TAB>" --all --history
 
 # network: subactions at position 2.
 drive 2 dc network ""; assert_reply "network <TAB>" \
@@ -332,7 +336,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dc_subcommands
-    local want="--help --version -h -v clean doctor exec help install list logs ls net network new rebuild-container rebuild-image restart rm s shell start status stop version"
+    local want="--help --version -h -v clean doctor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm s shell start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -351,6 +355,8 @@ if command -v zsh >/dev/null 2>&1; then
     chk rebuild-container "--rotate-keys["
     chk install          "2:dotfiles directory:_files -/"
     chk rebuild-image    "1:target:_dc_rebuild_image_targets"
+    chk provenance       "1:project:_dc_projects_simple"
+    chk provenance       "--history["
     chk new              "2:scope:_dc_scopes"
     print "PASS: zsh per-subcommand dispatch specs"
   ' || fail "zsh completion logic/spec test failed"

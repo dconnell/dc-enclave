@@ -95,6 +95,9 @@ dispatch_expected() {
   case "$func" in
     build_image)      s="$bin build --tag img:latest --file /tmp/cf /ctx" ;;
     image_exists)     s="$bin image ls --format {{.Repository}}:{{.Tag}}" ;;
+    image_id)
+      [[ "$backend" == apple ]] && s="container image inspect img:latest --format {{.ID}}" \
+                                 || s="$bin image inspect img:latest --format {{.Id}}" ;;
     list_images)      s="$bin image ls --format {{.Repository}}\t{{.Tag}}\t{{.ID}}" ;;
     remove_image)     s="$bin image rm img:1" ;;
     list_volumes)
@@ -128,6 +131,7 @@ call_func() {
   case "$1" in
     build_image)      backend_build_image img:latest /tmp/cf /ctx ;;
     image_exists)     backend_image_exists img:latest ;;
+    image_id)         backend_image_id img:latest ;;
     list_images)      backend_list_images ;;
     remove_image)     backend_remove_image img:1 ;;
     list_volumes)     backend_list_volumes ;;
@@ -149,7 +153,7 @@ call_func() {
   esac
 }
 
-FUNCS=(build_image image_exists list_images remove_image list_volumes remove_volume \
+FUNCS=(build_image image_exists image_id list_images remove_image list_volumes remove_volume \
        list_running list_all exists is_running create start stop logs delete \
        exec exec_as_root exec_stdin exec_interactive)
 

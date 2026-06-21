@@ -222,6 +222,35 @@ dc_sha256_hex() {
   dc_die "No SHA-256 tool available (sha256sum, shasum, or openssl required)."
 }
 
+# Echo the SHA-256 hex digest of a file's raw bytes.
+#
+# Companion to dc_sha256_hex for the cases (provenance fingerprints) where the
+# input is a file and every byte -- including trailing newlines -- must count.
+# Same tool fallback chain as dc_sha256_hex so it works on every supported host.
+dc_sha256_file() {
+  local file="$1"
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    set -- $(sha256sum "$file")
+    printf '%s\n' "$1"
+    return 0
+  fi
+
+  if command -v shasum >/dev/null 2>&1; then
+    set -- $(shasum -a 256 "$file")
+    printf '%s\n' "$1"
+    return 0
+  fi
+
+  if command -v openssl >/dev/null 2>&1; then
+    set -- $(openssl dgst -sha256 -r "$file")
+    printf '%s\n' "$1"
+    return 0
+  fi
+
+  dc_die "No SHA-256 tool available (sha256sum, shasum, or openssl required)."
+}
+
 # Validate a single overlay scope name against the allowed identifier pattern.
 dc_validate_scope_name() {
   local scope="$1"
@@ -663,6 +692,253 @@ dc_image_hash_from_ref() {
   fi
 
   return 1
+}
+
+# =============================================================================
+# Image provenance (plans/versioning.md). Best-effort provenance capture so a
+# built dev-img-* image can be traced back to the overlay state (team/user git
+# commits + file content fingerprints) that produced it. Detection is
+# per-directory and independent for team/ and user/: each side always yields a
+# content_hash, and additionally yields git commit/dirty/source when the dir is
+# a git checkout. These are host-side helpers; none needs a container backend.
+# =============================================================================
+
+# Escape a string for safe embedding in a JSON string value. Backslash and
+# double-quote are escaped; the named control chars use their JSON short forms;
+# any other control char (< 0x20) becomes \u00XX. Values fed in here (commit
+# SHAs, hex hashes, scope names, ISO timestamps, git remote URLs) are normally
+# already clean, so this is defensive -- it keeps provenance.jsonl valid even
+# if a future field carries an unusual byte.
+dc_json_escape() {
+  local s="$1"
+  local out=""
+  local i ch ord code
+
+  for ((i = 0; i < ${#s}; i++)); do
+    ch="${s:i:1}"
+    case "$ch" in
+      \\) out+='\\' ;;
+      '"')  out+='\"' ;;
+      $'\n') out+='\n' ;;
+      $'\r') out+='\r' ;;
+      $'\t') out+='\t' ;;
+      $'\b') out+='\b' ;;
+      $'\f') out+='\f' ;;
+      *)
+        ord=$(printf '%d' "'$ch" 2>/dev/null || printf '64')
+        if (( ord < 32 )); then
+          printf -v code '%04x' "$ord"
+          out+="\\u$code"
+        else
+          out+="$ch"
+        fi
+        ;;
+    esac
+  done
+
+  printf '%s' "$out"
+}
+
+# Reduce a value to the safe subset for a Dockerfile LABEL double-quoted value.
+# Dockerfile label values would otherwise interpret `"` (ends the string), `\`
+# (escape), and `$` (ARG/ENV expansion); backtick is stripped defensively too.
+# Control chars are removed. Our values are inherently safe, so this is a guard
+# against surprises (e.g. an exotic git remote URL). Stripping (not escaping)
+# keeps the label inert without depending on Dockerfile escape quirks.
+dc_label_scrub() {
+  local s="$1"
+  local out=""
+  local i ch ord
+
+  for ((i = 0; i < ${#s}; i++)); do
+    ch="${s:i:1}"
+    if [[ "$ch" == '"' || "$ch" == '\' || "$ch" == '$' || "$ch" == '`' ]]; then
+      continue
+    fi
+    ord=$(printf '%d' "'$ch" 2>/dev/null || printf '64')
+    (( ord < 32 )) && continue
+    out+="$ch"
+  done
+
+  printf '%s' "$out"
+}
+
+# Per-namespace content fingerprint for a set of EFFECTIVE scopes. Iterates the
+# canonical order (all first, then listed scopes -- exactly what composes) and,
+# for each existing fragment under $overlays_dir/$namespace, folds
+# "v1|<scope>|<sha256(file bytes)>" into the hash input. Returns empty when the
+# namespace contributes no fragment for these scopes (e.g. user/ has no
+# Containerfile.<scope>). The 12-hex truncation matches the label contract; the
+# per-fragment "v1" prefix leaves room to evolve the scheme.
+dc_provenance_content_hash() {
+  local overlays_dir="$1"
+  local namespace="$2"
+  local effective_scopes_csv="$3"
+
+  local acc=""
+  local scope="" file=""
+  local -a scopes=()
+  [[ -n "$effective_scopes_csv" ]] && IFS=',' read -r -a scopes <<< "$effective_scopes_csv"
+
+  for scope in "${scopes[@]}"; do
+    [[ -n "$scope" ]] || continue
+    file="$overlays_dir/$namespace/Containerfile.$scope"
+    [[ -f "$file" ]] || continue
+    acc+="v1|$scope|$(dc_sha256_file "$file")|"
+  done
+
+  [[ -n "$acc" ]] || return 0
+  local hash=""
+  hash="$(dc_sha256_hex "$acc")"
+  printf '%s\n' "${hash:0:12}"
+}
+
+# Fold both namespaces' per-side fingerprints into one full (64-hex) hash. Used
+# as the stable, always-present combined identifier (label content.hash and the
+# JSONL dedup key). Order is fixed (team then user) so the result is stable.
+dc_provenance_combined_hash() {
+  local team_hash="$1"
+  local user_hash="$2"
+
+  dc_sha256_hex "v1|${team_hash}|${user_hash}"
+}
+
+# Git HEAD full SHA of $dir, or empty when $dir is not a git checkout. Always
+# exits 0 (best-effort: provenance never fails a build). The FULL sha (not the
+# abbreviated form) is stored so the log/labels hold the canonical identifier --
+# short shas are a display concern, handled at read time.
+dc_provenance_git_commit() {
+  local dir="$1"
+
+  [[ -d "$dir" ]] || { printf ''; return 0; }
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { printf ''; return 0; }
+  git -C "$dir" rev-parse HEAD 2>/dev/null || printf ''
+}
+
+# "true" / "false" when $dir is a git checkout (any tracked change, staged
+# change, or untracked file vs HEAD counts as dirty), or empty when not under
+# git. Uses `git status --porcelain` so an untracked new Containerfile.<scope>
+# is also flagged (its bytes already changed the content_hash; this mirrors
+# that as a human-readable warning).
+dc_provenance_git_dirty() {
+  local dir="$1"
+
+  [[ -d "$dir" ]] || { printf ''; return 0; }
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { printf ''; return 0; }
+  if [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
+# configured remote.origin.url for $dir, or empty when not under git / no remote.
+dc_provenance_git_source() {
+  local dir="$1"
+
+  [[ -d "$dir" ]] || { printf ''; return 0; }
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { printf ''; return 0; }
+  git -C "$dir" config --get remote.origin.url 2>/dev/null || printf ''
+}
+
+# Render a scopes CSV as a JSON array string, e.g. ["nodejs","golang"] / [].
+# Each element is JSON-escaped (scope names are charset-restricted, but escape
+# anyway so the output is always valid JSON).
+dc_provenance_scopes_json() {
+  local csv="$1"
+  local out="[" first=1 scope=""
+  local -a scopes=()
+  [[ -n "$csv" ]] && IFS=',' read -r -a scopes <<< "$csv"
+
+  for scope in "${scopes[@]}"; do
+    [[ -n "$scope" ]] || continue
+    if [[ $first -eq 1 ]]; then first=0; else out+=","; fi
+    out+="\"$(dc_json_escape "$scope")\""
+  done
+
+  out+="]"
+  printf '%s' "$out"
+}
+
+# Path to a project's provenance log.
+dc_provenance_log_path() {
+  printf '%s/.config/dev-containers/%s/provenance.jsonl\n' "$HOME" "$1"
+}
+
+# Append one provenance entry to the project's JSONL log, deduping on change.
+#
+# Recomputes the overlay-derived values from $overlays_dir + $scopes_csv (the
+# same source of truth compose-containerfile.sh uses for the image labels) and
+# merges in $base_id (the caller-supplied local dev-base image Id) plus the
+# build timestamp. Dedup key is (combined content_hash, base id): every overlay
+# byte and scope is already encoded in content_hash, and base id covers a base
+# rebuild, so the two together uniquely identify an image state. If the last
+# logged line matches, the append is skipped (no churn from no-op rebuilds or
+# rebuild-container). The file is created owner-only (chmod 600), matching the
+# security posture of the project config.
+dc_log_provenance() {
+  local project="$1"
+  local image_ref="$2"
+  local action="$3"
+  local overlays_dir="$4"
+  local scopes_csv="$5"
+  local base_id="$6"
+
+  local eff=""
+  eff="$(dc_effective_scopes_csv "$overlays_dir" "$scopes_csv" 2>/dev/null || true)"
+
+  local team_ch="" user_ch="" combined=""
+  team_ch="$(dc_provenance_content_hash "$overlays_dir" team "$eff")"
+  user_ch="$(dc_provenance_content_hash "$overlays_dir" user "$eff")"
+  combined="$(dc_provenance_combined_hash "$team_ch" "$user_ch")"
+
+  local team_commit="" team_dirty="" team_source=""
+  local user_commit="" user_dirty="" user_source=""
+  team_commit="$(dc_provenance_git_commit "$overlays_dir/team")"
+  team_dirty="$(dc_provenance_git_dirty "$overlays_dir/team")"
+  team_source="$(dc_provenance_git_source "$overlays_dir/team")"
+  user_commit="$(dc_provenance_git_commit "$overlays_dir/user")"
+  user_dirty="$(dc_provenance_git_dirty "$overlays_dir/user")"
+  user_source="$(dc_provenance_git_source "$overlays_dir/user")"
+
+  # dirty is a bare JSON boolean when under git, else an empty JSON string.
+  local tdj="" udj=""
+  if [[ "$team_dirty" == "true" || "$team_dirty" == "false" ]]; then tdj="$team_dirty"; else tdj='""'; fi
+  if [[ "$user_dirty" == "true" || "$user_dirty" == "false" ]]; then udj="$user_dirty"; else udj='""'; fi
+
+  local now=""
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  local team_obj="" user_obj="" base_obj="" scopes_json=""
+  team_obj="{\"content_hash\":\"$(dc_json_escape "$team_ch")\",\"git_commit\":\"$(dc_json_escape "$team_commit")\",\"git_dirty\":$tdj,\"source\":\"$(dc_json_escape "$team_source")\"}"
+  user_obj="{\"content_hash\":\"$(dc_json_escape "$user_ch")\",\"git_commit\":\"$(dc_json_escape "$user_commit")\",\"git_dirty\":$udj,\"source\":\"$(dc_json_escape "$user_source")\"}"
+  base_obj="{\"image\":\"dev-base:latest\",\"id\":\"$(dc_json_escape "$base_id")\"}"
+  scopes_json="$(dc_provenance_scopes_json "$eff")"
+
+  # Compact JSONL; content_hash is emitted last so dedup can find it via tail.
+  local line=""
+  line="{\"ts\":\"$(dc_json_escape "$now")\",\"action\":\"$(dc_json_escape "$action")\",\"image_ref\":\"$(dc_json_escape "$image_ref")\",\"scopes\":$scopes_json,\"dc_version\":\"$(dc_json_escape "$DC_VERSION")\",\"base\":$base_obj,\"team\":$team_obj,\"user\":$user_obj,\"content_hash\":\"$(dc_json_escape "$combined")\"}"
+
+  local log_path=""
+  log_path="$(dc_provenance_log_path "$project")"
+
+  # Dedup against the last logged line on (content_hash, base id).
+  local last=""
+  [[ -f "$log_path" ]] && last="$(tail -n1 "$log_path" 2>/dev/null || true)"
+  if [[ -n "$last" ]]; then
+    local last_ch="" last_base="" cur_ch="" cur_base=""
+    last_ch="$(printf '%s' "$last" | grep -oE '"content_hash":"[^"]*"' | tail -n1 || true)"
+    last_base="$(printf '%s' "$last" | grep -oE '"id":"[^"]*"' | head -n1 || true)"
+    cur_ch="\"content_hash\":\"$(dc_json_escape "$combined")\""
+    cur_base="\"id\":\"$(dc_json_escape "$base_id")\""
+    if [[ -n "$last_ch" && "$last_ch" == "$cur_ch" && "$last_base" == "$cur_base" ]]; then
+      return 0
+    fi
+  fi
+
+  mkdir -p "$(dirname "$log_path")"
+  printf '%s\n' "$line" >> "$log_path"
+  chmod 600 "$log_path"
 }
 
 # Known scalar and array keys permitted in a project config file. The loader

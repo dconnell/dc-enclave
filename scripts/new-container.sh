@@ -263,6 +263,10 @@ if [[ "$IMAGE" != "dev-base:latest" ]]; then
   COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${IMAGE_HASH}"
   DEVCONTAINER_BUILD_FILE="$COMPOSED_CONTAINERFILE"
 
+  # dev-base image Id feeds the provenance base.id label (best-effort, may be
+  # empty if the backend cannot resolve it).
+  PROV_BASE_ID="$(backend_image_id "dev-base:latest")"
+
   if backend_image_exists "$IMAGE"; then
     if [[ ! -f "$COMPOSED_CONTAINERFILE" ]]; then
       echo "==> Generating composed Containerfile for image: $IMAGE"
@@ -273,8 +277,15 @@ if [[ "$IMAGE" != "dev-base:latest" ]]; then
     echo "==> Generating composed Containerfile for image: $IMAGE"
     bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV"
     echo "==> Building image: $IMAGE"
-    backend_build_image "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR"
+    PROV_BUILT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    backend_build_image "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR" \
+      --build-arg "DC_BASE_ID=$PROV_BASE_ID" \
+      --build-arg "DC_BUILT_UTC=$PROV_BUILT_UTC"
   fi
+
+  # Record this image's provenance in the project log (deduped). A reused image
+  # still gets an entry so `dc provenance <project>` is populated.
+  dc_log_provenance "$PROJECT" "$IMAGE" "new" "$DC_OVERLAYS_DIR" "$SCOPE_CSV" "$PROV_BASE_ID"
 fi
 
 # Detect the host timezone once so the container mirrors the developer's local

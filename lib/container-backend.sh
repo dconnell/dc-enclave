@@ -545,6 +545,27 @@ backend_image_exists() {
   esac
 }
 
+# Echo the backend-local image Id (content digest) for an image reference, or
+# empty if it cannot be determined. Used for image provenance (the base.id
+# label/log field) so a reader can tell whether dev-base was rebuilt since a
+# derived image was built. Best-effort and backend-local by design: it never
+# fails a build (empty is acceptable), and the value is not portable across
+# backends -- it is only meaningful within one backend's image store.
+backend_image_id() {
+  local ref="$1"
+
+  case "$(backend_name)" in
+    apple)
+      # apple/container's inspect surface differs from docker's; attempt the
+      # closest form and fall through to empty on any failure.
+      container image inspect "$ref" --format '{{.ID}}' 2>/dev/null || true
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" image inspect "$ref" --format '{{.Id}}' 2>/dev/null || true
+      ;;
+  esac
+}
+
 # List images as repo<TAB>tag<TAB>id rows (normalized across backends/versions).
 backend_list_images() {
   case "$(backend_name)" in

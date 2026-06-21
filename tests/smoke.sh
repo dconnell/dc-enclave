@@ -89,6 +89,7 @@ run_check "dc help restart" "$DC_BIN" help restart
 run_check "dc help rm" "$DC_BIN" help rm
 run_check "dc help rebuild-container" "$DC_BIN" help rebuild-container
 run_check "dc help rebuild-image" "$DC_BIN" help rebuild-image
+run_check "dc help provenance" "$DC_BIN" help provenance
 run_check "dc help clean" "$DC_BIN" help clean
 run_check "dc help doctor" "$DC_BIN" help doctor
 run_check "dc help network" "$DC_BIN" help network

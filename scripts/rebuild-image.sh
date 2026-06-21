@@ -106,7 +106,11 @@ fi
 # Scan every project config, derive its image, and build each unique derived
 # repo once. dev-base-only projects are skipped (built above as the base).
 declare -A BUILT_REPOS=()
-declare -A SKIPPED_REPOS=()
+
+# Provenance inputs shared across this rebuild run: the dev-base Id feeds the
+# base.id label, and one build timestamp stamps every image built in this run.
+PROV_BASE_ID="$(backend_image_id "dev-base:latest")"
+PROV_BUILT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 while IFS= read -r config_file; do
   [[ -z "$config_file" ]] && continue
@@ -117,26 +121,32 @@ while IFS= read -r config_file; do
   image_ref="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$scope_csv")" || exit 1
   image_repo="${image_ref%%:*}"
 
-  if [[ "$image_ref" == "dev-base:latest" ]]; then
-    continue
+  # dev-base-only projects have no overlay provenance to record.
+  [[ "$image_ref" == "dev-base:latest" ]] && continue
+
+  project_name="$(basename "$(dirname "$config_file")")"
+
+  # Build each unique derived repo once; other projects sharing it reuse it.
+  if [[ -z "${BUILT_REPOS[$image_repo]-}" ]]; then
+    image_hash="$(dc_image_hash_from_ref "$image_ref")" || {
+      echo "ERROR: Could not derive image hash from image ref: $image_ref"
+      exit 1
+    }
+
+    composed_file="$ROOT_DIR/Containerfiles/generated/Containerfile.${image_hash}"
+
+    echo ""
+    echo "--- Building $image_ref ---"
+    bash "$COMPOSE_SCRIPT" "$composed_file" "$scope_csv"
+    backend_build_image "$image_ref" "$composed_file" "$ROOT_DIR" \
+      --build-arg "DC_BASE_ID=$PROV_BASE_ID" \
+      --build-arg "DC_BUILT_UTC=$PROV_BUILT_UTC"
+    BUILT_REPOS["$image_repo"]=1
   fi
 
-  if [[ -n "${BUILT_REPOS[$image_repo]-}" || -n "${SKIPPED_REPOS[$image_repo]-}" ]]; then
-    continue
-  fi
-
-  image_hash="$(dc_image_hash_from_ref "$image_ref")" || {
-    echo "ERROR: Could not derive image hash from image ref: $image_ref"
-    exit 1
-  }
-
-  composed_file="$ROOT_DIR/Containerfiles/generated/Containerfile.${image_hash}"
-
-  echo ""
-  echo "--- Building $image_ref ---"
-  bash "$COMPOSE_SCRIPT" "$composed_file" "$scope_csv"
-  backend_build_image "$image_ref" "$composed_file" "$ROOT_DIR"
-  BUILT_REPOS["$image_repo"]=1
+  # Record provenance per project (deduped). Shared images get an entry in each
+  # project's log so `dc provenance <project>` is populated.
+  dc_log_provenance "$project_name" "$image_ref" "rebuild" "$DC_OVERLAYS_DIR" "$scope_csv" "$PROV_BASE_ID"
 done < <(for f in "$CONFIG_DIR"/*/config; do [[ -f "$f" ]] && printf '%s\n' "$f"; done)
 
 echo ""

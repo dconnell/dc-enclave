@@ -39,6 +39,7 @@ dc_complete_subcommands() {
     "rm" \
     "rebuild-container" \
     "rebuild-image" \
+    "provenance" \
     "clean" \
     "network" \
     "net" \

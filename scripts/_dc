@@ -127,6 +127,12 @@ _dc_dispatch() {
     rebuild-image)
       _arguments '1:target:_dc_rebuild_image_targets'
       ;;
+    provenance)
+      _arguments \
+        '1:project:_dc_projects_simple' \
+        '--history[show the full build timeline]' \
+        '--all[show the full build timeline]'
+      ;;
     clean)
       _dc_clean
       ;;

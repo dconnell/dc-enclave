@@ -127,6 +127,14 @@ _dc_complete() {
       fi
       return 0
       ;;
+    provenance)
+      if [[ $COMP_CWORD -eq 2 ]]; then
+        _dc_reply_projects "$cur"
+        return 0
+      fi
+      COMPREPLY=( $(compgen -W "--history --all" -- "$cur") )
+      return 0
+      ;;
     clean)
       _dc_complete_clean "$cur" "$prev"
       return 0
