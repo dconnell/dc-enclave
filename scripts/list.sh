@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
 # scripts/list.sh - `dc list` / `dc ls`: compact one-line-per-container summary
-# (name, running/stopped/missing/unknown, backend, scopes). A lighter view than
-# `dc status`. Requires a reachable backend to report live state.
+# (name, running/stopped/missing/unknown, backend, scopes, stale warning). A
+# lighter view than `dc status`. Requires a reachable backend to report live
+# state. A `STALE` warning in the rightmost column means the container is bound
+# to an older image than its configured CONTAINER_IMAGE tag resolves to today;
+# run `dc rebuild-container <name>` to bring it back in sync.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -30,13 +33,14 @@ if [[ ${#PROJECTS[@]} -eq 0 ]]; then
   exit 0
 fi
 
-printf "%-24s %-12s %-10s %s\n" "NAME" "STATUS" "BACKEND" "SCOPES"
+printf "%-24s %-12s %-10s %-24s %s\n" "NAME" "STATUS" "BACKEND" "SCOPES" "WARN"
 
 for config_file in "${PROJECTS[@]}"; do
   dc_load_project_config "$config_file"
   project="${CONTAINER_PROJECT:-$(basename "$(dirname "$config_file")")}"
   project_backend="${CONTAINER_BACKEND:-$DEFAULT_BACKEND}"
 
+  warn=""
   if backend_use "$project_backend" 2>/dev/null; then
     if backend_is_running "$project" 2>/dev/null; then
       state="running"
@@ -45,10 +49,19 @@ for config_file in "${PROJECTS[@]}"; do
     else
       state="missing"
     fi
+
+    # Stale is only meaningful when the container exists: a missing container
+    # cannot be on an old image. backend_container_is_stale returns non-zero
+    # (not stale / unknown) for every indeterminate case, so a STALE marker
+    # only appears when drift is proven.
+    if [[ "$state" != "missing" ]] && [[ -n "${CONTAINER_IMAGE:-}" ]] \
+       && backend_container_is_stale "$project" "${CONTAINER_IMAGE:-}" >/dev/null 2>&1; then
+      warn="STALE"
+    fi
   else
     state="unknown"
   fi
 
   scope_value="${CONTAINER_OVERLAY_SCOPES:-unknown}"
-  printf "%-24s %-12s %-10s %s\n" "$project" "$state" "$project_backend" "$scope_value"
+  printf "%-24s %-12s %-10s %-24s %s\n" "$project" "$state" "$project_backend" "$scope_value" "$warn"
 done

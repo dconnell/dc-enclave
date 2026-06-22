@@ -5,7 +5,9 @@
 # Shows backend/system info, all containers, then per-project detail (running
 # state, image, scopes, repos dir, resource limits, hidden paths, token/SSH-key
 # presence, ports). Each project may use a different backend, so the backend is
-# resolved per project.
+# resolved per project. A trailing "Stale containers" section names any project
+# whose container is bound to an older image than its configured image tag
+# resolves to today; run `dc rebuild-container <name>` to bring it back in sync.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -43,6 +45,7 @@ backend_list_all 2>/dev/null || echo "  (none)"
 echo ""
 
 PROJECTS=("$HOME"/.config/dev-containers/*/config)
+STALE_PROJECTS=()
 if [[ ${#PROJECTS[@]} -gt 0 ]]; then
   echo "Project details:"
   for config_file in "${PROJECTS[@]}"; do
@@ -59,6 +62,16 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
         is_running="running"
       else
         is_running="stopped"
+      fi
+
+      # Stale is only meaningful when the container exists; a missing container
+      # is never stale. backend_container_is_stale returns non-zero for every
+      # indeterminate case, so a project only lands in STALE_PROJECTS when drift
+      # is proven.
+      if [[ "$is_running" == "stopped" || "$is_running" == "running" ]] \
+         && [[ -n "${CONTAINER_IMAGE:-}" ]] \
+         && backend_container_is_stale "$project" "${CONTAINER_IMAGE:-}" >/dev/null 2>&1; then
+        STALE_PROJECTS+=("$project")
       fi
     else
       resolved_backend="$project_backend"
@@ -118,6 +131,17 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
   done
 fi
 
+echo ""
+echo "Stale containers:"
+if [[ ${#STALE_PROJECTS[@]} -eq 0 ]]; then
+  echo "  none"
+else
+  for sp in "${STALE_PROJECTS[@]}"; do
+    echo "  - $sp (run: dc rebuild-container $sp)"
+  done
+fi
+
+echo ""
 echo "Quick commands:"
 echo "  dc start <name>       - start a container"
 echo "  dc shell <name>       - open a shell"

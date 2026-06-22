@@ -566,6 +566,57 @@ backend_image_id() {
   esac
 }
 
+# Echo the backend-local image Id that a running/stopped container is bound to,
+# or empty if it cannot be determined. Used by the stale-container check
+# (scripts/list.sh, scripts/status.sh) to compare the container's bound image
+# against the current image the project's CONTAINER_IMAGE tag resolves to.
+# Best-effort and backend-local by design, like backend_image_id: empty is an
+# acceptable "unknown," never a hard failure.
+backend_container_image_id() {
+  local name="$1"
+
+  case "$(backend_name)" in
+    apple)
+      # apple/container's inspect surface differs from docker's; attempt the
+      # closest form and fall through to empty on any failure.
+      container inspect "$name" --format '{{.ImageID}}' 2>/dev/null || true
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" inspect "$name" --format '{{.Image}}' 2>/dev/null || true
+      ;;
+  esac
+}
+
+# Determine whether a project's container is stale: bound to an older image than
+# the project's configured CONTAINER_IMAGE tag currently resolves to. This is
+# the single stale predicate shared by `dc list` and `dc status`.
+#
+# Returns 0 (stale) only when drift is *proven*: the backend is usable, the
+# container exists, and both the desired image's id and the container's bound
+# image id are known and differ. Returns 1 in every other case (container
+# missing, backend unavailable, an id unknown), so the caller never produces a
+# false-positive stale warning. Prints a one-line reason on stdout when stale,
+# empty otherwise, so callers can surface the comparison in debug output.
+backend_container_is_stale() {
+  local project="$1"
+  local desired_ref="$2"
+
+  [[ -n "$desired_ref" ]] || return 1
+
+  local desired_id="" container_id=""
+  desired_id="$(backend_image_id "$desired_ref" 2>/dev/null || true)"
+  [[ -n "$desired_id" ]] || return 1
+
+  container_id="$(backend_container_image_id "$project" 2>/dev/null || true)"
+  [[ -n "$container_id" ]] || return 1
+
+  if [[ "$desired_id" != "$container_id" ]]; then
+    printf '%s\n' "container image $container_id != desired $desired_id"
+    return 0
+  fi
+  return 1
+}
+
 # List images as repo<TAB>tag<TAB>id rows (normalized across backends/versions).
 backend_list_images() {
   case "$(backend_name)" in
