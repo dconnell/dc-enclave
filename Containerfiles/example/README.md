@@ -1,13 +1,13 @@
 # Example Containerfiles
 
 This directory contains reference-only overlay templates you can copy into your
-global overlay namespaces (`$DC_OVERLAYS_DIR/team` or `$DC_OVERLAYS_DIR/user`).
+global overlay namespaces (`$DC_TEAM_DIR/overlays` or `$DC_USER_DIR/overlays`).
 
 These files are never auto-layered directly from the repository.
 
 Typical overlay workflow:
 
-1. Run `scripts/setup.sh` to create `$DC_OVERLAYS_DIR/team` and `$DC_OVERLAYS_DIR/user`.
+1. Run `scripts/setup.sh` to create `$DC_TEAM_DIR/overlays` and `$DC_USER_DIR/overlays`.
 2. Copy starter overlay fragments from this directory into one of those namespaces.
 3. Edit them for your team/personal workflow.
 

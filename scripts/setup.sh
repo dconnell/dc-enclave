@@ -3,10 +3,11 @@
 # scripts/setup.sh - One-time host setup for dev-containers.
 #
 # Idempotent and safe to re-run. Per active backend it: starts/reaches the
-# runtime, picks a repos dir, creates the config/overlay directories, writes
-# the global config (DC_OVERLAYS_DIR), registers a global gitignore for
-# secrets, builds dev-base:latest into that backend's image store, and adds the
-# `dc` alias + completion + DC_REPOS_DIR to the shell profile.
+# runtime, picks a repos dir, creates the config + two-root overlay/recipe
+# directories, writes the global config (DC_TEAM_DIR / DC_USER_DIR), registers a
+# global gitignore for secrets, builds dev-base:latest into that backend's image
+# store, and adds the `dc` alias + completion + DC_REPOS_DIR to the shell
+# profile.
 #
 # Run once per backend you use - image stores are not shared across backends.
 # =============================================================================
@@ -108,90 +109,134 @@ for dir in "${DIRS[@]}"; do
 done
 
 GLOBAL_CONFIG="$HOME/.config/dev-containers/config"
-DEFAULT_OVERLAYS_DIR="$(dc_overlay_default_root)"
+DEFAULT_TEAM_DIR="$(dc_team_default_root)"
+DEFAULT_USER_DIR="$(dc_user_default_root)"
 
 echo ""
 echo "==> Bootstrapping global config..."
 if [[ ! -f "$GLOBAL_CONFIG" ]]; then
   cat > "$GLOBAL_CONFIG" <<EOF
 # Global dev-containers config
-DC_OVERLAYS_DIR="$DEFAULT_OVERLAYS_DIR"
+# Each root may be its own git repo, holding both overlays/ (image layers) and
+# container-recipes/ (per-container-name dc new recipe files).
+DC_TEAM_DIR="$DEFAULT_TEAM_DIR"
+DC_USER_DIR="$DEFAULT_USER_DIR"
 EOF
   echo "  ✓ Created $GLOBAL_CONFIG"
 fi
 
-if grep -Eq '^[[:space:]]*DC_OVERLAYS_DIR=' "$GLOBAL_CONFIG"; then
-  echo "  ✓ DC_OVERLAYS_DIR already present in $GLOBAL_CONFIG"
-else
-  {
-    echo ""
-    echo "# Global overlays root"
-    echo "DC_OVERLAYS_DIR=\"$DEFAULT_OVERLAYS_DIR\""
-  } >> "$GLOBAL_CONFIG"
-  echo "  ✓ Added DC_OVERLAYS_DIR to $GLOBAL_CONFIG"
-fi
+# Ensure both roots are present in the config (idempotent). Each writes a clean
+# quoted assignment appended if absent.
+_ensure_config_key() {
+  local key="$1" value="$2"
+  if grep -Eq "^[[:space:]]*${key}=" "$GLOBAL_CONFIG"; then
+    echo "  ✓ ${key} already present in $GLOBAL_CONFIG"
+  else
+    {
+      echo ""
+      printf '%s="%s"\n' "$key" "$value"
+    } >> "$GLOBAL_CONFIG"
+    echo "  ✓ Added ${key} to $GLOBAL_CONFIG"
+  fi
+}
+_ensure_config_key DC_TEAM_DIR "$DEFAULT_TEAM_DIR"
+_ensure_config_key DC_USER_DIR "$DEFAULT_USER_DIR"
 
-# Read DC_OVERLAYS_DIR back through the hardened parser (no `source`), so a
+# Read both roots back through the hardened parser (no `source`), so a
 # hand-edited global config can't execute code during setup.
-if ! DC_OVERLAYS_DIR="$(dc_config_extract_scalar "$GLOBAL_CONFIG" DC_OVERLAYS_DIR)" \
-   || [[ -z "${DC_OVERLAYS_DIR:-}" ]]; then
-  echo "ERROR: DC_OVERLAYS_DIR is not set (or is malformed) in ~/.config/dev-containers/config"
-  echo "Set DC_OVERLAYS_DIR and rerun scripts/setup.sh"
+_dc_setup_normalize() {
+  local varname="$1"
+  local val="${!varname}"
+  if [[ "$val" == "~" || "$val" == "~/"* ]]; then
+    val="$HOME${val#\~}"
+  elif [[ "$val" != /* ]]; then
+    val="$HOME/.config/dev-containers/$val"
+  fi
+  printf -v "$varname" '%s' "$val"
+}
+
+if ! DC_TEAM_DIR="$(dc_config_extract_scalar "$GLOBAL_CONFIG" DC_TEAM_DIR)" \
+   || [[ -z "${DC_TEAM_DIR:-}" ]]; then
+  echo "ERROR: DC_TEAM_DIR is not set (or is malformed) in ~/.config/dev-containers/config"
+  echo "Set DC_TEAM_DIR and rerun scripts/setup.sh"
   exit 1
 fi
-
-if [[ "$DC_OVERLAYS_DIR" == "~" || "$DC_OVERLAYS_DIR" == "~/"* ]]; then
-  DC_OVERLAYS_DIR="$HOME${DC_OVERLAYS_DIR#\~}"
-elif [[ "$DC_OVERLAYS_DIR" != /* ]]; then
-  DC_OVERLAYS_DIR="$HOME/.config/dev-containers/$DC_OVERLAYS_DIR"
-fi
-
-if [[ -e "$DC_OVERLAYS_DIR" && ! -d "$DC_OVERLAYS_DIR" ]]; then
-  echo "ERROR: Overlay root path is not a directory: $DC_OVERLAYS_DIR"
+if ! DC_USER_DIR="$(dc_config_extract_scalar "$GLOBAL_CONFIG" DC_USER_DIR)" \
+   || [[ -z "${DC_USER_DIR:-}" ]]; then
+  echo "ERROR: DC_USER_DIR is not set (or is malformed) in ~/.config/dev-containers/config"
+  echo "Set DC_USER_DIR and rerun scripts/setup.sh"
   exit 1
 fi
+_dc_setup_normalize DC_TEAM_DIR
+_dc_setup_normalize DC_USER_DIR
 
-mkdir -p "$DC_OVERLAYS_DIR/team" "$DC_OVERLAYS_DIR/user"
-DC_OVERLAYS_DIR="$(cd -P "$DC_OVERLAYS_DIR" && pwd)"
+for _r in "$DC_TEAM_DIR" "$DC_USER_DIR"; do
+  if [[ -e "$_r" && ! -d "$_r" ]]; then
+    echo "ERROR: Root path is not a directory: $_r"
+    exit 1
+  fi
+done
+unset _r
+
+mkdir -p "$DC_TEAM_DIR/overlays" "$DC_TEAM_DIR/container-recipes" \
+         "$DC_USER_DIR/overlays" "$DC_USER_DIR/container-recipes"
+DC_TEAM_DIR="$(cd -P "$DC_TEAM_DIR" && pwd)"
+DC_USER_DIR="$(cd -P "$DC_USER_DIR" && pwd)"
 
 echo ""
-echo "==> Ensuring global overlay directories..."
-echo "  ✓ $DC_OVERLAYS_DIR/team"
-echo "  ✓ $DC_OVERLAYS_DIR/user"
+echo "==> Ensuring team/user root directories..."
+echo "  ✓ $DC_TEAM_DIR/overlays"
+echo "  ✓ $DC_TEAM_DIR/container-recipes"
+echo "  ✓ $DC_USER_DIR/overlays"
+echo "  ✓ $DC_USER_DIR/container-recipes"
 
-if [[ ! -f "$DC_OVERLAYS_DIR/team/README.md" ]]; then
-  cat > "$DC_OVERLAYS_DIR/team/README.md" <<EOF
-# Team overlays
+# Starter READMEs for each namespace, so the on-disk layout is self-documenting.
+_write_overlays_readme() {
+  local dir="$1" who="$2"
+  if [[ ! -f "$dir/README.md" ]]; then
+    cat > "$dir/README.md" <<EOF
+# ${who} overlays
 
-Optional team-wide overlay Containerfile fragments.
-
-Any file named Containerfile.<scope> is auto-layered when the matching
-scope is selected with dc new or dc rebuild-container. For example:
-
-- Containerfile.all
-- Containerfile.<any-scope-name>
-
-These files are automatically layered by dc new/dc rebuild-container when they exist.
-EOF
-  echo "  ✓ Created $DC_OVERLAYS_DIR/team/README.md"
-fi
-
-if [[ ! -f "$DC_OVERLAYS_DIR/user/README.md" ]]; then
-  cat > "$DC_OVERLAYS_DIR/user/README.md" <<EOF
-# User overlays
-
-Optional personal overlay Containerfile fragments.
-
-Any file named Containerfile.<scope> is auto-layered when the matching
-scope is selected with dc new or dc rebuild-container. For example:
+Optional ${who}-wide overlay Containerfile fragments. Place files directly here
+named Containerfile.<scope> so they are auto-layered when the matching scope is
+selected with dc new or dc rebuild-container. For example:
 
 - Containerfile.all
 - Containerfile.<any-scope-name>
 
-These files are automatically layered by dc new/dc rebuild-container when they exist.
+These files are automatically layered by dc new/dc rebuild-container when they
+exist.
 EOF
-  echo "  ✓ Created $DC_OVERLAYS_DIR/user/README.md"
-fi
+    echo "  ✓ Created $dir/README.md"
+  fi
+}
+_write_recipes_readme() {
+  local dir="$1" who="$2"
+  if [[ ! -f "$dir/README.md" ]]; then
+    cat > "$dir/README.md" <<EOF
+# ${who} container recipes
+
+Optional ${who}-wide container recipes. A recipe is a key=value file named after
+a container name (e.g. \`api\`) that pre-fills the inputs to \`dc new <name>\`
+(scopes, cpus, memory, hide, network, ip, repo-path, port). \`dc new <name>\`
+auto-loads \$DC_$(echo "$who" | tr '[:lower:]' '[:upper:]')_DIR/container-recipes/<name>
+when it exists; user recipes override team recipes per key, and CLI flags
+override both. The filename IS the container name.
+
+Example:
+  scopes=nodejs,postgres
+  cpus=2
+  memory=4g
+  hide=node_modules
+  port=3000:3000
+EOF
+    echo "  ✓ Created $dir/README.md"
+  fi
+}
+_write_overlays_readme "$DC_TEAM_DIR/overlays" team
+_write_overlays_readme "$DC_USER_DIR/overlays" user
+_write_recipes_readme "$DC_TEAM_DIR/container-recipes" team
+_write_recipes_readme "$DC_USER_DIR/container-recipes" user
 
 # Register a global gitignore so per-project secrets (tokens, SSH keys, npmrc)
 # are never accidentally committed, and point git at it.

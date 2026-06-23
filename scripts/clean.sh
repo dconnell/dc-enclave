@@ -229,7 +229,7 @@ for config_file in "$HOME"/.config/dev-containers/*/config; do
     continue
   fi
 
-  if ! image_ref="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$scope_csv")"; then
+  if ! image_ref="$(dc_image_ref_from_scopes "$(dc_team_overlays_dir)" "$(dc_user_overlays_dir)" "$scope_csv")"; then
     dc_warn "Skipping config with unresolved scopes: $config_file"
     continue
   fi

@@ -141,22 +141,62 @@ dc_host_timezone() {
   dc_timezone_from_localtime_file "/etc/localtime"
 }
 
-# Path to the global dev-containers config file (DC_OVERLAYS_DIR lives here).
+# Path to the global dev-containers config file (DC_TEAM_DIR/DC_USER_DIR live here).
 dc_global_config_path() {
   printf '%s/.config/dev-containers/config\n' "$HOME"
 }
 
-# Default overlays root used by setup.sh when bootstrapping global config.
-dc_overlay_default_root() {
-  printf '%s/.config/dev-containers/overlays\n' "$HOME"
+# Default team/user roots used by setup.sh when bootstrapping global config. Each
+# is an independent root that may be its own git repo, containing both overlays/
+# (image layers) and container-recipes/ (per-container-name recipe files).
+dc_team_default_root() {
+  printf '%s/.config/dev-containers/team\n' "$HOME"
 }
 
-# Load and validate the global config, exporting DC_OVERLAYS_DIR.
+dc_user_default_root() {
+  printf '%s/.config/dev-containers/user\n' "$HOME"
+}
+
+# Single source of truth for the four leaf directories under the two roots. The
+# root variables must be set (dc_load_global_config guarantees this for runtime;
+# callers that bypass the loader must set them first).
+dc_team_overlays_dir() {
+  printf '%s/overlays\n' "$DC_TEAM_DIR"
+}
+
+dc_user_overlays_dir() {
+  printf '%s/overlays\n' "$DC_USER_DIR"
+}
+
+dc_team_recipes_dir() {
+  printf '%s/container-recipes\n' "$DC_TEAM_DIR"
+}
+
+dc_user_recipes_dir() {
+  printf '%s/container-recipes\n' "$DC_USER_DIR"
+}
+
+# Normalize a global-config root path in place by variable name: expand a leading
+# ~ and resolve a relative path against the config dir. Shared by the two-root
+# loader so the exact rule lives in one place (previously it was triplicated).
+_dc_normalize_config_root() {
+  local varname="$1"
+  local val="${!varname}"
+  if [[ "$val" == "~" || "$val" == "~/"* ]]; then
+    val="$HOME${val#\~}"
+  elif [[ "$val" != /* ]]; then
+    val="$HOME/.config/dev-containers/$val"
+  fi
+  printf -v "$varname" '%s' "$val"
+}
+
+# Load and validate the global config, exporting DC_TEAM_DIR and DC_USER_DIR.
 #
 # The global config is parsed with dc_config_extract_scalar (no `source`), so a
-# malicious or corrupted file cannot execute code. DC_OVERLAYS_DIR is deliberately
-# unset first so a stale/environment value can't leak in; it is then normalized
+# malicious or corrupted file cannot execute code. Both roots are deliberately
+# unset first so a stale/environment value can't leak in; each is then normalized
 # (~ and relative paths resolved against the config dir) and required to exist.
+# Each root may be its own git repo holding both overlays/ and container-recipes/.
 dc_load_global_config() {
   local cfg=""
   cfg="$(dc_global_config_path)"
@@ -170,26 +210,35 @@ Run: scripts/setup.sh"
     dc_die "Refusing to load global config via symlink: $cfg"
   fi
 
-  unset DC_OVERLAYS_DIR
+  unset DC_TEAM_DIR DC_USER_DIR
 
-  if ! DC_OVERLAYS_DIR="$(dc_config_extract_scalar "$cfg" DC_OVERLAYS_DIR)"; then
-    dc_die "DC_OVERLAYS_DIR is not set (or is not a clean quoted value) in ~/.config/dev-containers/config
-Set DC_OVERLAYS_DIR and rerun scripts/setup.sh"
+  if ! DC_TEAM_DIR="$(dc_config_extract_scalar "$cfg" DC_TEAM_DIR)"; then
+    dc_die "DC_TEAM_DIR is not set (or is not a clean quoted value) in ~/.config/dev-containers/config
+Set DC_TEAM_DIR and rerun scripts/setup.sh"
+  fi
+  if ! DC_USER_DIR="$(dc_config_extract_scalar "$cfg" DC_USER_DIR)"; then
+    dc_die "DC_USER_DIR is not set (or is not a clean quoted value) in ~/.config/dev-containers/config
+Set DC_USER_DIR and rerun scripts/setup.sh"
   fi
 
-  if [[ -z "${DC_OVERLAYS_DIR:-}" ]]; then
-    dc_die "DC_OVERLAYS_DIR is not set in ~/.config/dev-containers/config
-Set DC_OVERLAYS_DIR and rerun scripts/setup.sh"
+  if [[ -z "${DC_TEAM_DIR:-}" ]]; then
+    dc_die "DC_TEAM_DIR is not set in ~/.config/dev-containers/config
+Set DC_TEAM_DIR and rerun scripts/setup.sh"
+  fi
+  if [[ -z "${DC_USER_DIR:-}" ]]; then
+    dc_die "DC_USER_DIR is not set in ~/.config/dev-containers/config
+Set DC_USER_DIR and rerun scripts/setup.sh"
   fi
 
-  if [[ "$DC_OVERLAYS_DIR" == "~" || "$DC_OVERLAYS_DIR" == "~/"* ]]; then
-    DC_OVERLAYS_DIR="$HOME${DC_OVERLAYS_DIR#\~}"
-  elif [[ "$DC_OVERLAYS_DIR" != /* ]]; then
-    DC_OVERLAYS_DIR="$HOME/.config/dev-containers/$DC_OVERLAYS_DIR"
-  fi
+  _dc_normalize_config_root DC_TEAM_DIR
+  _dc_normalize_config_root DC_USER_DIR
 
-  if [[ ! -d "$DC_OVERLAYS_DIR" ]]; then
-    dc_die "Overlay root does not exist: $DC_OVERLAYS_DIR
+  if [[ ! -d "$DC_TEAM_DIR" ]]; then
+    dc_die "Team root does not exist: $DC_TEAM_DIR
+Run: scripts/setup.sh"
+  fi
+  if [[ ! -d "$DC_USER_DIR" ]]; then
+    dc_die "User root does not exist: $DC_USER_DIR
 Run: scripts/setup.sh"
   fi
 }
@@ -589,23 +638,27 @@ dc_project_slug() {
   printf '%s\n' "$project_slug"
 }
 
-# Return whether an overlay scope exists in either team/ or user/ overlays.
+# Return whether an overlay scope exists in either team or user overlays dir.
+# Each dir is the resolved leaf overlays/ directory of a root (see
+# dc_team_overlays_dir / dc_user_overlays_dir).
 dc_scope_exists() {
-  local overlays_dir="$1"
-  local scope="$2"
+  local team_od="$1"
+  local user_od="$2"
+  local scope="$3"
 
-  [[ -f "$overlays_dir/team/Containerfile.$scope" || -f "$overlays_dir/user/Containerfile.$scope" ]]
+  [[ -f "$team_od/Containerfile.$scope" || -f "$user_od/Containerfile.$scope" ]]
 }
 
 # Resolve the final, effective scope list for a create/rebuild.
 #
-# Implements the layering contract: requested named scopes must exist in team/
-# or user/ (missing ones fail fast), "all" is never taken from the request but
-# auto-prepended when a Containerfile.all exists. The resulting order drives
-# overlay composition and image-tag derivation.
+# Implements the layering contract: requested named scopes must exist in the
+# team or user overlays dir (missing ones fail fast), "all" is never taken from
+# the request but auto-prepended when a Containerfile.all exists. The resulting
+# order drives overlay composition and image-tag derivation.
 dc_effective_scopes_csv() {
-  local overlays_dir="$1"
-  local requested_scopes_csv="$2"
+  local team_od="$1"
+  local user_od="$2"
+  local requested_scopes_csv="$3"
 
   local normalized_csv=""
   if ! normalized_csv="$(dc_normalize_scopes_csv "$requested_scopes_csv")"; then
@@ -623,7 +676,7 @@ dc_effective_scopes_csv() {
     [[ -z "$scope" ]] && continue
     [[ "$scope" == "all" ]] && continue
 
-    if dc_scope_exists "$overlays_dir" "$scope"; then
+    if dc_scope_exists "$team_od" "$user_od" "$scope"; then
       selected+=("$scope")
     else
       missing+=("$scope")
@@ -632,11 +685,11 @@ dc_effective_scopes_csv() {
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     printf 'ERROR: Missing overlay scope(s): %s\n' "$(dc_join_by ', ' "${missing[@]}")" >&2
-    printf '  Add Containerfile.<scope> under %s/team or %s/user\n' "$overlays_dir" "$overlays_dir" >&2
+    printf '  Add Containerfile.<scope> under %s or %s\n' "$team_od" "$user_od" >&2
     return 1
   fi
 
-  if dc_scope_exists "$overlays_dir" "all"; then
+  if dc_scope_exists "$team_od" "$user_od" "all"; then
     effective+=("all")
   fi
 
@@ -651,11 +704,12 @@ dc_effective_scopes_csv() {
 # scopes are hashed into dev-img-<16hex>:latest so identical scope sets always
 # resolve to one reusable, shareable derived image across projects/machines.
 dc_image_ref_from_scopes() {
-  local overlays_dir="$1"
-  local requested_scopes_csv="$2"
+  local team_od="$1"
+  local user_od="$2"
+  local requested_scopes_csv="$3"
 
   local effective_scopes_csv=""
-  if ! effective_scopes_csv="$(dc_effective_scopes_csv "$overlays_dir" "$requested_scopes_csv")"; then
+  if ! effective_scopes_csv="$(dc_effective_scopes_csv "$team_od" "$user_od" "$requested_scopes_csv")"; then
     return 1
   fi
 
@@ -697,10 +751,12 @@ dc_image_hash_from_ref() {
 # =============================================================================
 # Image provenance (plans/versioning.md). Best-effort provenance capture so a
 # built dev-img-* image can be traced back to the overlay state (team/user git
-# commits + file content fingerprints) that produced it. Detection is
-# per-directory and independent for team/ and user/: each side always yields a
-# content_hash, and additionally yields git commit/dirty/source when the dir is
-# a git checkout. These are host-side helpers; none needs a container backend.
+# commits + file content fingerprints) that produced it. Detection is per-root
+# and independent for team and user: each side always yields a content_hash,
+# and additionally yields git commit/dirty/source when its root (DC_TEAM_DIR /
+# DC_USER_DIR) is a git checkout. The dirty check is scoped to the overlays/
+# subtree so container-recipes/ edits never contaminate overlay provenance.
+# These are host-side helpers; none needs a container backend.
 # =============================================================================
 
 # Escape a string for safe embedding in a JSON string value. Backslash and
@@ -763,17 +819,17 @@ dc_label_scrub() {
   printf '%s' "$out"
 }
 
-# Per-namespace content fingerprint for a set of EFFECTIVE scopes. Iterates the
+# Per-side content fingerprint for a set of EFFECTIVE scopes. Iterates the
 # canonical order (all first, then listed scopes -- exactly what composes) and,
-# for each existing fragment under $overlays_dir/$namespace, folds
-# "v1|<scope>|<sha256(file bytes)>" into the hash input. Returns empty when the
-# namespace contributes no fragment for these scopes (e.g. user/ has no
-# Containerfile.<scope>). The 12-hex truncation matches the label contract; the
-# per-fragment "v1" prefix leaves room to evolve the scheme.
+# for each existing fragment under $overlays_dir (the resolved leaf overlays/
+# directory of one root), folds "v1|<scope>|<sha256(file bytes)>" into the hash
+# input. Returns empty when the side contributes no fragment for these scopes
+# (e.g. that side has no Containerfile.<scope>). The 12-hex truncation matches
+# the label contract; the per-fragment "v1" prefix leaves room to evolve the
+# scheme.
 dc_provenance_content_hash() {
   local overlays_dir="$1"
-  local namespace="$2"
-  local effective_scopes_csv="$3"
+  local effective_scopes_csv="$2"
 
   local acc=""
   local scope="" file=""
@@ -782,7 +838,7 @@ dc_provenance_content_hash() {
 
   for scope in "${scopes[@]}"; do
     [[ -n "$scope" ]] || continue
-    file="$overlays_dir/$namespace/Containerfile.$scope"
+    file="$overlays_dir/Containerfile.$scope"
     [[ -f "$file" ]] || continue
     acc+="v1|$scope|$(dc_sha256_file "$file")|"
   done
@@ -820,12 +876,24 @@ dc_provenance_git_commit() {
 # git. Uses `git status --porcelain` so an untracked new Containerfile.<scope>
 # is also flagged (its bytes already changed the content_hash; this mirrors
 # that as a human-readable warning).
+#
+# An optional second argument is a pathspec limiting the dirty check to that
+# subtree. Each root now holds both overlays/ and container-recipes/, so image
+# provenance passes "overlays" so a recipe-only edit does not mark overlay
+# provenance dirty. Empty/omitted pathspec checks the whole work tree.
 dc_provenance_git_dirty() {
   local dir="$1"
+  local pathspec="${2:-}"
 
   [[ -d "$dir" ]] || { printf ''; return 0; }
   git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { printf ''; return 0; }
-  if [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
+  local status_out
+  if [[ -n "$pathspec" ]]; then
+    status_out="$(git -C "$dir" status --porcelain -- "$pathspec" 2>/dev/null)"
+  else
+    status_out="$(git -C "$dir" status --porcelain 2>/dev/null)"
+  fi
+  if [[ -n "$status_out" ]]; then
     printf 'true'
   else
     printf 'false'
@@ -867,39 +935,50 @@ dc_provenance_log_path() {
 
 # Append one provenance entry to the project's JSONL log, deduping on change.
 #
-# Recomputes the overlay-derived values from $overlays_dir + $scopes_csv (the
-# same source of truth compose-containerfile.sh uses for the image labels) and
-# merges in $base_id (the caller-supplied local dev-base image Id) plus the
-# build timestamp. Dedup key is (combined content_hash, base id): every overlay
-# byte and scope is already encoded in content_hash, and base id covers a base
-# rebuild, so the two together uniquely identify an image state. If the last
-# logged line matches, the append is skipped (no churn from no-op rebuilds or
-# rebuild-container). The file is created owner-only (chmod 600), matching the
-# security posture of the project config.
+# Recomputes the overlay-derived values from the team/user roots ($team_root,
+# $user_root -- DC_TEAM_DIR/DC_USER_DIR) + $scopes_csv (the same source of truth
+# compose-containerfile.sh uses for the image labels) and merges in $base_id
+# (the caller-supplied local dev-base image Id) plus the build timestamp. Dedup
+# key is (combined content_hash, base id): every overlay byte and scope is
+# already encoded in content_hash, and base id covers a base rebuild, so the two
+# together uniquely identify an image state. If the last logged line matches,
+# the append is skipped (no churn from no-op rebuilds or rebuild-container). The
+# file is created owner-only (chmod 600), matching the security posture of the
+# project config.
+#
+# Provenance signals stay overlay-scoped even though each root now also holds
+# container-recipes/: the content hash is computed from overlays/ fragments
+# only, git_commit is the repo HEAD, and git_dirty uses an "overlays" pathspec
+# so a recipe-only edit does not contaminate overlay provenance.
 dc_log_provenance() {
   local project="$1"
   local image_ref="$2"
   local action="$3"
-  local overlays_dir="$4"
-  local scopes_csv="$5"
-  local base_id="$6"
+  local team_root="$4"
+  local user_root="$5"
+  local scopes_csv="$6"
+  local base_id="$7"
+
+  local team_od="" user_od=""
+  team_od="$team_root/overlays"
+  user_od="$user_root/overlays"
 
   local eff=""
-  eff="$(dc_effective_scopes_csv "$overlays_dir" "$scopes_csv" 2>/dev/null || true)"
+  eff="$(dc_effective_scopes_csv "$team_od" "$user_od" "$scopes_csv" 2>/dev/null || true)"
 
   local team_ch="" user_ch="" combined=""
-  team_ch="$(dc_provenance_content_hash "$overlays_dir" team "$eff")"
-  user_ch="$(dc_provenance_content_hash "$overlays_dir" user "$eff")"
+  team_ch="$(dc_provenance_content_hash "$team_od" "$eff")"
+  user_ch="$(dc_provenance_content_hash "$user_od" "$eff")"
   combined="$(dc_provenance_combined_hash "$team_ch" "$user_ch")"
 
   local team_commit="" team_dirty="" team_source=""
   local user_commit="" user_dirty="" user_source=""
-  team_commit="$(dc_provenance_git_commit "$overlays_dir/team")"
-  team_dirty="$(dc_provenance_git_dirty "$overlays_dir/team")"
-  team_source="$(dc_provenance_git_source "$overlays_dir/team")"
-  user_commit="$(dc_provenance_git_commit "$overlays_dir/user")"
-  user_dirty="$(dc_provenance_git_dirty "$overlays_dir/user")"
-  user_source="$(dc_provenance_git_source "$overlays_dir/user")"
+  team_commit="$(dc_provenance_git_commit "$team_root")"
+  team_dirty="$(dc_provenance_git_dirty "$team_root" overlays)"
+  team_source="$(dc_provenance_git_source "$team_root")"
+  user_commit="$(dc_provenance_git_commit "$user_root")"
+  user_dirty="$(dc_provenance_git_dirty "$user_root" overlays)"
+  user_source="$(dc_provenance_git_source "$user_root")"
 
   # dirty is a bare JSON boolean when under git, else an empty JSON string.
   local tdj="" udj=""
@@ -1383,9 +1462,9 @@ Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
 
 # Extract a single double-quoted scalar value for KEY from a config file WITHOUT
 # executing anything: pure line + escape-aware parsing. Used for the global config
-# (DC_OVERLAYS_DIR) and anywhere only one key is needed, so call sites never have
-# to `source`. Echoes the literal (unescaped) value; returns 1 if not found or not
-# a clean quoted assignment.
+# (DC_TEAM_DIR / DC_USER_DIR) and anywhere only one key is needed, so call sites
+# never have to `source`. Echoes the literal (unescaped) value; returns 1 if not
+# found or not a clean quoted assignment.
 dc_config_extract_scalar() {
   local file="$1"
   local key="$2"

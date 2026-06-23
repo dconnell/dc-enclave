@@ -88,9 +88,13 @@ pass "Section A: pure helpers"
 # ===========================================================================
 export HOME="$WORK/home"
 DC_ROOT="$HOME/.config/dev-containers"
-OV="$DC_ROOT/overlays"
-mkdir -p "$OV/team" "$OV/user"
-printf 'DC_OVERLAYS_DIR="%s"\n' "$OV" > "$DC_ROOT/config"
+TEAM_DIR="$DC_ROOT/team"
+USER_DIR="$DC_ROOT/user"
+mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
+{
+  printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
+  printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
+} > "$DC_ROOT/config"
 
 STUB_DIR="$WORK/bin"
 mkdir -p "$STUB_DIR"

@@ -112,14 +112,43 @@ done
 # Shared fake HOME with a healthy global config + overlays.
 export HOME="$WORK/home"
 DC_ROOT="$HOME/.config/dev-containers"
-OV="$DC_ROOT/overlays"
-mkdir -p "$OV/team" "$OV/user"
-printf 'DC_OVERLAYS_DIR="%s/overlays"\n' "$DC_ROOT" > "$DC_ROOT/config"
+TEAM_DIR="$DC_ROOT/team"
+USER_DIR="$DC_ROOT/user"
+mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
+{
+  printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
+  printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
+} > "$DC_ROOT/config"
 
 # Put the stub CLIs on PATH for the whole test shell. $ORIG_PATH is retained so
 # individual scenarios can run with a stripped PATH (e.g. podman absent).
 ORIG_PATH="$PATH"
 export PATH="$STUB_DIR:$ORIG_PATH"
+
+# Remove directories containing a specific executable name from a PATH string.
+# This keeps "CLI missing" scenarios deterministic even when the host/container
+# image already has that CLI installed on PATH.
+path_without_cmd() {  # <cmd> <path>
+  local cmd="$1" in_path="$2"
+  local out="" dir=""
+  local -a dirs=()
+  IFS=':' read -r -a dirs <<< "$in_path"
+  for dir in "${dirs[@]}"; do
+    [[ -n "$dir" ]] || continue
+    if [[ -x "$dir/$cmd" ]]; then
+      continue
+    fi
+    if [[ -n "$out" ]]; then
+      out+=":"
+    fi
+    out+="$dir"
+  done
+  printf '%s' "$out"
+}
+
+ORIG_PATH_NO_DOCKER="$(path_without_cmd docker "$ORIG_PATH")"
+ORIG_PATH_NO_PODMAN="$(path_without_cmd podman "$ORIG_PATH")"
+ORIG_PATH_NO_COLIMA="$(path_without_cmd colima "$ORIG_PATH")"
 
 # Default to a healthy Colima state (colima context listed + active, docker up)
 # so the colima stub always present on PATH does not read as "drifted" by default.
@@ -175,24 +204,33 @@ $out"
 [[ "$out" == *"Global config"* ]] || fail "missing config: no 'Global config' line
 $out"
 pass "missing global config: nonzero + fail marker"
-printf 'DC_OVERLAYS_DIR="%s/overlays"\n' "$DC_ROOT" > "$DC_ROOT/config"
+{
+  printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
+  printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
+} > "$DC_ROOT/config"
 
-# Overlays root missing -> host failure, nonzero.
-rm -rf "$OV"
+# Team root missing -> host failure, nonzero.
+rm -rf "$TEAM_DIR"
 run_doctor; out="$RUN_OUT"
 [[ "$RUN_RC" -ne 0 ]] || fail "missing overlays dir: expected nonzero, got 0
 $out"
-[[ "$out" == *"overlay root"* ]] || fail "missing overlays: no overlay-root check line
+[[ "$out" == *"DC_TEAM_DIR"* ]] || fail "missing team root: no DC_TEAM_DIR check line
 $out"
-pass "missing overlays root: nonzero"
-mkdir -p "$OV/team" "$OV/user"
+pass "missing team root: nonzero"
+mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
 
-# Malformed DC_OVERLAYS_DIR (unquoted -> rejected by hardened parser).
-printf 'DC_OVERLAYS_DIR=%s/overlays\n' "$DC_ROOT" > "$DC_ROOT/config"
+# Malformed DC_TEAM_DIR (unquoted -> rejected by hardened parser).
+{
+  printf 'DC_TEAM_DIR=%s\n' "$TEAM_DIR"
+  printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
+} > "$DC_ROOT/config"
 run_doctor; out="$RUN_OUT"
-[[ "$RUN_RC" -ne 0 ]] || fail "unquoted DC_OVERLAYS_DIR: expected nonzero"
-pass "malformed (unquoted) DC_OVERLAYS_DIR rejected"
-printf 'DC_OVERLAYS_DIR="%s/overlays"\n' "$DC_ROOT" > "$DC_ROOT/config"
+[[ "$RUN_RC" -ne 0 ]] || fail "unquoted DC_TEAM_DIR: expected nonzero"
+pass "malformed (unquoted) DC_TEAM_DIR rejected"
+{
+  printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
+  printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
+} > "$DC_ROOT/config"
 
 # ---------------------------------------------------------------------------
 # Section 2 - all-backends detection + per-backend probes
@@ -291,7 +329,7 @@ pass "unknown scope: nonzero + guidance"
 
 # `dc doctor <backend with CLI missing>`: docker absent from PATH -> fail.
 set +e
-out="$(PATH="$STUB_NODOCKER:$ORIG_PATH" HOME="$HOME" env -u CONTAINER_BACKEND \
+out="$(PATH="$STUB_NODOCKER:$ORIG_PATH_NO_DOCKER" HOME="$HOME" env -u CONTAINER_BACKEND \
         "$DC_BIN" doctor docker 2>&1)"
 RUN_RC=$?
 set -e
@@ -366,7 +404,7 @@ pass "project with missing image: reported + nonzero"
 # Project whose recorded backend CLI is missing -> failure.
 make_project delta podman dev-base:latest "ghp_realtoken"
 set +e
-out="$(PATH="$STUB_NOP:$ORIG_PATH" HOME="$HOME" env -u CONTAINER_BACKEND \
+out="$(PATH="$STUB_NOP:$ORIG_PATH_NO_PODMAN" HOME="$HOME" env -u CONTAINER_BACKEND \
         "$DC_BIN" doctor delta 2>&1)"
 RUN_RC=$?
 set -e
@@ -414,10 +452,10 @@ pass "docker-unreachable hint is OS-specific (linux vs macos)"
 
 # colima CLI missing: macOS -> brew; Linux -> distro package (no brew).
 set +e
-out="$(PATH="$WORK/bin_linux:$STUB_NOCOLIMA:$ORIG_PATH" HOME="$HOME" \
+out="$(PATH="$WORK/bin_linux:$STUB_NOCOLIMA:$ORIG_PATH_NO_COLIMA" HOME="$HOME" \
         env -u CONTAINER_BACKEND "$DC_BIN" doctor colima 2>&1)"
 RUN_RC=$?
-out_mac="$(PATH="$WORK/bin_macos:$STUB_NOCOLIMA:$ORIG_PATH" HOME="$HOME" \
+out_mac="$(PATH="$WORK/bin_macos:$STUB_NOCOLIMA:$ORIG_PATH_NO_COLIMA" HOME="$HOME" \
         env -u CONTAINER_BACKEND "$DC_BIN" doctor colima 2>&1)"
 set -e
 [[ "$RUN_RC" -ne 0 ]] || fail "colima CLI missing: expected nonzero"

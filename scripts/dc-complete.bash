@@ -38,7 +38,8 @@ unset _dc_scripts_dir
 #   rebuild-image           : one of {all, base}
 #   clean                   : --dry-run / --hidden-volumes, then at most one
 #                             project (only meaningful with --hidden-volumes)
-#   new                     : <name> [scope] [--repo-path <d>] [--cpus N]
+#   new                     : <name> [scope] [--config <file>] [--save-team]
+#                             [--save-user] [--repo-path <d>] [--cpus N]
 #                             [--memory V] [--hide <path>] [port:port ...]
 _dc_complete() {
   local cur prev cmd
@@ -239,12 +240,16 @@ _dc_complete_new() {
       COMPREPLY=( $(compgen -d -- "$cur") )
       return 0
       ;;
+    --config)
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
     --cpus|--memory|--hide|--network|--ip)
       return 0
       ;;
   esac
 
-  local flags="--repo-path --cpus --memory --hide --network --ip"
+  local flags="--config --save-team --save-user --repo-path --cpus --memory --hide --network --ip"
   if [[ $COMP_CWORD -eq 3 ]]; then
     # Second positional: a scope (with flags also accepted).
     COMPREPLY=( $(compgen -W "$(dc_complete_scopes) $flags" -- "$cur") )

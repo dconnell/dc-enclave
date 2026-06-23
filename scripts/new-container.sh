@@ -19,11 +19,13 @@
 set -euo pipefail
 
 # 1. Parse arguments: project name, optional scope, flags, and port mappings.
-PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [port:port ...]}"
+PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--config <path>|--config=<path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [port:port ...]}"
 shift
 SCOPE_INPUT=""
+CLI_SET_SCOPE=false
 if [[ $# -gt 0 && "$1" != --* && ! "$1" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
   SCOPE_INPUT="$1"
+  CLI_SET_SCOPE=true
   shift
 fi
 
@@ -38,14 +40,41 @@ REPO_PATH_OVERRIDE=""
 HIDDEN_PATH_INPUTS=()
 NETWORK_INPUT=""
 NETWORK_IP=""
+RECIPE_CONFIG_PATH=""
+SAVE_TEAM_RECIPE=false
+SAVE_USER_RECIPE=false
+CLI_SET_CPUS=false
+CLI_SET_MEMORY=false
+CLI_SET_HIDE=false
+CLI_SET_NETWORK=false
+CLI_SET_IP=false
+CLI_SET_REPO_PATH=false
+CLI_SET_PORTS=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --config)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        echo "ERROR: --config requires a recipe file path"
+        exit 1
+      fi
+      RECIPE_CONFIG_PATH="$2"
+      shift 2
+      ;;
+    --config=*)
+      RECIPE_CONFIG_PATH="${1#--config=}"
+      if [[ -z "$RECIPE_CONFIG_PATH" ]]; then
+        echo "ERROR: --config requires a non-empty recipe file path"
+        exit 1
+      fi
+      shift
+      ;;
     --repo-path)
       if [[ $# -lt 2 || "$2" == --* ]]; then
         echo "ERROR: --repo-path requires a path argument"
         exit 1
       fi
       REPO_PATH_OVERRIDE="$2"
+      CLI_SET_REPO_PATH=true
       shift 2
       ;;
     --cpus)
@@ -54,6 +83,7 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       CONTAINER_CPUS="$2"
+      CLI_SET_CPUS=true
       shift 2
       ;;
     --memory)
@@ -62,6 +92,7 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       CONTAINER_MEMORY="$2"
+      CLI_SET_MEMORY=true
       shift 2
       ;;
     --hide)
@@ -70,6 +101,7 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       HIDDEN_PATH_INPUTS+=("$2")
+      CLI_SET_HIDE=true
       shift 2
       ;;
     --network)
@@ -78,6 +110,7 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       NETWORK_INPUT="$2"
+      CLI_SET_NETWORK=true
       shift 2
       ;;
     --ip)
@@ -86,14 +119,35 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       NETWORK_IP="$2"
+      CLI_SET_IP=true
       shift 2
+      ;;
+    --save-team)
+      SAVE_TEAM_RECIPE=true
+      shift
+      ;;
+    --save-user)
+      SAVE_USER_RECIPE=true
+      shift
       ;;
     *)
       PORTS+=("$1")
+      CLI_SET_PORTS=true
       shift
       ;;
   esac
 done
+
+# Preserve the raw CLI-supplied values so --save-team/--save-user can persist the
+# exact user inputs (not recipe defaults merged in later).
+CLI_SCOPE_INPUT="$SCOPE_INPUT"
+CLI_CONTAINER_CPUS="${CONTAINER_CPUS:-}"
+CLI_CONTAINER_MEMORY="${CONTAINER_MEMORY:-}"
+CLI_NETWORK_INPUT="$NETWORK_INPUT"
+CLI_NETWORK_IP="$NETWORK_IP"
+CLI_REPO_PATH_OVERRIDE="$REPO_PATH_OVERRIDE"
+CLI_HIDDEN_PATH_INPUTS=("${HIDDEN_PATH_INPUTS[@]}")
+CLI_PORTS=("${PORTS[@]}")
 
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
@@ -108,19 +162,105 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 source "$ROOT_DIR/lib/network.sh"
+source "$ROOT_DIR/lib/recipe.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 
-# Fail fast on resource flags: validate immediately after the helpers are
-# available (and before any backend/global-config work) so bad values never reach
-# config persistence or the runtime.
+dc_load_global_config
+
+SAVE_RECIPE_LINES=()
+if $SAVE_TEAM_RECIPE || $SAVE_USER_RECIPE; then
+  if $CLI_SET_SCOPE; then
+    SAVE_SCOPE_CSV="$(dc_normalize_scopes_csv "$CLI_SCOPE_INPUT")" || exit 1
+    [[ -n "$SAVE_SCOPE_CSV" ]] && SAVE_RECIPE_LINES+=("scopes=$SAVE_SCOPE_CSV")
+  fi
+
+  if $CLI_SET_CPUS; then
+    dc_validate_cpus_value "$CLI_CONTAINER_CPUS" || exit 1
+    SAVE_RECIPE_LINES+=("cpus=$CLI_CONTAINER_CPUS")
+  fi
+
+  if $CLI_SET_MEMORY; then
+    dc_validate_memory_value "$CLI_CONTAINER_MEMORY" || exit 1
+    SAVE_RECIPE_LINES+=("memory=$CLI_CONTAINER_MEMORY")
+  fi
+
+  if $CLI_SET_HIDE; then
+    SAVE_HIDE_CSV="$(dc_normalize_hidden_paths_values "${CLI_HIDDEN_PATH_INPUTS[@]:-}")" || exit 1
+    if [[ -n "$SAVE_HIDE_CSV" ]]; then
+      IFS=',' read -r -a SAVE_HIDE_VALUES <<< "$SAVE_HIDE_CSV"
+      for SAVE_HIDE_PATH in "${SAVE_HIDE_VALUES[@]}"; do
+        [[ -z "$SAVE_HIDE_PATH" ]] && continue
+        SAVE_RECIPE_LINES+=("hide=$SAVE_HIDE_PATH")
+      done
+    fi
+  fi
+
+  if $CLI_SET_NETWORK; then
+    SAVE_NETWORK_CSV="$(dc_normalize_network_arg "$CLI_NETWORK_INPUT")" || exit 1
+    [[ -n "$SAVE_NETWORK_CSV" ]] && SAVE_RECIPE_LINES+=("network=$SAVE_NETWORK_CSV")
+  fi
+
+  if $CLI_SET_IP; then
+    dc_validate_ip_value "$CLI_NETWORK_IP" || exit 1
+    SAVE_RECIPE_LINES+=("ip=$CLI_NETWORK_IP")
+  fi
+
+  if $CLI_SET_REPO_PATH; then
+    SAVE_RECIPE_LINES+=("repo-path=$CLI_REPO_PATH_OVERRIDE")
+  fi
+
+  if $CLI_SET_PORTS; then
+    for SAVE_PORT_MAPPING in "${CLI_PORTS[@]}"; do
+      [[ -z "$SAVE_PORT_MAPPING" ]] && continue
+      if [[ "$SAVE_PORT_MAPPING" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
+        SAVE_RECIPE_LINES+=("port=$SAVE_PORT_MAPPING")
+      else
+        echo "ERROR: Invalid port mapping '$SAVE_PORT_MAPPING'. Use host:container (e.g., 5173:5173)."
+        exit 1
+      fi
+    done
+  fi
+fi
+
+# Load an explicit recipe (--config) or magic-resolved team/user recipes by
+# project name, then merge with CLI precedence (CLI values override recipe
+# values; list keys replace as a whole when supplied on the CLI).
+if ! dc_recipe_resolve_inputs "$PROJECT" "$RECIPE_CONFIG_PATH"; then
+  exit 1
+fi
+
+if [[ -z "$SCOPE_INPUT" && -n "${_DC_RECIPE_MERGED_SCOPE_INPUT:-}" ]]; then
+  SCOPE_INPUT="$_DC_RECIPE_MERGED_SCOPE_INPUT"
+fi
+if [[ -z "${CONTAINER_CPUS:-}" && -n "${_DC_RECIPE_MERGED_CONTAINER_CPUS:-}" ]]; then
+  CONTAINER_CPUS="$_DC_RECIPE_MERGED_CONTAINER_CPUS"
+fi
+if [[ -z "${CONTAINER_MEMORY:-}" && -n "${_DC_RECIPE_MERGED_CONTAINER_MEMORY:-}" ]]; then
+  CONTAINER_MEMORY="$_DC_RECIPE_MERGED_CONTAINER_MEMORY"
+fi
+if [[ ${#HIDDEN_PATH_INPUTS[@]} -eq 0 && ${#_DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS[@]} -gt 0 ]]; then
+  HIDDEN_PATH_INPUTS=("${_DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS[@]}")
+fi
+if [[ -z "$NETWORK_INPUT" && -n "${_DC_RECIPE_MERGED_NETWORK_INPUT:-}" ]]; then
+  NETWORK_INPUT="$_DC_RECIPE_MERGED_NETWORK_INPUT"
+fi
+if [[ -z "$NETWORK_IP" && -n "${_DC_RECIPE_MERGED_NETWORK_IP:-}" ]]; then
+  NETWORK_IP="$_DC_RECIPE_MERGED_NETWORK_IP"
+fi
+if [[ -z "$REPO_PATH_OVERRIDE" && -n "${_DC_RECIPE_MERGED_REPO_PATH_OVERRIDE:-}" ]]; then
+  REPO_PATH_OVERRIDE="$_DC_RECIPE_MERGED_REPO_PATH_OVERRIDE"
+fi
+if [[ ${#PORTS[@]} -eq 0 && ${#_DC_RECIPE_MERGED_PORTS[@]} -gt 0 ]]; then
+  PORTS=("${_DC_RECIPE_MERGED_PORTS[@]}")
+fi
+
+# Fail fast on merged resource values before any backend work.
 if [[ -n "${CONTAINER_CPUS:-}" ]]; then
   dc_validate_cpus_value "$CONTAINER_CPUS" || exit 1
 fi
 if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
   dc_validate_memory_value "$CONTAINER_MEMORY" || exit 1
 fi
-
-dc_load_global_config
 
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
@@ -130,7 +270,7 @@ fi
 
 # 2. Resolve the derived image for these scopes (dev-base:latest when none).
 SCOPE_CSV="$(dc_normalize_scopes_csv "$SCOPE_INPUT")" || exit 1
-IMAGE="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$SCOPE_CSV")" || exit 1
+IMAGE="$(dc_image_ref_from_scopes "$(dc_team_overlays_dir)" "$(dc_user_overlays_dir)" "$SCOPE_CSV")" || exit 1
 
 HIDDEN_PATHS_CSV="$(dc_normalize_hidden_paths_values "${HIDDEN_PATH_INPUTS[@]:-}")" || exit 1
 CONTAINER_HIDDEN_PATHS=()
@@ -285,7 +425,7 @@ if [[ "$IMAGE" != "dev-base:latest" ]]; then
 
   # Record this image's provenance in the project log (deduped). A reused image
   # still gets an entry so `dc provenance <project>` is populated.
-  dc_log_provenance "$PROJECT" "$IMAGE" "new" "$DC_OVERLAYS_DIR" "$SCOPE_CSV" "$PROV_BASE_ID"
+  dc_log_provenance "$PROJECT" "$IMAGE" "new" "$DC_TEAM_DIR" "$DC_USER_DIR" "$SCOPE_CSV" "$PROV_BASE_ID"
 fi
 
 # Detect the host timezone once so the container mirrors the developer's local
@@ -424,6 +564,22 @@ fi
 chmod 600 "$CONFIG_FILE"
 
 echo "✓ Config saved: $CONFIG_FILE"
+
+if $SAVE_TEAM_RECIPE; then
+  TEAM_RECIPE_FILE="$(dc_team_recipes_dir)/$PROJECT"
+  if ! dc_recipe_write_file "$TEAM_RECIPE_FILE" "${SAVE_RECIPE_LINES[@]}"; then
+    exit 1
+  fi
+  echo "✓ Team recipe saved: $TEAM_RECIPE_FILE"
+fi
+
+if $SAVE_USER_RECIPE; then
+  USER_RECIPE_FILE="$(dc_user_recipes_dir)/$PROJECT"
+  if ! dc_recipe_write_file "$USER_RECIPE_FILE" "${SAVE_RECIPE_LINES[@]}"; then
+    exit 1
+  fi
+  echo "✓ User recipe saved: $USER_RECIPE_FILE"
+fi
 
 RESOURCE_ARGS=()
 if [[ -n "${CONTAINER_CPUS:-}" ]]; then

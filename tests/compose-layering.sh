@@ -26,13 +26,17 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
-# Fake HOME + global config so compose resolves DC_OVERLAYS_DIR via the real
-# dc_load_global_config path (no monkey-patching of the helper).
+# Fake HOME + global config so compose resolves DC_TEAM_DIR/DC_USER_DIR via the
+# real dc_load_global_config path (no monkey-patching of the helper).
 export HOME="$WORK/home"
 DC_ROOT="$HOME/.config/dev-containers"
-OV="$DC_ROOT/overlays"
-mkdir -p "$OV/team" "$OV/user"
-printf 'DC_OVERLAYS_DIR="%s"\n' "$OV" > "$DC_ROOT/config"
+TEAM_DIR="$DC_ROOT/team"
+USER_DIR="$DC_ROOT/user"
+mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
+{
+  printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
+  printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
+} > "$DC_ROOT/config"
 
 COMPOSE="$ROOT_DIR/scripts/compose-containerfile.sh"
 
@@ -50,11 +54,11 @@ overlay_labels() {
 # ---------------------------------------------------------------------------
 # Canonical order + silent skip
 # ---------------------------------------------------------------------------
-printf 'RUN echo TEAM-ALL\n'    > "$OV/team/Containerfile.all"
-printf 'RUN echo USER-ALL\n'    > "$OV/user/Containerfile.all"
-printf 'RUN echo TEAM-NODEJS\n' > "$OV/team/Containerfile.nodejs"
-printf 'RUN echo USER-NODEJS\n' > "$OV/user/Containerfile.nodejs"
-printf 'RUN echo TEAM-GOLANG\n' > "$OV/team/Containerfile.golang"
+printf 'RUN echo TEAM-ALL\n'    > "$TEAM_DIR/overlays/Containerfile.all"
+printf 'RUN echo USER-ALL\n'    > "$USER_DIR/overlays/Containerfile.all"
+printf 'RUN echo TEAM-NODEJS\n' > "$TEAM_DIR/overlays/Containerfile.nodejs"
+printf 'RUN echo USER-NODEJS\n' > "$USER_DIR/overlays/Containerfile.nodejs"
+printf 'RUN echo TEAM-GOLANG\n' > "$TEAM_DIR/overlays/Containerfile.golang"
 # user/golang intentionally absent -> must be skipped silently.
 
 run_compose "nodejs,golang"
@@ -95,8 +99,8 @@ pass "FROM dev-base / USER dev / CMD bookends"
 # FROM (leading) + CMD + ENTRYPOINT stripping from overlay fragments
 # ---------------------------------------------------------------------------
 printf 'FROM dev-base:latest\nRUN echo STRIPEME\ncmd ["echo", "cmdme"]\nENTRYPOINT ["/tmp/leakme"]\n' \
-  > "$OV/team/Containerfile.nodejs"
-rm -f "$OV/user/Containerfile.nodejs" "$OV/team/Containerfile.golang" "$OV/team/Containerfile.all" "$OV/user/Containerfile.all"
+  > "$TEAM_DIR/overlays/Containerfile.nodejs"
+rm -f "$USER_DIR/overlays/Containerfile.nodejs" "$TEAM_DIR/overlays/Containerfile.golang" "$TEAM_DIR/overlays/Containerfile.all" "$USER_DIR/overlays/Containerfile.all"
 
 run_compose "nodejs"
 grep -Fq 'STRIPEME' "$WORK/out.Containerfile" \
@@ -120,14 +124,14 @@ pass "FROM/CMD/ENTRYPOINT stripping from overlay fragments"
 # ---------------------------------------------------------------------------
 # COPY / ADD rejection
 # ---------------------------------------------------------------------------
-printf 'RUN ok\nCOPY foo bar\n' > "$OV/team/Containerfile.nodejs"
+printf 'RUN ok\nCOPY foo bar\n' > "$TEAM_DIR/overlays/Containerfile.nodejs"
 if run_compose "nodejs" 2>/dev/null; then
   fail "rejection: COPY must make compose fail"
 fi
 grep -Fqi 'COPY/ADD' "$WORK/compose.stderr" \
   || fail "rejection: COPY error must mention COPY/ADD"
 
-printf 'RUN ok\nADD foo.tar /x\n' > "$OV/team/Containerfile.nodejs"
+printf 'RUN ok\nADD foo.tar /x\n' > "$TEAM_DIR/overlays/Containerfile.nodejs"
 if run_compose "nodejs" 2>/dev/null; then
   fail "rejection: ADD must make compose fail"
 fi
@@ -139,7 +143,7 @@ pass "COPY/ADD rejected with clear error"
 # ---------------------------------------------------------------------------
 # Missing requested scope fails fast
 # ---------------------------------------------------------------------------
-printf 'RUN echo NODE\n' > "$OV/team/Containerfile.nodejs"
+printf 'RUN echo NODE\n' > "$TEAM_DIR/overlays/Containerfile.nodejs"
 if run_compose "nodejs,ghostscope" 2>/dev/null; then
   fail "fail-fast: missing requested scope must error"
 fi
@@ -151,9 +155,9 @@ pass "missing requested scope fails fast"
 # ---------------------------------------------------------------------------
 # `all` auto-prepended even when only team/all exists and `all` not requested
 # ---------------------------------------------------------------------------
-rm -f "$OV/team"/Containerfile.* "$OV/user"/Containerfile.* 2>/dev/null || true
-printf 'RUN echo TEAM-ALL\n'  > "$OV/team/Containerfile.all"
-printf 'RUN echo TEAM-NODE\n' > "$OV/team/Containerfile.nodejs"
+rm -f "$TEAM_DIR/overlays"/Containerfile.* "$USER_DIR/overlays"/Containerfile.* 2>/dev/null || true
+printf 'RUN echo TEAM-ALL\n'  > "$TEAM_DIR/overlays/Containerfile.all"
+printf 'RUN echo TEAM-NODE\n' > "$TEAM_DIR/overlays/Containerfile.nodejs"
 
 run_compose "nodejs"
 got_markers="$(overlay_labels)"

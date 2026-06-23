@@ -28,8 +28,9 @@ _show_summary() {
   echo "Commands:"
   echo "  new <name> [scope[,scope...]] [host:container ...]"
   echo "                                                    Create a new isolated container project"
-  echo "  new <name> [scope[,scope...]] [--repo-path <path>]"
-  echo "       [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]"
+  echo "  new <name> [scope[,scope...]] [--config <path>] [--repo-path <path>]"
+  echo "       [--save-team] [--save-user] [--cpus <N>] [--memory <val>]"
+  echo "       [--hide <path[,path...]> ...] [host:container ...]"
   echo "                                                    With resource limits"
   echo "  start [name ...]                                  Start one or more projects, or all"
   echo "  stop [name ...]                                   Stop one or more projects, or all"
@@ -59,6 +60,8 @@ _show_summary() {
 _show_help_new() {
   cat <<'EOF'
 Usage: dc new <name> [scope[,scope...]] [--repo-path <path>]
+              [--config <path>]
+              [--save-team] [--save-user]
               [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]
 
 Description:
@@ -73,8 +76,8 @@ Description:
   - If it exists, it is reused.
 
   Effective overlays are loaded only from:
-  - $DC_OVERLAYS_DIR/team/Containerfile.<scope>
-  - $DC_OVERLAYS_DIR/user/Containerfile.<scope>
+  - $DC_TEAM_DIR/overlays/Containerfile.<scope>
+  - $DC_USER_DIR/overlays/Containerfile.<scope>
 
   Named scopes that do not exist in either team or user overlays fail fast.
 
@@ -85,9 +88,26 @@ Arguments:
   <scope>     Optional overlay scope(s), comma-separated.
 
 Options:
+  --config <path>
+               Load one explicit container recipe file (key=value) and use it
+               as defaults for this run. When set, name-based recipe lookup is
+               skipped. CLI flags still override recipe values.
+
   --repo-path <path>
-              Override the default repo mount location. Defaults to
-              $DC_REPOS_DIR/<name> or ~/repos/<name>.
+               Override the default repo mount location. Defaults to
+               $DC_REPOS_DIR/<name> or ~/repos/<name>.
+
+  --save-team
+               Save only the CLI-supplied recipe keys from this run to
+               $DC_TEAM_DIR/container-recipes/<name> in key=value form.
+               Recipe-defaulted values are not written.
+
+  --save-user
+               Save only the CLI-supplied recipe keys from this run to
+               $DC_USER_DIR/container-recipes/<name> in key=value form.
+               Recipe-defaulted values are not written.
+
+               You can pass both flags to write both files.
 
   --cpus <N>  CPU limit for the container (e.g. 2, 1.5). Passed to the backend.
 
@@ -121,6 +141,9 @@ Examples:
   dc new myapp
   dc new myapp golang
   dc new myapp node,postgres
+  dc new myapp --config ~/.config/dev-containers/team/container-recipes/api
+  dc new api nodejs --cpus 2 --memory 4g --hide node_modules 3000:3000 --save-team
+  dc new api --cpus 3 --hide .cache --save-user
   dc new myapp node --repo-path ~/code/myapp
   dc new myapp --cpus 2 --memory 4g --hide node_modules 5173:5173
   dc new monorepo nodejs,golang --hide apps/web/node_modules --hide .cache/go/mod,.cache/go/build

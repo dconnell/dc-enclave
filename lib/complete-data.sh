@@ -6,8 +6,8 @@
 # scripts/_dc (zsh). This is the single source of truth for project names,
 # overlay scopes, subcommands, and rebuild-image targets, so the two
 # completion front-ends never duplicate logic -- in particular the hardened,
-# no-source global-config parser (_dc_read_overlays_dir), which is a security
-# boundary (see tests/config-security.sh).
+# no-source global-config parsers (_dc_read_team_dir / _dc_read_user_dir),
+# which are a security boundary (see tests/config-security.sh).
 #
 # Portability: written to source cleanly under bash 4+ and zsh 5+. Uses only
 # `[[ ]]`, `=~`, `$'...'`, and printf -- no associative arrays and no arrays
@@ -53,17 +53,18 @@ dc_complete_subcommands() {
     "-h"
 }
 
-# Read DC_OVERLAYS_DIR from the global config WITHOUT sourcing/executing it.
-# Restricted line + quoted-value parsing only: a malicious config line can
-# never run code through completion. Echoes the value; returns 1 if absent or
-# malformed. (Moved verbatim from scripts/dc-complete.bash -- security boundary.)
-_dc_read_overlays_dir() {
-  local config="$1"
+# Read DC_TEAM_DIR / DC_USER_DIR from the global config WITHOUT sourcing or
+# executing it. Restricted line + quoted-value parsing only: a malicious config
+# line can never run code through completion. Echoes the value; returns 1 if
+# absent or malformed. (Moved verbatim from scripts/dc-complete.bash and
+# generalized for the two-root layout -- security boundary.)
+_dc_read_config_root() {
+  local config="$1" key="$2"
   local line raw content
 
   [[ -f "$config" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ ^[[:space:]]*DC_OVERLAYS_DIR= ]] || continue
+    [[ "$line" =~ ^[[:space:]]*${key}= ]] || continue
     raw="${line#*=}"
     # Require a double-quoted value.
     if [[ "$raw" != \"*\" ]]; then
@@ -71,9 +72,9 @@ _dc_read_overlays_dir() {
     fi
     content="${raw#\"}"
     content="${content%\"}"
-    # Reject any $/backtick outright (an overlays path never needs them),
-    # then undo the minimal escapes the serializer emits. No interpretation
-    # means no execution.
+    # Reject any $/backtick outright (a root path never needs them), then undo
+    # the minimal escapes the serializer emits. No interpretation means no
+    # execution.
     if [[ "$content" == *'$'* || "$content" == *'`'* ]]; then
       return 1
     fi
@@ -84,6 +85,9 @@ _dc_read_overlays_dir() {
   done < "$config"
   return 1
 }
+
+_dc_read_team_dir() { _dc_read_config_root "$1" DC_TEAM_DIR; }
+_dc_read_user_dir() { _dc_read_config_root "$1" DC_USER_DIR; }
 
 # Print configured project names (dirs under ~/.config/dev-containers with a
 # `config` file). When $1 is non-empty, only names with that prefix are printed.
@@ -110,41 +114,38 @@ dc_complete_projects() {
   done
 }
 
-# Print available overlay scope names discovered from team/ and user/ overlays,
-# applying the same DC_OVERLAYS_DIR resolution as the runtime helpers. Order is
-# preserved and duplicates removed (first occurrence wins). Dedup uses a
-# newline-delimited accumulator so a scope name can never partially match
-# another (names cannot contain newlines).
+# Print available overlay scope names discovered from the team and user
+# overlays/ leaf directories, applying the same DC_TEAM_DIR / DC_USER_DIR
+# resolution as the runtime helpers. Order is preserved and duplicates removed
+# (first occurrence wins). Dedup uses a newline-delimited accumulator so a
+# scope name can never partially match another (names cannot contain newlines).
 dc_complete_scopes() {
   local config="$HOME/.config/dev-containers/config"
-  local overlays_dir=""
+  local team_dir="" user_dir=""
   local f name
   local nl=$'\n'
   local seen="$nl"
 
   if [[ -f "$config" ]]; then
-    overlays_dir="$(_dc_read_overlays_dir "$config")" || overlays_dir=""
-    if [[ -n "$overlays_dir" ]]; then
-      if [[ "$overlays_dir" == "~" || "$overlays_dir" == "~/"* ]]; then
-        overlays_dir="$HOME${overlays_dir#\~}"
-      elif [[ "$overlays_dir" != /* ]]; then
-        overlays_dir="$HOME/.config/dev-containers/$overlays_dir"
-      fi
-    fi
+    team_dir="$(_dc_read_team_dir "$config")" || team_dir=""
+    user_dir="$(_dc_read_user_dir "$config")" || user_dir=""
+    team_dir="$(_dc_complete_resolve_root "$team_dir")"
+    user_dir="$(_dc_complete_resolve_root "$user_dir")"
   fi
 
-  if [[ -z "$overlays_dir" ]]; then
-    overlays_dir="$HOME/.config/dev-containers/overlays"
-  fi
+  [[ -z "$team_dir" ]] && team_dir="$HOME/.config/dev-containers/team"
+  [[ -z "$user_dir" ]] && user_dir="$HOME/.config/dev-containers/user"
 
-  [[ -d "$overlays_dir/team" || -d "$overlays_dir/user" ]] || return 0
+  local team_od="$team_dir/overlays"
+  local user_od="$user_dir/overlays"
+  [[ -d "$team_od" || -d "$user_od" ]] || return 0
 
   # See dc_complete_projects: only zsh needs null-glob (local-scoped).
   if [[ -n "${ZSH_VERSION:-}" ]]; then
     setopt local_options NULL_GLOB
   fi
 
-  for f in "$overlays_dir"/team/Containerfile.* "$overlays_dir"/user/Containerfile.*; do
+  for f in "$team_od"/Containerfile.* "$user_od"/Containerfile.*; do
     [[ -f "$f" ]] || continue
     name="$(basename "$f")"
     name="${name#Containerfile.}"
@@ -155,6 +156,19 @@ dc_complete_scopes() {
       printf '%s\n' "$name"
     fi
   done
+}
+
+# Apply the same ~ / relative-path resolution the runtime loader does.
+# Used by dc_complete_scopes so completion resolves the same root the runtime
+# would.
+_dc_complete_resolve_root() {
+  local val="$1"
+  if [[ "$val" == "~" || "$val" == "~/"* ]]; then
+    val="$HOME${val#\~}"
+  elif [[ "$val" != /* && -n "$val" ]]; then
+    val="$HOME/.config/dev-containers/$val"
+  fi
+  printf '%s' "$val"
 }
 
 # Print the valid targets for `dc rebuild-image`.

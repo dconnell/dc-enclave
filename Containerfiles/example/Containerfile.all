@@ -1,8 +1,8 @@
 # Example overlay fragment applied to all scope combinations.
 #
 # Copy this file to:
-# - $DC_OVERLAYS_DIR/team/Containerfile.all
-# - or $DC_OVERLAYS_DIR/user/Containerfile.all
+# - $DC_TEAM_DIR/overlays/Containerfile.all
+# - or $DC_USER_DIR/overlays/Containerfile.all
 #
 # Overlay fragments should avoid COPY/ADD.
 

@@ -153,21 +153,21 @@ _chk_global_config() {
   fi
 }
 
-_chk_overlays_root() {
-  local cfg val
+_chk_root() {  # <varname>
+  local varname="$1" cfg val
   cfg="$(dc_global_config_path)" || return 1
-  val="$(dc_config_extract_scalar "$cfg" DC_OVERLAYS_DIR 2>/dev/null)" || {
-    echo "DC_OVERLAYS_DIR missing or not a clean quoted value in $cfg" >&2
+  val="$(dc_config_extract_scalar "$cfg" "$varname" 2>/dev/null)" || {
+    echo "$varname missing or not a clean quoted value in $cfg" >&2
     return 1
   }
-  [[ -n "$val" ]] || { echo "DC_OVERLAYS_DIR is empty in $cfg" >&2; return 1; }
+  [[ -n "$val" ]] || { echo "$varname is empty in $cfg" >&2; return 1; }
   case "$val" in
     "~")   val="$HOME" ;;
     "~/"*) val="$HOME${val#\~}" ;;
     /*)    : ;;
     *)     val="$HOME/.config/dev-containers/$val" ;;
   esac
-  [[ -d "$val" ]] || { echo "overlay root does not exist: $val" >&2; return 1; }
+  [[ -d "$val" ]] || { echo "$varname root does not exist: $val" >&2; return 1; }
 }
 
 doctor_host() {
@@ -175,7 +175,8 @@ doctor_host() {
   echo "Environment"
   _check "Bash 4+ (current: ${BASH_VERSION%%,*})" _chk_bash
   _check "Global config ($(dc_global_config_path))" _chk_global_config
-  _check "DC_OVERLAYS_DIR resolvable + overlay root exists" _chk_overlays_root
+  _check "DC_TEAM_DIR resolvable + root exists" _chk_root DC_TEAM_DIR
+  _check "DC_USER_DIR resolvable + root exists" _chk_root DC_USER_DIR
 }
 
 # --- backend probes (all read-only; reachability reuses backend_system_info,

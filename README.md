@@ -100,7 +100,7 @@ Several commands have short aliases:
 | Form | Description |
 |---|---|
 | `dc new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
-| `dc new <name> [scope[,scope...]] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]` | With resource limits and hidden paths (see [Hiding generated paths](#hiding-generated-paths-from-the-host---hide)) |
+| `dc new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]` | With recipe defaults, optional recipe save, resource limits, and hidden paths (see [Hiding generated paths](#hiding-generated-paths-from-the-host---hide)) |
 
 ## Global configuration and overlays
 
@@ -110,35 +110,81 @@ Several commands have short aliases:
 ~/.config/dev-containers/config
 ```
 
-Required key:
+Required keys:
 
 ```bash
-DC_OVERLAYS_DIR="$HOME/.config/dev-containers/overlays"
+DC_TEAM_DIR="$HOME/.config/dev-containers/team"
+DC_USER_DIR="$HOME/.config/dev-containers/user"
 ```
 
-`dc new`, `dc rebuild-image`, and `dc rebuild-container` load `DC_OVERLAYS_DIR` from this config file. If the global config file is missing, `DC_OVERLAYS_DIR` is unset, or the overlays root does not exist, the command fails fast with remediation guidance.
+`dc new`, `dc rebuild-image`, and `dc rebuild-container` load `DC_TEAM_DIR` and `DC_USER_DIR` from this config file. If the global config file is missing, either root is unset, or a root does not exist, the command fails fast with remediation guidance.
 
-Overlay layout under `DC_OVERLAYS_DIR`:
+Each root is an independent directory (each may be its own git repo) holding two namespaces:
 
 ```
-$DC_OVERLAYS_DIR/
-├── team/
-│   ├── README.md
-│   ├── Containerfile.all          # auto-layered when it exists
-│   └── Containerfile.<scope>      # any scope name you define
-└── user/
-    ├── README.md
-    ├── Containerfile.all
-    └── Containerfile.<scope>
+$DC_TEAM_DIR/                      # team root (optional git repo)
+  overlays/                        # image overlay Containerfile fragments
+  ├── Containerfile.all            # auto-layered when it exists
+  └── Containerfile.<scope>        # any scope name you define
+  container-recipes/               # shareable dc new recipe files
+  └── <name>                       # filename is the container name
+$DC_USER_DIR/                      # user root (optional git repo)
+  overlays/
+  ├── Containerfile.all
+  └── Containerfile.<scope>
+  container-recipes/
+  └── <name>
 ```
 
-`setup.sh` creates the overlays root and both namespace directories (`team/`, `user/`) and adds starter README files if missing.
+`setup.sh` creates both roots and their `overlays/` and `container-recipes/` subdirectories (+ starter READMEs).
+
+### Container recipes (`container-recipes/`)
+
+`dc new <name>` auto-loads recipes by container name from:
+
+- `$DC_TEAM_DIR/container-recipes/<name>`
+- `$DC_USER_DIR/container-recipes/<name>`
+
+Recipe files are plain `key=value` lines. Supported keys:
+
+- `scopes`
+- `cpus`
+- `memory`
+- `hide` (repeatable)
+- `network` (repeatable)
+- `ip`
+- `repo-path`
+- `port` (repeatable)
+
+Merge and override rules:
+
+- user recipe overrides team recipe per key
+- list keys (`hide`, `network`, `port`) replace as a whole (not union)
+- CLI args override recipe values for that run
+
+You can load one explicit recipe file with `--config <path>`.
+
+You can also persist the CLI-supplied recipe keys from a `dc new` run:
+
+- `--save-team` writes `$DC_TEAM_DIR/container-recipes/<name>`
+- `--save-user` writes `$DC_USER_DIR/container-recipes/<name>`
+- pass both to write both files
+
+Saved recipes include only keys explicitly supplied on that CLI invocation (not
+values inherited from an existing team/user recipe).
+
+Example:
+
+```bash
+dc new api nodejs,golang --cpus 2 --memory 4g --hide node_modules 3000:3000 --save-team
+dc new api --cpus 3 --hide .cache --save-user
+```
 
 ### Overlay ownership model
 
 - `Containerfiles/example/` in this repo is for reference templates only (never auto-layered)
-- `$DC_OVERLAYS_DIR/team/` is for shared team overlays
-- `$DC_OVERLAYS_DIR/user/` is for personal overlays
+- `$DC_TEAM_DIR/overlays/` is for shared team overlays
+- `$DC_USER_DIR/overlays/` is for personal overlays
 
 
 ### Canonical layering order
@@ -293,36 +339,37 @@ Host-side paths:
 - secrets: ~/.config/dev-containers/<project>
 - per-project config: ~/.config/dev-containers/<project>/config (backend, image, ports, resource limits, secrets paths)
 - global config: ~/.config/dev-containers/config
-- global overlays root: `DC_OVERLAYS_DIR` (typically `~/.config/dev-containers/overlays`)
+- team root: `DC_TEAM_DIR` (typically `~/.config/dev-containers/team`) — holds `overlays/` and `container-recipes/`
+- user root: `DC_USER_DIR` (typically `~/.config/dev-containers/user`) — holds `overlays/` and `container-recipes/`
 
 ## Three-source model (repo, team overlays, user overlays)
 
 Keep these sources separate:
 
 1. **dev-containers repo** (`Containerfiles/base + Containerfiles/example`, scripts, docs)
-2. **team overlays source** (files synced into `$DC_OVERLAYS_DIR/team`)
-3. **user overlays source** (files synced into `$DC_OVERLAYS_DIR/user`)
+2. **team overlays source** (files synced into `$DC_TEAM_DIR/overlays`)
+3. **user overlays source** (files synced into `$DC_USER_DIR/overlays`)
 
 This separation avoids coupling team customization with personal customization and keeps layering deterministic.
 
 Recommended flow:
 
-- keep `$DC_OVERLAYS_DIR/team` as a git checkout of a private team overlays repository and update with `git pull`
-- keep `$DC_OVERLAYS_DIR/user` as a git checkout of your personal overlays repository and update with `git pull`
+- keep `$DC_TEAM_DIR` as a git checkout of a private team root repository (overlays + recipes) and update with `git pull`
+- keep `$DC_USER_DIR` as a git checkout of your personal root repository (overlays + recipes) and update with `git pull`
 - keep the public `dev-containers` repository focused on base image definition and reference templates under `Containerfiles/example/`
 
 Example setup:
 
 ```
-git clone git@github.com:YOUR-ORG/dev-container-team-overlays.git "$DC_OVERLAYS_DIR/team"
-git clone git@github.com:YOUR-USER/dev-container-user-overlays.git "$DC_OVERLAYS_DIR/user"
+git clone git@github.com:YOUR-ORG/dev-container-team-root.git "$DC_TEAM_DIR"
+git clone git@github.com:YOUR-USER/dev-container-user-root.git "$DC_USER_DIR"
 ```
 
-Then keep overlays current:
+Then keep them current:
 
 ```bash
-git -C "$DC_OVERLAYS_DIR/team" pull --ff-only
-git -C "$DC_OVERLAYS_DIR/user" pull --ff-only
+git -C "$DC_TEAM_DIR" pull --ff-only
+git -C "$DC_USER_DIR" pull --ff-only
 ```
 
 ## Initial setup
@@ -336,11 +383,11 @@ CONTAINER_BACKEND=colima scripts/setup.sh
 
 Images built on one backend are not visible to another. `dc new` checks for `dev-base:latest` on the active backend and fails early if setup has not been run for that backend.
 
-`setup.sh` also bootstraps global overlay configuration and directories:
+`setup.sh` also bootstraps global configuration and directories:
 
-- `~/.config/dev-containers/config` with `DC_OVERLAYS_DIR`
-- `$DC_OVERLAYS_DIR/team`
-- `$DC_OVERLAYS_DIR/user`
+- `~/.config/dev-containers/config` with `DC_TEAM_DIR` and `DC_USER_DIR`
+- `$DC_TEAM_DIR/overlays` and `$DC_TEAM_DIR/container-recipes`
+- `$DC_USER_DIR/overlays` and `$DC_USER_DIR/container-recipes`
 
 1. Ensure Bash 4+ is installed:
 
@@ -433,7 +480,7 @@ What scope combinations mean:
 - `<scope>` -> include `Containerfile.<scope>` overlay files from team/user dirs
 - `<scope1>,<scope2>` -> include both scopes in canonical order (all first, then listed order)
 - (no scope) -> base image only, plus `Containerfile.all` when it exists
-- auto overlays -> loaded from `$DC_OVERLAYS_DIR/team` and `$DC_OVERLAYS_DIR/user`
+- auto overlays -> loaded from `$DC_TEAM_DIR/overlays` and `$DC_USER_DIR/overlays`
 
 
 Overlay contract:
@@ -445,7 +492,7 @@ Overlay contract:
 Starter file note:
 
 - `Containerfiles/example/Containerfile.all` is a reference template.
-- Copy it into `$DC_OVERLAYS_DIR/team` or `$DC_OVERLAYS_DIR/user`, then customize.
+- Copy it into `$DC_TEAM_DIR/overlays` or `$DC_USER_DIR/overlays`, then customize.
 
 After dc new:
 
@@ -746,7 +793,7 @@ dc provenance myapp --history       # full timeline as a table
 dc status                           # one-line provenance summary per project
 ```
 
-To reproduce a build for debugging: read the `team`/`user` commit from `dc provenance`, check it out in the corresponding overlay repo (`git -C "$DC_OVERLAYS_DIR/team" checkout <sha>`), then `dc rebuild-image all && dc rebuild-container <name>`. A side not under git shows only its content fingerprint — no commit to check out, but the fingerprint still tells you whether your current files match that build.
+To reproduce a build for debugging: read the `team`/`user` commit from `dc provenance`, check it out in the corresponding root (`git -C "$DC_TEAM_DIR" checkout <sha>` or `git -C "$DC_USER_DIR" checkout <sha>`), then `dc rebuild-image all && dc rebuild-container <name>`. A side not under git shows only its content fingerprint — no commit to check out, but the fingerprint still tells you whether your current files match that build.
 
 `git_dirty: true` (label / log) means the image includes uncommitted overlay edits at build time.
 
@@ -1024,4 +1071,3 @@ to the projects explicitly placed on that same network, and only over the networ
 (no shared filesystem, PID, or IPC namespace). For the local single-user dev
 model this is strictly safer than the alternative of publishing dev databases on
 the host.
-

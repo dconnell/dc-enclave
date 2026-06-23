@@ -118,7 +118,7 @@ while IFS= read -r config_file; do
   scope_csv="$(dc_config_extract_scalar "$config_file" CONTAINER_OVERLAY_SCOPES)" || exit 1
   scope_csv="$(dc_normalize_scopes_csv "$scope_csv")" || exit 1
 
-  image_ref="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$scope_csv")" || exit 1
+  image_ref="$(dc_image_ref_from_scopes "$(dc_team_overlays_dir)" "$(dc_user_overlays_dir)" "$scope_csv")" || exit 1
   image_repo="${image_ref%%:*}"
 
   # dev-base-only projects have no overlay provenance to record.
@@ -146,7 +146,7 @@ while IFS= read -r config_file; do
 
   # Record provenance per project (deduped). Shared images get an entry in each
   # project's log so `dc provenance <project>` is populated.
-  dc_log_provenance "$project_name" "$image_ref" "rebuild" "$DC_OVERLAYS_DIR" "$scope_csv" "$PROV_BASE_ID"
+  dc_log_provenance "$project_name" "$image_ref" "rebuild" "$DC_TEAM_DIR" "$DC_USER_DIR" "$scope_csv" "$PROV_BASE_ID"
 done < <(for f in "$CONFIG_DIR"/*/config; do [[ -f "$f" ]] && printf '%s\n' "$f"; done)
 
 echo ""

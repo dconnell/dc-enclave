@@ -100,8 +100,11 @@ Use RUN/ENV/ARG/SHELL/WORKDIR/USER only."
 
 dc_load_global_config
 
+TEAM_OD="$(dc_team_overlays_dir)"
+USER_OD="$(dc_user_overlays_dir)"
+
 NORMALIZED_SCOPES="$(dc_normalize_scopes_csv "$SCOPE_INPUT")" || exit 1
-EFFECTIVE_SCOPES_CSV="$(dc_effective_scopes_csv "$DC_OVERLAYS_DIR" "$NORMALIZED_SCOPES")" || exit 1
+EFFECTIVE_SCOPES_CSV="$(dc_effective_scopes_csv "$TEAM_OD" "$USER_OD" "$NORMALIZED_SCOPES")" || exit 1
 
 SELECTED_SCOPES=()
 if [[ -n "$EFFECTIVE_SCOPES_CSV" ]]; then
@@ -111,13 +114,17 @@ fi
 AUTO_OVERLAY_FILES=()
 AUTO_OVERLAY_LABELS=()
 
-# Record one overlay file for emission, in the canonical namespace order.
-# Missing unrequested files are reported but skipped silently is handled by the
-# caller (effective-scopes resolution already validated requested scopes).
+# Record one overlay file for emission. The caller passes the resolved overlays
+# leaf dir, the human-readable namespace label ("team"/"user"), and the scope;
+# the label preserves the team/user layering contract for readability even
+# though the on-disk layout is now <root>/overlays/Containerfile.<scope>. A
+# missing unrequested file is reported but skipped silently (effective-scopes
+# resolution already validated requested scopes).
 append_auto_overlay() {
-  local namespace="$1"
-  local scope="$2"
-  local overlay_file="$DC_OVERLAYS_DIR/$namespace/Containerfile.$scope"
+  local overlays_dir="$1"
+  local namespace="$2"
+  local scope="$3"
+  local overlay_file="$overlays_dir/Containerfile.$scope"
 
   if [[ -f "$overlay_file" ]]; then
     validate_overlay_file "$overlay_file"
@@ -132,8 +139,8 @@ append_auto_overlay() {
 # Layer overlays in canonical order: for each effective scope, team then user.
 echo "==> Layering overlays:"
 for scope in "${SELECTED_SCOPES[@]}"; do
-  append_auto_overlay team "$scope"
-  append_auto_overlay user "$scope"
+  append_auto_overlay "$TEAM_OD" team "$scope"
+  append_auto_overlay "$USER_OD" user "$scope"
 done
 
 if [[ ${#SELECTED_SCOPES[@]} -gt 0 ]]; then
@@ -148,15 +155,15 @@ fi
 # (no quotes/backslash/dollar reach the Dockerfile). base.id and built.utc cannot
 # be known at compose time (no backend), so they are declared as ARGs and injected
 # at build time by the caller via --build-arg.
-TEAM_CONTENT_HASH="$(dc_provenance_content_hash "$DC_OVERLAYS_DIR" team "$EFFECTIVE_SCOPES_CSV")"
-USER_CONTENT_HASH="$(dc_provenance_content_hash "$DC_OVERLAYS_DIR" user "$EFFECTIVE_SCOPES_CSV")"
+TEAM_CONTENT_HASH="$(dc_provenance_content_hash "$TEAM_OD" "$EFFECTIVE_SCOPES_CSV")"
+USER_CONTENT_HASH="$(dc_provenance_content_hash "$USER_OD" "$EFFECTIVE_SCOPES_CSV")"
 COMBINED_CONTENT_HASH="$(dc_provenance_combined_hash "$TEAM_CONTENT_HASH" "$USER_CONTENT_HASH")"
-TEAM_GIT_COMMIT="$(dc_provenance_git_commit "$DC_OVERLAYS_DIR/team")"
-TEAM_GIT_DIRTY="$(dc_provenance_git_dirty "$DC_OVERLAYS_DIR/team")"
-TEAM_GIT_SOURCE="$(dc_provenance_git_source "$DC_OVERLAYS_DIR/team")"
-USER_GIT_COMMIT="$(dc_provenance_git_commit "$DC_OVERLAYS_DIR/user")"
-USER_GIT_DIRTY="$(dc_provenance_git_dirty "$DC_OVERLAYS_DIR/user")"
-USER_GIT_SOURCE="$(dc_provenance_git_source "$DC_OVERLAYS_DIR/user")"
+TEAM_GIT_COMMIT="$(dc_provenance_git_commit "$DC_TEAM_DIR")"
+TEAM_GIT_DIRTY="$(dc_provenance_git_dirty "$DC_TEAM_DIR" overlays)"
+TEAM_GIT_SOURCE="$(dc_provenance_git_source "$DC_TEAM_DIR")"
+USER_GIT_COMMIT="$(dc_provenance_git_commit "$DC_USER_DIR")"
+USER_GIT_DIRTY="$(dc_provenance_git_dirty "$DC_USER_DIR" overlays)"
+USER_GIT_SOURCE="$(dc_provenance_git_source "$DC_USER_DIR")"
 
 # Emit the composed file: always FROM dev-base:latest, a provenance LABEL block
 # capturing overlay state, each overlay fragment in layered order, then force

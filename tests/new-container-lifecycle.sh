@@ -41,12 +41,18 @@ chmod 700 "$WORK"
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
 DC_ROOT="$HOME/.config/dev-containers"
-OV="$DC_ROOT/overlays"
-mkdir -p "$OV/team" "$OV/user"
-printf 'DC_OVERLAYS_DIR="%s"\n' "$OV" > "$DC_ROOT/config"
-printf 'RUN echo TEAM-NODEJS\n' > "$OV/team/Containerfile.nodejs"
-printf 'RUN echo USER-NODEJS\n' > "$OV/user/Containerfile.nodejs"
-printf 'RUN echo TEAM-GOLANG\n' > "$OV/team/Containerfile.golang"
+TEAM_DIR="$DC_ROOT/team"
+USER_DIR="$DC_ROOT/user"
+TEAM_OD="$TEAM_DIR/overlays"
+USER_OD="$USER_DIR/overlays"
+mkdir -p "$TEAM_OD" "$USER_OD"
+{
+  printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
+  printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
+} > "$DC_ROOT/config"
+printf 'RUN echo TEAM-NODEJS\n' > "$TEAM_OD/Containerfile.nodejs"
+printf 'RUN echo USER-NODEJS\n' > "$USER_OD/Containerfile.nodejs"
+printf 'RUN echo TEAM-GOLANG\n' > "$TEAM_OD/Containerfile.golang"
 
 # ---------------------------------------------------------------------------
 # Stub CLIs (docker/container/podman) + a controllable image list.
@@ -144,7 +150,7 @@ dc_load_project_config "$CONFIG"
 
 # Persisted image is exactly what the helper derives from the scopes -> the
 # new/rebuild bridge is deterministic by construction.
-expected_img="$(dc_image_ref_from_scopes "$OV" "nodejs,golang")"
+expected_img="$(dc_image_ref_from_scopes "$TEAM_OD" "$USER_OD" "nodejs,golang")"
 [[ "$CONTAINER_IMAGE" == "$expected_img" ]] \
   || fail "config: image [$CONTAINER_IMAGE] != derived [$expected_img]"
 

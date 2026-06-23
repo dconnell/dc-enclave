@@ -253,11 +253,12 @@ rm -f /tmp/m1-global-pwn
 gcfg="$WORK/globalconfig"
 {
   echo '# global config'
-  echo 'DC_OVERLAYS_DIR="/tmp/my-overlay"'
+  echo 'DC_TEAM_DIR="/tmp/team-root"'
+  echo 'DC_USER_DIR="/tmp/user-root"'
   echo 'OTHER="$(touch /tmp/m1-global-pwn)"'
 } > "$gcfg"
-got="$(dc_config_extract_scalar "$gcfg" DC_OVERLAYS_DIR)" || fail "global extract failed"
-[[ "$got" == "/tmp/my-overlay" ]] || fail "global extract mismatch (got '$got')"
+got="$(dc_config_extract_scalar "$gcfg" DC_TEAM_DIR)" || fail "global extract failed"
+[[ "$got" == "/tmp/team-root" ]] || fail "global extract mismatch (got '$got')"
 [[ ! -e /tmp/m1-global-pwn ]] || fail "global extract must not execute config"
 
 pass "global config parsed without execution"
@@ -267,13 +268,14 @@ rm -f /tmp/m1-complete-pwn
 gccfg="$WORK/complete-global-config"
 {
   echo '# global config'
-  echo 'DC_OVERLAYS_DIR="/tmp/safe-overlay"'
+  echo 'DC_TEAM_DIR="/tmp/safe-team"'
+  echo 'DC_USER_DIR="/tmp/safe-user"'
   echo 'EVIL="$(touch /tmp/m1-complete-pwn)"'
 } > "$gccfg"
 # shellcheck source=/dev/null
 source "$ROOT_DIR/scripts/dc-complete.bash"
-got="$(_dc_read_overlays_dir "$gccfg")" || fail "dc-complete overlays parse failed"
-[[ "$got" == "/tmp/safe-overlay" ]] || fail "dc-complete overlays mismatch (got '$got')"
+got="$(_dc_read_team_dir "$gccfg")" || fail "dc-complete team root parse failed"
+[[ "$got" == "/tmp/safe-team" ]] || fail "dc-complete team root mismatch (got '$got')"
 [[ ! -e /tmp/m1-complete-pwn ]] || fail "dc-complete must not execute config code"
 
 pass "dc-complete parses global config without execution"

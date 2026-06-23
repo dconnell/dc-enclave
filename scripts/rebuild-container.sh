@@ -106,7 +106,7 @@ if [[ "$NORMALIZED_SCOPES" != "$OVERLAY_SCOPES_CSV" ]]; then
   dc_set_config_key "$CONFIG" "CONTAINER_OVERLAY_SCOPES" "$OVERLAY_SCOPES_CSV"
 fi
 
-DERIVED_IMAGE="$(dc_image_ref_from_scopes "$DC_OVERLAYS_DIR" "$OVERLAY_SCOPES_CSV")" || exit 1
+DERIVED_IMAGE="$(dc_image_ref_from_scopes "$(dc_team_overlays_dir)" "$(dc_user_overlays_dir)" "$OVERLAY_SCOPES_CSV")" || exit 1
 
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"

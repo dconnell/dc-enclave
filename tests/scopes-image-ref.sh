@@ -64,43 +64,43 @@ reset_overlays() { rm -f "$OV/team"/Containerfile.* "$OV/user"/Containerfile.* 2
 # No `all` present: effective = requested scopes only.
 reset_overlays
 mk_overlay team nodejs
-[[ "$(dc_effective_scopes_csv "$OV" "nodejs")" == "nodejs" ]] \
-  || fail "effective: nodejs only (got [$(dc_effective_scopes_csv "$OV" "nodejs")])"
+[[ "$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs")" == "nodejs" ]] \
+  || fail "effective: nodejs only (got [$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs")])"
 
 # team/all present -> auto-prepended before requested scopes.
 mk_overlay team all
-[[ "$(dc_effective_scopes_csv "$OV" "nodejs")" == "all,nodejs" ]] \
-  || fail "effective: all auto-prepended (got [$(dc_effective_scopes_csv "$OV" "nodejs")])"
+[[ "$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs")" == "all,nodejs" ]] \
+  || fail "effective: all auto-prepended (got [$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs")])"
 
 # user/all alone also triggers auto-all.
 rm_overlay team all; mk_overlay user all
-[[ "$(dc_effective_scopes_csv "$OV" "nodejs")" == "all,nodejs" ]] \
-  || fail "effective: user/all triggers auto-all (got [$(dc_effective_scopes_csv "$OV" "nodejs")])"
+[[ "$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs")" == "all,nodejs" ]] \
+  || fail "effective: user/all triggers auto-all (got [$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs")])"
 
 # Request-side `all` is ignored (not doubled); auto-all still applies once.
 mk_overlay team all
-[[ "$(dc_effective_scopes_csv "$OV" "all,nodejs")" == "all,nodejs" ]] \
-  || fail "effective: request-side all ignored (got [$(dc_effective_scopes_csv "$OV" "all,nodejs")])"
-[[ "$(dc_effective_scopes_csv "$OV" "all")" == "all" ]] \
-  || fail "effective: request all alone collapses (got [$(dc_effective_scopes_csv "$OV" "all")])"
+[[ "$(dc_effective_scopes_csv "$OV/team" "$OV/user" "all,nodejs")" == "all,nodejs" ]] \
+  || fail "effective: request-side all ignored (got [$(dc_effective_scopes_csv "$OV/team" "$OV/user" "all,nodejs")])"
+[[ "$(dc_effective_scopes_csv "$OV/team" "$OV/user" "all")" == "all" ]] \
+  || fail "effective: request all alone collapses (got [$(dc_effective_scopes_csv "$OV/team" "$OV/user" "all")])"
 
 # Multi-scope order preserved; team+user for same scope both compose later.
 mk_overlay team golang; mk_overlay user nodejs
-[[ "$(dc_effective_scopes_csv "$OV" "nodejs,golang")" == "all,nodejs,golang" ]] \
-  || fail "effective: multi-scope order (got [$(dc_effective_scopes_csv "$OV" "nodejs,golang")])"
+[[ "$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs,golang")" == "all,nodejs,golang" ]] \
+  || fail "effective: multi-scope order (got [$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs,golang")])"
 
 # Dedup while preserving first occurrence.
-[[ "$(dc_effective_scopes_csv "$OV" "nodejs,nodejs")" == "all,nodejs" ]] \
-  || fail "effective: dedup preserves order (got [$(dc_effective_scopes_csv "$OV" "nodejs,nodejs")])"
+[[ "$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs,nodejs")" == "all,nodejs" ]] \
+  || fail "effective: dedup preserves order (got [$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs,nodejs")])"
 
 # Fail fast when a named scope is missing in BOTH team and user.
 reset_overlays
 mk_overlay team nodejs
-if dc_effective_scopes_csv "$OV" "nodejs,ghost" >/dev/null 2>&1; then
+if dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs,ghost" >/dev/null 2>&1; then
   fail "effective: missing named scope must fail fast"
 fi
 # And the error names the missing scope.
-err="$(dc_effective_scopes_csv "$OV" "nodejs,ghost" 2>&1 || true)"
+err="$(dc_effective_scopes_csv "$OV/team" "$OV/user" "nodejs,ghost" 2>&1 || true)"
 [[ "$err" == *"ghost"* ]] || fail "effective: error must name missing scope (got [$err])"
 
 pass "dc_effective_scopes_csv (auto-all, order, dedup, fail-fast)"
@@ -111,36 +111,36 @@ pass "dc_effective_scopes_csv (auto-all, order, dedup, fail-fast)"
 reset_overlays
 
 # No effective scopes -> shared base image (empty request, no auto-all).
-[[ "$(dc_image_ref_from_scopes "$OV" "")" == "dev-base:latest" ]] \
+[[ "$(dc_image_ref_from_scopes "$OV/team" "$OV/user" "")" == "dev-base:latest" ]] \
   || fail "image_ref: empty scopes -> dev-base:latest"
 # A request for a named scope that has no overlay file fails fast (does NOT
 # silently fall back to base) -- effective_scopes_csv rejects missing scopes.
-if dc_image_ref_from_scopes "$OV" "nodejs" >/dev/null 2>&1; then
+if dc_image_ref_from_scopes "$OV/team" "$OV/user" "nodejs" >/dev/null 2>&1; then
   fail "image_ref: missing named scope must fail (not fall back to dev-base)"
 fi
 
 # Effective scopes -> dev-img-<16hex>:latest.
 mk_overlay team nodejs
-ref="$(dc_image_ref_from_scopes "$OV" "nodejs")"
+ref="$(dc_image_ref_from_scopes "$OV/team" "$OV/user" "nodejs")"
 [[ "$ref" =~ ^dev-img-[0-9a-f]{16}:latest$ ]] \
   || fail "image_ref: expected dev-img-<16hex>:latest (got [$ref])"
 
 # Deterministic: same scopes -> same ref, stable across runs.
-ref2="$(dc_image_ref_from_scopes "$OV" "nodejs")"
+ref2="$(dc_image_ref_from_scopes "$OV/team" "$OV/user" "nodejs")"
 [[ "$ref" == "$ref2" ]] || fail "image_ref: must be deterministic"
 
 # Insensitive to request formatting (case/whitespace) since it normalizes.
-[[ "$(dc_image_ref_from_scopes "$OV" " NodeJS ")" == "$ref" ]] \
+[[ "$(dc_image_ref_from_scopes "$OV/team" "$OV/user" " NodeJS ")" == "$ref" ]] \
   || fail "image_ref: must normalize before hashing"
 
 # Order matters by design: a,b != b,a.
 mk_overlay team golang
 mk_overlay team alpha
-ab="$(dc_image_ref_from_scopes "$OV" "alpha,golang")"
-ba="$(dc_image_ref_from_scopes "$OV" "golang,alpha")"
+ab="$(dc_image_ref_from_scopes "$OV/team" "$OV/user" "alpha,golang")"
+ba="$(dc_image_ref_from_scopes "$OV/team" "$OV/user" "golang,alpha")"
 [[ "$ab" != "$ba" ]] || fail "image_ref: different scope order must hash differently"
 # Same order repeats.
-[[ "$(dc_image_ref_from_scopes "$OV" "alpha,golang")" == "$ab" ]] \
+[[ "$(dc_image_ref_from_scopes "$OV/team" "$OV/user" "alpha,golang")" == "$ab" ]] \
   || fail "image_ref: ordered scopes must be stable"
 
 pass "dc_image_ref_from_scopes (base vs derived, determinism, order-sensitivity)"

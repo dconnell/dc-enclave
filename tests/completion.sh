@@ -31,11 +31,15 @@ touch "$DC_ROOT"/alpha/config "$DC_ROOT"/beta/config "$DC_ROOT"/gamma/config
 # A dir without a config file must NOT be offered as a project.
 mkdir -p "$DC_ROOT/incomplete"
 
-OV="$DC_ROOT/overlays"
-mkdir -p "$OV/team" "$OV/user"
-touch "$OV/team/Containerfile.node" "$OV/team/Containerfile.all"
-touch "$OV/user/Containerfile.node" "$OV/user/Containerfile.golang"
-printf 'DC_OVERLAYS_DIR="%s/overlays"\n' "$DC_ROOT" > "$DC_ROOT/config"
+TEAM_DIR="$DC_ROOT/team"
+USER_DIR="$DC_ROOT/user"
+mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
+touch "$TEAM_DIR/overlays/Containerfile.node" "$TEAM_DIR/overlays/Containerfile.all"
+touch "$USER_DIR/overlays/Containerfile.node" "$USER_DIR/overlays/Containerfile.golang"
+{
+  printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
+  printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
+} > "$DC_ROOT/config"
 
 # ---------------------------------------------------------------------------
 # Section 1 - shared discovery library (lib/complete-data.sh)
@@ -79,14 +83,16 @@ expect_sorted "doctor targets" \
 # Hardened global-config parser: must accept a clean quoted value and reject
 # anything that could execute ($, backtick, or unquoted).
 ok_cfg="$DC_ROOT/config"
-[[ "$(_dc_read_overlays_dir "$ok_cfg")" == "$DC_ROOT/overlays" ]] \
-  || fail "parser should accept valid quoted value"
-printf 'DC_OVERLAYS_DIR="$HOME/evil"\n' > "$WORK/dollar"
-printf 'DC_OVERLAYS_DIR="x`id`"\n'      > "$WORK/btick"
-printf 'DC_OVERLAYS_DIR=unquoted\n'      > "$WORK/unq"
-_dc_read_overlays_dir "$WORK/dollar" >/dev/null && fail "parser leaked a \$-value"
-_dc_read_overlays_dir "$WORK/btick"  >/dev/null && fail "parser leaked a backtick-value"
-_dc_read_overlays_dir "$WORK/unq"    >/dev/null && fail "parser leaked an unquoted value"
+[[ "$(_dc_read_team_dir "$ok_cfg")" == "$TEAM_DIR" ]] \
+  || fail "parser should accept valid DC_TEAM_DIR quoted value"
+[[ "$(_dc_read_user_dir "$ok_cfg")" == "$USER_DIR" ]] \
+  || fail "parser should accept valid DC_USER_DIR quoted value"
+printf 'DC_TEAM_DIR="$HOME/evil"\n' > "$WORK/dollar"
+printf 'DC_TEAM_DIR="x`id`"\n'      > "$WORK/btick"
+printf 'DC_TEAM_DIR=unquoted\n'      > "$WORK/unq"
+_dc_read_team_dir "$WORK/dollar" >/dev/null && fail "parser leaked a \$-value"
+_dc_read_team_dir "$WORK/btick"  >/dev/null && fail "parser leaked a backtick-value"
+_dc_read_team_dir "$WORK/unq"    >/dev/null && fail "parser leaked an unquoted value"
 pass "hardened parser accepts valid, rejects unsafe"
 
 # Empty/missing dirs must not crash under either shell.
@@ -210,7 +216,7 @@ drive 4 dc clean --hidden-volumes alpha "--"; assert_reply "clean --hidden-volum
 # new: name is free text (no completion), pos3 = scope + flags.
 drive 2 dc new "";               assert_empty "new <name> (free text, no completion)"
 drive 3 dc new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
-  --cpus --hide --ip --memory --network --repo-path all golang node
+  --config --cpus --hide --ip --memory --network --repo-path --save-team --save-user all golang node
 # --network/--ip consume a value (no completion offered for the value).
 drive 4 dc new foo --network ""; assert_empty "new foo --network <val> (no completion)"
 
