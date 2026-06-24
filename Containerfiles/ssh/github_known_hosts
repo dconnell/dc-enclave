@@ -1,6 +1,6 @@
 # Pinned GitHub SSH host keys.
 #
-# Trust anchor for `Host github.com` in the dev-container base image. Read-only
+# Trust anchor for `Host github.com` in the DC Enclave base image. Read-only
 # at runtime; never updated by ssh-keyscan. These exact entries are published by
 # GitHub and were verified against THREE independent channels before pinning
 # (see plans/security/m4.md -> "Verification channels"):

@@ -1,4 +1,4 @@
-FROM dev-base:latest
+FROM dce-base:latest
 
 USER root
 
@@ -21,15 +21,15 @@ RUN node --version && npm --version
 
 WORKDIR /workspace
 
-# This overlay supports the dc hidden-volume feature.  To use it, create the
+# This overlay supports the dce hidden-volume feature.  To use it, create the
 # container with:
 #
-#   dc new <project> nodejs --hide node_modules [ports...]
+#   dce new <project> nodejs --hide node_modules [ports...]
 #
-# dc injects a named volume at runtime (Containerfiles are build-time fragments
+# dce injects a named volume at runtime (Containerfiles are build-time fragments
 # and cannot declare mounts):
 #
-#   --volume dc-hide-<project>-<hash>:/workspace/node_modules
+#   --volume dce-hide-<project>-<hash>:/workspace/node_modules
 #
 # This keeps node_modules off the host bind mount for native-filesystem speed
 # and platform-correct binaries.  This overlay installs a dependency-sync hook
@@ -42,14 +42,14 @@ WORKDIR /workspace
 # - warns that install may run npm lifecycle scripts; set
 #   `DC_NODE_IGNORE_SCRIPTS=1` to install with `--ignore-scripts`.
 
-RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-node-entrypoint.sh <<'ENTRYPOINT_EOF'
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dce-node-entrypoint.sh <<'ENTRYPOINT_EOF'
 #!/bin/sh
 set -eu
 
 APP_DIR="${APP_DIR:-/workspace}"
 STRICT="${DC_NODE_INSTALL_STRICT:-0}"
 IGNORE_SCRIPTS="${DC_NODE_IGNORE_SCRIPTS:-0}"
-HASH_FILE="$APP_DIR/node_modules/.dc-install-hash"
+HASH_FILE="$APP_DIR/node_modules/.dce-install-hash"
 
 log() { printf '%s\n' "[node-hide] $*"; }
 
@@ -113,4 +113,4 @@ fi
 exit 0
 ENTRYPOINT_EOF
 
-RUN chmod +x /home/dev/.local/bin/dc-node-entrypoint.sh
+RUN chmod +x /home/dev/.local/bin/dce-node-entrypoint.sh

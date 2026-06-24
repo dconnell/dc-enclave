@@ -18,9 +18,9 @@
 
 # Auto-source common.sh if this lib is loaded directly (keeps a single import).
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
-  _dc_backend_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  source "$_dc_backend_lib_dir/common.sh"
-  unset _dc_backend_lib_dir
+  _dce_backend_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  source "$_dce_backend_lib_dir/common.sh"
+  unset _dce_backend_lib_dir
 fi
 
 if [[ -n "${_DC_BACKEND_SH_LOADED:-}" ]]; then
@@ -273,7 +273,7 @@ _backend_warn_missing_cli() {
   esac
 }
 
-# Fail fast unless a Colima Docker context is active. dev-containers drives
+# Fail fast unless a Colima Docker context is active. DC Enclave drives
 # Colima through the docker CLI, so it must be pointed at Colima to work.
 _backend_require_colima_context() {
   local context=""
@@ -352,7 +352,7 @@ backend_use() {
   fi
 
   if ! _backend_set_cli "$selected"; then
-    dc_die "Unsupported backend '$selected'."
+    dce_die "Unsupported backend '$selected'."
   fi
 
   DEV_CONTAINERS_BACKEND="$selected"
@@ -486,7 +486,7 @@ backend_system_start() {
   esac
 }
 
-# Print detailed runtime info for the active backend (for `dc status`).
+# Print detailed runtime info for the active backend (for `dce status`).
 backend_system_info() {
   case "$(backend_name)" in
     apple)
@@ -547,7 +547,7 @@ backend_image_exists() {
 
 # Echo the backend-local image Id (content digest) for an image reference, or
 # empty if it cannot be determined. Used for image provenance (the base.id
-# label/log field) so a reader can tell whether dev-base was rebuilt since a
+# label/log field) so a reader can tell whether dce-base was rebuilt since a
 # derived image was built. Best-effort and backend-local by design: it never
 # fails a build (empty is acceptable), and the value is not portable across
 # backends -- it is only meaningful within one backend's image store.
@@ -589,7 +589,7 @@ backend_container_image_id() {
 
 # Determine whether a project's container is stale: bound to an older image than
 # the project's configured CONTAINER_IMAGE tag currently resolves to. This is
-# the single stale predicate shared by `dc list` and `dc status`.
+# the single stale predicate shared by `dce list` and `dce status`.
 #
 # Returns 0 (stale) only when drift is *proven*: the backend is usable, the
 # container exists, and both the desired image's id and the container's bound
@@ -757,7 +757,7 @@ backend_create() {
     if _backend_podman_supports_host_gateway; then
       create_args+=(--add-host "host.docker.internal=host-gateway")
     elif [[ "$_DC_PODMAN_HOST_GATEWAY_WARNED" -eq 0 ]]; then
-      dc_warn "Podman host-gateway alias is unavailable; use host.containers.internal inside containers."
+      dce_warn "Podman host-gateway alias is unavailable; use host.containers.internal inside containers."
       _DC_PODMAN_HOST_GATEWAY_WARNED=1
     fi
   fi
@@ -1006,7 +1006,7 @@ backend_network_connect() {
   case "$(backend_name)" in
     apple)
       echo "ERROR: apple/container cannot live-attach a network to an existing container." >&2
-      echo "       Re-create with: dc rebuild-container $container (after adding the network to its config)." >&2
+      echo "       Re-create with: dce rebuild-container $container (after adding the network to its config)." >&2
       return 1
       ;;
     docker|orbstack|colima|podman)

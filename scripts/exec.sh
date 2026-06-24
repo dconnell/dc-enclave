@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/exec.sh - `dc exec`: run a single command in a running container.
+# scripts/exec.sh - `dce exec`: run a single command in a running container.
 #
 # Raw exec (docker-exec style): the command runs directly as the dev user with
 # no GITHUB_TOKEN seeding, no PS1 prefix, and no zsh -ic wrapping. A TTY is
 # auto-allocated only when both stdin and stdout are interactive, so piped use
-# (e.g. `dc exec name cat file | grep x`) is not corrupted. Use `dc shell` for
+# (e.g. `dce exec name cat file | grep x`) is not corrupted. Use `dce shell` for
 # an interactive session or token-seeded one-shot commands.
 #
 # --root runs the command as uid 0 (non-TTY) for permission-debugging; it maps
@@ -16,7 +16,7 @@ set -euo pipefail
 USE_ROOT=false
 PROJECT=""
 
-# Only --root is consumed as a dc option, and only before the project name.
+# Only --root is consumed as a dce option, and only before the project name.
 # The first non-option token is the project; everything after it is the command
 # verbatim (so command args that start with '-' are passed through untouched).
 while [[ $# -gt 0 ]]; do
@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "ERROR: Unknown option: $1" >&2
-      echo "Usage: dc exec [--root] <name> <command...>" >&2
+      echo "Usage: dce exec [--root] <name> <command...>" >&2
       exit 1
       ;;
     *)
@@ -50,13 +50,13 @@ CMD=("$@")
 
 if [[ -z "$PROJECT" ]]; then
   echo "ERROR: Project name is required." >&2
-  echo "Usage: dc exec [--root] <name> <command...>" >&2
+  echo "Usage: dce exec [--root] <name> <command...>" >&2
   exit 1
 fi
 
 if [[ ${#CMD[@]} -eq 0 ]]; then
   echo "ERROR: No command specified." >&2
-  echo "  For an interactive shell, use: dc shell $PROJECT" >&2
+  echo "  For an interactive shell, use: dce shell $PROJECT" >&2
   exit 1
 fi
 
@@ -73,18 +73,18 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
-CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
+CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'. Run: dc new $PROJECT" >&2
+  echo "ERROR: No config for '$PROJECT'. Run: dce new $PROJECT" >&2
   exit 1
 fi
 
-dc_load_project_config "$CONFIG"
+dce_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 
 if ! backend_is_running "$PROJECT"; then
   echo "ERROR: Container '$PROJECT' is not running." >&2
-  echo "  Start it first: dc start $PROJECT" >&2
+  echo "  Start it first: dce start $PROJECT" >&2
   exit 1
 fi
 

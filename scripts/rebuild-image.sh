@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/rebuild-image.sh - `dc rebuild-image`: rebuild managed images.
+# scripts/rebuild-image.sh - `dce rebuild-image`: rebuild managed images.
 #
-# `base` rebuilds only dev-base:latest. `all` (default) rebuilds dev-base plus
-# every derived image (dev-img-<hash>) currently selected by configured project
+# `base` rebuilds only dce-base:latest. `all` (default) rebuilds dce-base plus
+# every derived image (dce-img-<hash>) currently selected by configured project
 # scopes, composing each on the fly. Images are rebuilt into the active
-# backend's store only. After rebuilding, run `dc rebuild-container <name>` to
+# backend's store only. After rebuilding, run `dce rebuild-container <name>` to
 # recreate containers from the refreshed images.
 # =============================================================================
 set -euo pipefail
@@ -29,7 +29,7 @@ case "$TARGET" in
   all|base)
     ;;
   *)
-    echo "Usage: dc rebuild-image [all|base]"
+    echo "Usage: dce rebuild-image [all|base]"
     exit 1
     ;;
 esac
@@ -81,22 +81,22 @@ echo "CLI version: $(backend_version)"
 echo "Target: $TARGET"
 
 echo ""
-echo "--- Building dev-base ---"
+echo "--- Building dce-base ---"
 backend_build_image \
-  "dev-base:latest" \
+  "dce-base:latest" \
   "$ROOT_DIR/Containerfiles/Containerfile.base" \
   "$ROOT_DIR"
 
 if [[ "$TARGET" == "base" ]]; then
   echo ""
   echo "✓ Image rebuild complete for target: $TARGET"
-  echo "  Next: run dc rebuild-container <project> to recreate containers from updated images."
+  echo "  Next: run dce rebuild-container <project> to recreate containers from updated images."
   exit 0
 fi
 
-dc_load_global_config
+dce_load_global_config
 
-CONFIG_DIR="$HOME/.config/dev-containers"
+CONFIG_DIR="$HOME/.config/dce-enclave"
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
@@ -104,31 +104,31 @@ if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
 fi
 
 # Scan every project config, derive its image, and build each unique derived
-# repo once. dev-base-only projects are skipped (built above as the base).
+# repo once. dce-base-only projects are skipped (built above as the base).
 declare -A BUILT_REPOS=()
 
-# Provenance inputs shared across this rebuild run: the dev-base Id feeds the
+# Provenance inputs shared across this rebuild run: the dce-base Id feeds the
 # base.id label, and one build timestamp stamps every image built in this run.
-PROV_BASE_ID="$(backend_image_id "dev-base:latest")"
+PROV_BASE_ID="$(backend_image_id "dce-base:latest")"
 PROV_BUILT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 while IFS= read -r config_file; do
   [[ -z "$config_file" ]] && continue
 
-  scope_csv="$(dc_config_extract_scalar "$config_file" CONTAINER_OVERLAY_SCOPES)" || exit 1
-  scope_csv="$(dc_normalize_scopes_csv "$scope_csv")" || exit 1
+  scope_csv="$(dce_config_extract_scalar "$config_file" CONTAINER_OVERLAY_SCOPES)" || exit 1
+  scope_csv="$(dce_normalize_scopes_csv "$scope_csv")" || exit 1
 
-  image_ref="$(dc_image_ref_from_scopes "$(dc_team_overlays_dir)" "$(dc_user_overlays_dir)" "$scope_csv")" || exit 1
+  image_ref="$(dce_image_ref_from_scopes "$(dce_team_overlays_dir)" "$(dce_user_overlays_dir)" "$scope_csv")" || exit 1
   image_repo="${image_ref%%:*}"
 
-  # dev-base-only projects have no overlay provenance to record.
-  [[ "$image_ref" == "dev-base:latest" ]] && continue
+  # dce-base-only projects have no overlay provenance to record.
+  [[ "$image_ref" == "dce-base:latest" ]] && continue
 
   project_name="$(basename "$(dirname "$config_file")")"
 
   # Build each unique derived repo once; other projects sharing it reuse it.
   if [[ -z "${BUILT_REPOS[$image_repo]-}" ]]; then
-    image_hash="$(dc_image_hash_from_ref "$image_ref")" || {
+    image_hash="$(dce_image_hash_from_ref "$image_ref")" || {
       echo "ERROR: Could not derive image hash from image ref: $image_ref"
       exit 1
     }
@@ -145,17 +145,17 @@ while IFS= read -r config_file; do
   fi
 
   # Record provenance per project (deduped). Shared images get an entry in each
-  # project's log so `dc provenance <project>` is populated.
-  dc_log_provenance "$project_name" "$image_ref" "rebuild" "$DC_TEAM_DIR" "$DC_USER_DIR" "$scope_csv" "$PROV_BASE_ID"
+  # project's log so `dce provenance <project>` is populated.
+  dce_log_provenance "$project_name" "$image_ref" "rebuild" "$DC_TEAM_DIR" "$DC_USER_DIR" "$scope_csv" "$PROV_BASE_ID"
 done < <(for f in "$CONFIG_DIR"/*/config; do [[ -f "$f" ]] && printf '%s\n' "$f"; done)
 
 echo ""
 if [[ ${#BUILT_REPOS[@]} -eq 0 ]]; then
   echo "No configured derived images found to rebuild."
 else
-  echo "Rebuilt derived repos: $(dc_join_by ', ' "${!BUILT_REPOS[@]}")"
+  echo "Rebuilt derived repos: $(dce_join_by ', ' "${!BUILT_REPOS[@]}")"
 fi
 
 echo ""
 echo "✓ Image rebuild complete for target: $TARGET"
-echo "  Next: run dc rebuild-container <project> to recreate containers from updated images."
+echo "  Next: run dce rebuild-container <project> to recreate containers from updated images."

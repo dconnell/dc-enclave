@@ -1,26 +1,26 @@
-#compdef dc
+#compdef dce
 # =============================================================================
-# scripts/_dc - Native zsh tab completion for the `dc` command.
+# scripts/_dce - Native zsh tab completion for the `dce` command.
 #
-# Autoloaded by zsh when `scripts/` is on fpath and `compdef _dc dc` has run
+# Autoloaded by zsh when `scripts/` is on fpath and `compdef _dce dce` has run
 # (both wired by setup.sh for zsh users). This is real zsh completion -- not
 # the bashcompinit shim -- so candidates carry descriptions and are grouped.
 #
 # Candidate data (project names, scopes, the hardened global-config parser) is
-# shared with scripts/dc-complete.bash via lib/complete-data.sh, so discovery
+# shared with scripts/dce-complete.bash via lib/complete-data.sh, so discovery
 # logic and the security boundary live in exactly one place.
 #
-# Per-subcommand grammar mirrors scripts/dc-complete.bash and the real parsers
+# Per-subcommand grammar mirrors scripts/dce-complete.bash and the real parsers
 # in scripts/*.sh.
 # =============================================================================
 
-_dc() {
+_dce() {
   local state
 
   # State machine (plans/autocomplete.md Phase 3). `'1: :->subcmd'` completes
   # the subcommand at position 1; `'*:: :->args'` fires once a subcommand token
   # exists and -- critically -- re-slices $words so the command word is dropped
-  # and $CURRENT is decremented. Inside _dc_dispatch, $words[1] is then the
+  # and $CURRENT is decremented. Inside _dce_dispatch, $words[1] is then the
   # subcommand and $words[2] is the first positional, so `_arguments` numbered
   # specs ('1:...', '2:...') land on the right slots. Without this reset every
   # numbered spec is off by one (the subcommand token would consume slot 1).
@@ -34,8 +34,8 @@ _dc() {
     '*:: :->args'
 
   case $state in
-    subcmd) _dc_subcommands ;;
-    args)   _dc_dispatch "$words[1]" ;;
+    subcmd) _dce_subcommands ;;
+    args)   _dce_dispatch "$words[1]" ;;
   esac
   return 0
 }
@@ -43,34 +43,34 @@ _dc() {
 # Load the shared completion-data library once per shell session. All candidate
 # data (subcommands, projects, scopes, and the hardened config parser) comes
 # from it, so every completion path depends on it.
-_dc_load_complete_data() {
+_dce_load_complete_data() {
   if [[ -n "${_DC_ZSH_COMPLETE_DATA_LOADED:-}" ]]; then
     return 0
   fi
 
-  local dc_lib=""
-  if [[ -n "${functions_source[_dc]:-}" ]]; then
-    dc_lib="${functions_source[_dc]:A:h:h}/lib/complete-data.sh"
+  local dce_lib=""
+  if [[ -n "${functions_source[_dce]:-}" ]]; then
+    dce_lib="${functions_source[_dce]:A:h:h}/lib/complete-data.sh"
   fi
-  if [[ -z "$dc_lib" || ! -r "$dc_lib" ]]; then
+  if [[ -z "$dce_lib" || ! -r "$dce_lib" ]]; then
     local d
     for d in $fpath; do
       if [[ -r "$d/lib/complete-data.sh" ]]; then
-        dc_lib="$d/lib/complete-data.sh"
+        dce_lib="$d/lib/complete-data.sh"
         break
       elif [[ -r "$d/../lib/complete-data.sh" ]]; then
-        dc_lib="$d/../lib/complete-data.sh"
+        dce_lib="$d/../lib/complete-data.sh"
         break
       fi
     done
   fi
 
-  if [[ -z "$dc_lib" || ! -r "$dc_lib" ]]; then
+  if [[ -z "$dce_lib" || ! -r "$dce_lib" ]]; then
     return 1
   fi
 
   # shellcheck source=/dev/null
-  source "$dc_lib" || return 1
+  source "$dce_lib" || return 1
   _DC_ZSH_COMPLETE_DATA_LOADED=1
   return 0
 }
@@ -79,21 +79,21 @@ _dc_load_complete_data() {
 # be exercised directly (and tested without the real _arguments engine). Runs
 # in the reduced $words/$CURRENT context established by the top-level *:: reset,
 # so $words[1] is the subcommand and numbered specs target the right slots.
-_dc_dispatch() {
+_dce_dispatch() {
   case "$1" in
     start|stop|restart)
       # Variadic projects; exclude names already typed on the line. After the
       # *:: reset, $words[1] is the subcommand and typed projects begin at
       # $words[2], so the exclude slice is words[2,CURRENT-1].
-      _arguments '*:project: _dc_projects $words[2,CURRENT-1]'
+      _arguments '*:project: _dce_projects $words[2,CURRENT-1]'
       ;;
     shell)
       # One project, then a free-form command (no completion past it).
-      _arguments '1:project:_dc_projects_simple'
+      _arguments '1:project:_dce_projects_simple'
       ;;
     logs)
       _arguments \
-        '1:project:_dc_projects_simple' \
+        '1:project:_dce_projects_simple' \
         '--follow[follow log output]' \
         '-f[follow log output]' \
         '--tail+[last N lines]:N:'
@@ -102,11 +102,11 @@ _dc_dispatch() {
       # Optional --root, then one project, then a free-form command.
       _arguments \
         '--root[run as uid 0 (non-interactive)]' \
-        '1:project:_dc_projects_simple'
+        '1:project:_dce_projects_simple'
       ;;
     rm)
       _arguments \
-        '1:project:_dc_projects_simple' \
+        '1:project:_dce_projects_simple' \
         '--yes[skip confirmation]' \
         '-y[skip confirmation]' \
         '--keep-config[preserve config and secrets dir]' \
@@ -114,68 +114,68 @@ _dc_dispatch() {
       ;;
     rebuild-container)
       _arguments \
-        '1:project:_dc_projects_simple' \
+        '1:project:_dce_projects_simple' \
         '--rotate-keys[generate a fresh SSH deploy key]' \
         '--keep-hidden-volumes[preserve hidden volumes across the rebuild]'
       ;;
     install)
       # One project, then a dotfiles directory.
       _arguments \
-        '1:project:_dc_projects_simple' \
+        '1:project:_dce_projects_simple' \
         '2:dotfiles directory:_files -/'
       ;;
     rebuild-image)
-      _arguments '1:target:_dc_rebuild_image_targets'
+      _arguments '1:target:_dce_rebuild_image_targets'
       ;;
     provenance)
       _arguments \
-        '1:project:_dc_projects_simple' \
+        '1:project:_dce_projects_simple' \
         '--history[show the full build timeline]' \
         '--all[show the full build timeline]'
       ;;
     clean)
-      _dc_clean
+      _dce_clean
       ;;
     doctor)
-      _dc_doctor
+      _dce_doctor
       ;;
     network|net)
-      _dc_network
+      _dce_network
       ;;
     new)
-      _dc_new
+      _dce_new
       ;;
     # status|s, list|ls, version(-v), help(-h): no positional completion.
   esac
 }
 
 # Subcommand candidate set. Single source of truth: lib/complete-data.sh's
-# dc_complete_subcommands, so adding a subcommand to scripts/dc only requires
+# dce_complete_subcommands, so adding a subcommand to scripts/dce only requires
 # updating the list in one place. Uses direct compadd for robust prefix
 # matching across zsh setups.
-_dc_subcommands() {
-  if ! _dc_load_complete_data; then
-    _message "dc completion unavailable (cannot locate lib/complete-data.sh)"
+_dce_subcommands() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
     return 1
   fi
 
   local -a all
-  all=("${(@f)$(dc_complete_subcommands)}")
+  all=("${(@f)$(dce_complete_subcommands)}")
   compadd -a all
 }
 
 # Complete project names, excluding the names passed as args (already present
 # on the command line). Comparison is literal string equality (not a pattern),
 # so project names with dots/dashes are matched exactly.
-_dc_projects() {
-  if ! _dc_load_complete_data; then
-    _message "dc completion unavailable (cannot locate lib/complete-data.sh)"
+_dce_projects() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
     return 1
   fi
 
   local -a all result=()
   local a w include
-  all=("${(@f)$(dc_complete_projects)}")
+  all=("${(@f)$(dce_complete_projects)}")
   for a in "${all[@]}"; do
     include=1
     for w in "$@"; do
@@ -186,21 +186,21 @@ _dc_projects() {
   _wanted projects expl 'project' compadd -a result
 }
 
-_dc_projects_simple() {
-  if ! _dc_load_complete_data; then
-    _message "dc completion unavailable (cannot locate lib/complete-data.sh)"
+_dce_projects_simple() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
     return 1
   fi
 
   local -a all
-  all=("${(@f)$(dc_complete_projects)}")
+  all=("${(@f)$(dce_complete_projects)}")
   _wanted projects expl 'project' compadd -a all
 }
 
-# `dc clean [--dry-run] [--hidden-volumes [name]]`: flags are always offered;
+# `dce clean [--dry-run] [--hidden-volumes [name]]`: flags are always offered;
 # a single optional project is offered once --hidden-volumes is active and no
 # project has been typed yet.
-_dc_clean() {
+_dce_clean() {
   local have_hv=0 have_proj=0 i w
   # After the *:: reset, $words[1] is the `clean` subcommand; scan its args
   # from index 2 onward.
@@ -216,27 +216,27 @@ _dc_clean() {
   flags=(--dry-run --hidden-volumes)
   _wanted flags expl 'flag' compadd -a flags
   if (( have_hv )) && (( ! have_proj )); then
-    _dc_projects_simple
+    _dce_projects_simple
   fi
 }
 
-# `dc doctor [backend|project]`: one optional target (backend or project).
-_dc_doctor() {
-  if ! _dc_load_complete_data; then
-    _message "dc completion unavailable (cannot locate lib/complete-data.sh)"
+# `dce doctor [backend|project]`: one optional target (backend or project).
+_dce_doctor() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
     return 1
   fi
 
   local -a all
-  all=("${(@f)$(dc_complete_doctor_targets)}")
+  all=("${(@f)$(dce_complete_doctor_targets)}")
   _wanted targets expl 'backend or project' compadd -a all
 }
 
-# `dc new <name> [scope] [--config <file>] [--save-team] [--save-user] [--repo-path <d>] [--cpus N] [--memory V] [--hide <p>] [--network <n>[,...]] [--ip <addr>] [ports]`.
-_dc_new() {
+# `dce new <name> [scope] [--config <file>] [--save-team] [--save-user] [--repo-path <d>] [--cpus N] [--memory V] [--hide <p>] [--network <n>[,...]] [--ip <addr>] [ports]`.
+_dce_new() {
   _arguments \
     '1:project name:' \
-    '2:scope:_dc_scopes' \
+    '2:scope:_dce_scopes' \
     '--config+[load an explicit recipe file]:recipe file:_files' \
     '--save-team[save CLI-supplied recipe keys to team container-recipes/<name>]' \
     '--save-user[save CLI-supplied recipe keys to user container-recipes/<name>]' \
@@ -244,40 +244,40 @@ _dc_new() {
     '--cpus+[cpu limit (e.g. 2, 1.5)]:value:' \
     '--memory+[memory limit (e.g. 4g, 512m)]:value:' \
     '*--hide[workspace path(s) to keep in a named volume]:path:' \
-    '*--network[network(s) to attach (name[,name...] or name:ip)]:network:' \
+    '*--network[network(s) to attach (name\[,name...\] or name:ip)]:network:' \
     '--ip+[static IPv4 for the primary network]:addr:'
 }
 
-# `dc network <subaction> [args]`.
-_dc_network() {
-  if ! _dc_load_complete_data; then
-    _message "dc completion unavailable (cannot locate lib/complete-data.sh)"
+# `dce network <subaction> [args]`.
+_dce_network() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
     return 1
   fi
 
   local -a subs
-  subs=("${(@f)$(dc_complete_network_subactions)}")
+  subs=("${(@f)$(dce_complete_network_subactions)}")
   _describe 'network subcommand' subs
 }
 
-_dc_scopes() {
-  if ! _dc_load_complete_data; then
-    _message "dc completion unavailable (cannot locate lib/complete-data.sh)"
+_dce_scopes() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
     return 1
   fi
 
   local -a all
-  all=("${(@f)$(dc_complete_scopes)}")
+  all=("${(@f)$(dce_complete_scopes)}")
   _wanted scopes expl 'overlay scope' compadd -a all
 }
 
-_dc_rebuild_image_targets() {
-  if ! _dc_load_complete_data; then
-    _message "dc completion unavailable (cannot locate lib/complete-data.sh)"
+_dce_rebuild_image_targets() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
     return 1
   fi
 
   local -a all
-  all=("${(@f)$(dc_complete_rebuild_image_targets)}")
+  all=("${(@f)$(dce_complete_rebuild_image_targets)}")
   _wanted targets expl 'target' compadd -a all
 }

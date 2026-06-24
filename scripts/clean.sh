@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/clean.sh - `dc clean`: reclaim backend storage.
+# scripts/clean.sh - `dce clean`: reclaim backend storage.
 #
 # Two modes:
 #   default             Remove old/orphan managed *image* tags. Expected repos
-#                       (dev-base + currently-configured dev-img-*) keep
+#                       (dce-base + currently-configured dce-img-*) keep
 #                       :latest and shed other tags; orphan repos lose all tags.
-#   --hidden-volumes    Remove orphan managed *hidden volumes* (dc-hide-* no
+#   --hidden-volumes    Remove orphan managed *hidden volumes* (dce-hide-* no
 #                       longer referenced by an active project config). An
 #                       optional project name scopes it to one project.
 #
@@ -34,12 +34,12 @@ while [[ $# -gt 0 ]]; do
       break
       ;;
     -* )
-      echo "Usage: dc clean [--dry-run] [--hidden-volumes [name]]"
+      echo "Usage: dce clean [--dry-run] [--hidden-volumes [name]]"
       exit 1
       ;;
     *)
       if [[ -n "$TARGET_PROJECT" ]]; then
-        echo "Usage: dc clean [--dry-run] [--hidden-volumes [name]]"
+        echo "Usage: dce clean [--dry-run] [--hidden-volumes [name]]"
         exit 1
       fi
       TARGET_PROJECT="$1"
@@ -49,7 +49,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "$TARGET_PROJECT" && "$CLEAN_HIDDEN_VOLUMES" == "false" ]]; then
-  echo "Usage: dc clean [--dry-run] [--hidden-volumes [name]]"
+  echo "Usage: dce clean [--dry-run] [--hidden-volumes [name]]"
   exit 1
 fi
 
@@ -97,15 +97,15 @@ case "$ACTIVE_BACKEND" in
     ;;
 esac
 
-dc_load_global_config
+dce_load_global_config
 
 # --- Hidden-volume cleanup mode -----------------------------------------------
 # Build the set of volumes still referenced by active project configs, then
-# remove any dc-hide-* volume not in that set (optionally scoped to one project).
+# remove any dce-hide-* volume not in that set (optionally scoped to one project).
 if $CLEAN_HIDDEN_VOLUMES; then
   declare -A EXPECTED_VOLUMES=()
 
-  for config_file in "$HOME"/.config/dev-containers/*/config; do
+  for config_file in "$HOME"/.config/dce-enclave/*/config; do
     [[ -f "$config_file" ]] || continue
 
     project_name="$(basename "$(dirname "$config_file")")"
@@ -116,8 +116,8 @@ if $CLEAN_HIDDEN_VOLUMES; then
     CONTAINER_HIDDEN_PATHS=()
     # Load through the hardened path; skip (don't abort) projects whose config
     # has invalid values so cleanup of healthy projects still proceeds.
-    if ! dc_load_project_config "$config_file"; then
-      dc_warn "Skipping invalid or unsafe config: $config_file"
+    if ! dce_load_project_config "$config_file"; then
+      dce_warn "Skipping invalid or unsafe config: $config_file"
       continue
     fi
 
@@ -126,8 +126,8 @@ if $CLEAN_HIDDEN_VOLUMES; then
     fi
 
     normalized_hidden_csv=""
-    if ! normalized_hidden_csv="$(dc_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]:-}")"; then
-      dc_warn "Skipping invalid hidden paths in $config_file"
+    if ! normalized_hidden_csv="$(dce_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]:-}")"; then
+      dce_warn "Skipping invalid hidden paths in $config_file"
       continue
     fi
 
@@ -138,14 +138,14 @@ if $CLEAN_HIDDEN_VOLUMES; then
 
     for hidden_path in "${normalized_hidden_paths[@]}"; do
       [[ -z "$hidden_path" ]] && continue
-      hidden_volume="$(dc_hidden_volume_name "$project_name" "$hidden_path")"
+      hidden_volume="$(dce_hidden_volume_name "$project_name" "$hidden_path")"
       EXPECTED_VOLUMES["$hidden_volume"]=1
     done
   done
 
-  managed_prefix="dc-hide-"
+  managed_prefix="dce-hide-"
   if [[ -n "$TARGET_PROJECT" ]]; then
-    managed_prefix="dc-hide-$(dc_project_slug "$TARGET_PROJECT")-"
+    managed_prefix="dce-hide-$(dce_project_slug "$TARGET_PROJECT")-"
   fi
 
   REMOVE_VOLUMES=()
@@ -205,32 +205,32 @@ if $CLEAN_HIDDEN_VOLUMES; then
   exit 0
 fi
 
-# A repo is "managed" by dev-containers if it's dev-base or a dev-img-<16hex>.
+# A repo is "managed" by DC Enclave if it's dce-base or a dce-img-<16hex>.
 # Only these are ever candidates for cleanup; everything else is left alone.
 is_managed_repo() {
   local repo="$1"
-  [[ "$repo" == "dev-base" || "$repo" =~ ^dev-img-[0-9a-f]{16}$ ]]
+  [[ "$repo" == "dce-base" || "$repo" =~ ^dce-img-[0-9a-f]{16}$ ]]
 }
 
 # --- Image-tag cleanup mode --------------------------------------------------
-# Expected repos = dev-base + every image currently selected by a project config.
+# Expected repos = dce-base + every image currently selected by a project config.
 declare -A EXPECTED_REPOS=()
-EXPECTED_REPOS["dev-base"]=1
+EXPECTED_REPOS["dce-base"]=1
 
-for config_file in "$HOME"/.config/dev-containers/*/config; do
+for config_file in "$HOME"/.config/dce-enclave/*/config; do
   [[ -f "$config_file" ]] || continue
 
-  if ! scope_csv="$(dc_config_extract_scalar "$config_file" CONTAINER_OVERLAY_SCOPES)"; then
-    dc_warn "Skipping config without CONTAINER_OVERLAY_SCOPES: $config_file"
+  if ! scope_csv="$(dce_config_extract_scalar "$config_file" CONTAINER_OVERLAY_SCOPES)"; then
+    dce_warn "Skipping config without CONTAINER_OVERLAY_SCOPES: $config_file"
     continue
   fi
-  if ! scope_csv="$(dc_normalize_scopes_csv "$scope_csv")"; then
-    dc_warn "Skipping invalid scope config: $config_file"
+  if ! scope_csv="$(dce_normalize_scopes_csv "$scope_csv")"; then
+    dce_warn "Skipping invalid scope config: $config_file"
     continue
   fi
 
-  if ! image_ref="$(dc_image_ref_from_scopes "$(dc_team_overlays_dir)" "$(dc_user_overlays_dir)" "$scope_csv")"; then
-    dc_warn "Skipping config with unresolved scopes: $config_file"
+  if ! image_ref="$(dce_image_ref_from_scopes "$(dce_team_overlays_dir)" "$(dce_user_overlays_dir)" "$scope_csv")"; then
+    dce_warn "Skipping config with unresolved scopes: $config_file"
     continue
   fi
   EXPECTED_REPOS["${image_ref%%:*}"]=1

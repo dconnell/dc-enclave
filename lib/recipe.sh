@@ -2,7 +2,7 @@
 # =============================================================================
 # lib/recipe.sh - Untrusted container recipe parsing and merge helpers.
 #
-# Recipes are shareable key=value files loaded by `dc new` from either:
+# Recipes are shareable key=value files loaded by `dce new` from either:
 #   - explicit --config <path> / --config=<path> (single file), or
 #   - magic lookup by project name under:
 #       $DC_TEAM_DIR/container-recipes/<name>
@@ -15,7 +15,7 @@
 # Merge model (plans/container-recipe.md):
 #   1) Recipe-internal merge: user overrides team per key; list keys replace.
 #   2) CLI-over-recipe merge is done by new-container.sh after calling
-#      dc_recipe_resolve_inputs (this library does not mutate live CLI vars).
+#      dce_recipe_resolve_inputs (this library does not mutate live CLI vars).
 # =============================================================================
 
 if [[ -n "${_DC_RECIPE_SH_LOADED:-}" ]]; then
@@ -49,7 +49,7 @@ declare -gra _DC_RECIPE_LIST_KEYS=(hide network port)
 
 # Write a recipe file atomically from already-normalized key=value lines.
 # Existing content is replaced; an empty line list writes an empty file.
-dc_recipe_write_file() {  # <file> [key=value ...]
+dce_recipe_write_file() {  # <file> [key=value ...]
   local file="$1"
   shift
 
@@ -77,7 +77,7 @@ dc_recipe_write_file() {  # <file> [key=value ...]
 }
 
 # Trim leading/trailing whitespace from one scalar string.
-_dc_recipe_trim() {
+_dce_recipe_trim() {
   local s="$1"
   s="${s#"${s%%[![:space:]]*}"}"
   s="${s%"${s##*[![:space:]]}"}"
@@ -85,7 +85,7 @@ _dc_recipe_trim() {
 }
 
 # Reset all parse/merge/materialized state for one resolve call.
-_dc_recipe_reset_state() {
+_dce_recipe_reset_state() {
   declare -gA _DC_RECIPE_HAS=()
   declare -gA _DC_RECIPE_SCALAR=()
   declare -gA _DC_RECIPE_LIST=()
@@ -104,20 +104,20 @@ _dc_recipe_reset_state() {
   declare -ga _DC_RECIPE_MERGED_PORTS=()
 }
 
-_dc_recipe_parse_error() {
+_dce_recipe_parse_error() {
   local file="$1"
   local lineno="$2"
   local message="$3"
   printf 'ERROR: Invalid recipe %s:%s: %s\n' "$file" "$lineno" "$message" >&2
 }
 
-_dc_recipe_parse_context() {
+_dce_recipe_parse_context() {
   local file="$1"
   local lineno="$2"
   printf '  in recipe %s:%s\n' "$file" "$lineno" >&2
 }
 
-_dc_recipe_append_list() {
+_dce_recipe_append_list() {
   local side="$1"
   local key="$2"
   local value="$3"
@@ -130,7 +130,7 @@ _dc_recipe_append_list() {
   fi
 }
 
-_dc_recipe_validate_port_value() {
+_dce_recipe_validate_port_value() {
   local value="$1"
   [[ "$value" =~ ^[0-9]+(:[0-9]+)?$ ]]
 }
@@ -144,7 +144,7 @@ _dc_recipe_validate_port_value() {
 # - repeated scalar => last wins
 # - repeated list key => accumulates in file order
 # - every value validated/normalized via shared helpers
-dc_recipe_parse_file() {
+dce_recipe_parse_file() {
   local side="$1"
   local file="$2"
 
@@ -162,70 +162,70 @@ dc_recipe_parse_file() {
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     lineno=$((lineno + 1))
-    raw="$(_dc_recipe_trim "$line")"
+    raw="$(_dce_recipe_trim "$line")"
 
     [[ -z "$raw" ]] && continue
     [[ "${raw:0:1}" == "#" ]] && continue
 
     if [[ "$raw" != *"="* ]]; then
-      _dc_recipe_parse_error "$file" "$lineno" "malformed line (expected key=value)"
+      _dce_recipe_parse_error "$file" "$lineno" "malformed line (expected key=value)"
       return 1
     fi
 
     key="${raw%%=*}"
     value="${raw#*=}"
-    key="$(_dc_recipe_trim "$key")"
-    value="$(_dc_recipe_trim "$value")"
+    key="$(_dce_recipe_trim "$key")"
+    value="$(_dce_recipe_trim "$value")"
 
     if [[ -z "$key" ]]; then
-      _dc_recipe_parse_error "$file" "$lineno" "empty key"
+      _dce_recipe_parse_error "$file" "$lineno" "empty key"
       return 1
     fi
 
     case "$key" in
       scopes)
-        if ! normalized="$(dc_normalize_scopes_csv "$value")"; then
-          _dc_recipe_parse_context "$file" "$lineno"
+        if ! normalized="$(dce_normalize_scopes_csv "$value")"; then
+          _dce_recipe_parse_context "$file" "$lineno"
           return 1
         fi
         _DC_RECIPE_HAS["$side:$key"]=1
         _DC_RECIPE_SCALAR["$side:$key"]="$normalized"
         ;;
       cpus)
-        if ! dc_validate_cpus_value "$value" >&2; then
-          _dc_recipe_parse_context "$file" "$lineno"
+        if ! dce_validate_cpus_value "$value" >&2; then
+          _dce_recipe_parse_context "$file" "$lineno"
           return 1
         fi
         _DC_RECIPE_HAS["$side:$key"]=1
         _DC_RECIPE_SCALAR["$side:$key"]="$value"
         ;;
       memory)
-        if ! dc_validate_memory_value "$value" >&2; then
-          _dc_recipe_parse_context "$file" "$lineno"
+        if ! dce_validate_memory_value "$value" >&2; then
+          _dce_recipe_parse_context "$file" "$lineno"
           return 1
         fi
         _DC_RECIPE_HAS["$side:$key"]=1
         _DC_RECIPE_SCALAR["$side:$key"]="$value"
         ;;
       hide)
-        if ! normalized="$(dc_normalize_hidden_paths_csv "$value")"; then
-          _dc_recipe_parse_context "$file" "$lineno"
+        if ! normalized="$(dce_normalize_hidden_paths_csv "$value")"; then
+          _dce_recipe_parse_context "$file" "$lineno"
           return 1
         fi
         _DC_RECIPE_HAS["$side:$key"]=1
-        _dc_recipe_append_list "$side" "$key" "$normalized"
+        _dce_recipe_append_list "$side" "$key" "$normalized"
         ;;
       network)
-        if ! normalized="$(dc_normalize_network_arg "$value")"; then
-          _dc_recipe_parse_context "$file" "$lineno"
+        if ! normalized="$(dce_normalize_network_arg "$value")"; then
+          _dce_recipe_parse_context "$file" "$lineno"
           return 1
         fi
         _DC_RECIPE_HAS["$side:$key"]=1
-        [[ -n "$normalized" ]] && _dc_recipe_append_list "$side" "$key" "$normalized"
+        [[ -n "$normalized" ]] && _dce_recipe_append_list "$side" "$key" "$normalized"
         ;;
       ip)
-        if ! dc_validate_ip_value "$value" >&2; then
-          _dc_recipe_parse_context "$file" "$lineno"
+        if ! dce_validate_ip_value "$value" >&2; then
+          _dce_recipe_parse_context "$file" "$lineno"
           return 1
         fi
         _DC_RECIPE_HAS["$side:$key"]=1
@@ -236,15 +236,15 @@ dc_recipe_parse_file() {
         _DC_RECIPE_SCALAR["$side:$key"]="$value"
         ;;
       port)
-        if ! _dc_recipe_validate_port_value "$value"; then
-          _dc_recipe_parse_error "$file" "$lineno" "invalid port mapping '$value' (expected N or N:N)"
+        if ! _dce_recipe_validate_port_value "$value"; then
+          _dce_recipe_parse_error "$file" "$lineno" "invalid port mapping '$value' (expected N or N:N)"
           return 1
         fi
         _DC_RECIPE_HAS["$side:$key"]=1
-        _dc_recipe_append_list "$side" "$key" "$value"
+        _dce_recipe_append_list "$side" "$key" "$value"
         ;;
       *)
-        _dc_recipe_parse_error "$file" "$lineno" "unknown key '$key'"
+        _dce_recipe_parse_error "$file" "$lineno" "unknown key '$key'"
         return 1
         ;;
     esac
@@ -253,7 +253,7 @@ dc_recipe_parse_file() {
   return 0
 }
 
-_dc_recipe_merge_sides() {
+_dce_recipe_merge_sides() {
   local preferred_side="$1"
   local fallback_side="$2"
   local key=""
@@ -285,7 +285,7 @@ _dc_recipe_merge_sides() {
 
 # Convert merged key state into the concrete variables new-container.sh applies
 # with CLI-over-recipe precedence.
-_dc_recipe_materialize_merged_inputs() {
+_dce_recipe_materialize_merged_inputs() {
   local list_blob=""
   local item=""
   local combined=""
@@ -309,7 +309,7 @@ _dc_recipe_materialize_merged_inputs() {
       done <<< "$list_blob"
     fi
     if [[ ${#items[@]} -gt 0 ]]; then
-      if ! normalized_csv="$(dc_normalize_hidden_paths_values "${items[@]}")"; then
+      if ! normalized_csv="$(dce_normalize_hidden_paths_values "${items[@]}")"; then
         return 1
       fi
       if [[ -n "$normalized_csv" ]]; then
@@ -329,8 +329,8 @@ _dc_recipe_materialize_merged_inputs() {
       done <<< "$list_blob"
     fi
     if [[ ${#items[@]} -gt 0 ]]; then
-      combined="$(dc_join_by ',' "${items[@]}")"
-      if ! _DC_RECIPE_MERGED_NETWORK_INPUT="$(dc_normalize_network_arg "$combined")"; then
+      combined="$(dce_join_by ',' "${items[@]}")"
+      if ! _DC_RECIPE_MERGED_NETWORK_INPUT="$(dce_normalize_network_arg "$combined")"; then
         return 1
       fi
     fi
@@ -350,18 +350,18 @@ _dc_recipe_materialize_merged_inputs() {
   return 0
 }
 
-# Resolve recipe inputs for one `dc new` run.
+# Resolve recipe inputs for one `dce new` run.
 #
 # Args:
 #   $1 project name
 #   $2 optional explicit --config path (empty => magic lookup by project name)
 #
 # On success, sets _DC_RECIPE_FOUND + _DC_RECIPE_MERGED_* variables.
-dc_recipe_resolve_inputs() {
+dce_recipe_resolve_inputs() {
   local project="$1"
   local explicit_config="${2:-}"
 
-  _dc_recipe_reset_state
+  _dce_recipe_reset_state
 
   local team_recipe=""
   local user_recipe=""
@@ -371,27 +371,27 @@ dc_recipe_resolve_inputs() {
       printf 'ERROR: Recipe file not found: %s\n' "$explicit_config" >&2
       return 1
     fi
-    if ! dc_recipe_parse_file single "$explicit_config"; then
+    if ! dce_recipe_parse_file single "$explicit_config"; then
       return 1
     fi
     _DC_RECIPE_FOUND=true
-    _dc_recipe_merge_sides single ""
-    _dc_recipe_materialize_merged_inputs || return 1
+    _dce_recipe_merge_sides single ""
+    _dce_recipe_materialize_merged_inputs || return 1
     return 0
   fi
 
-  team_recipe="$(dc_team_recipes_dir)/$project"
-  user_recipe="$(dc_user_recipes_dir)/$project"
+  team_recipe="$(dce_team_recipes_dir)/$project"
+  user_recipe="$(dce_user_recipes_dir)/$project"
 
   if [[ -f "$team_recipe" ]]; then
-    if ! dc_recipe_parse_file team "$team_recipe"; then
+    if ! dce_recipe_parse_file team "$team_recipe"; then
       return 1
     fi
     _DC_RECIPE_FOUND=true
   fi
 
   if [[ -f "$user_recipe" ]]; then
-    if ! dc_recipe_parse_file user "$user_recipe"; then
+    if ! dce_recipe_parse_file user "$user_recipe"; then
       return 1
     fi
     _DC_RECIPE_FOUND=true
@@ -402,7 +402,7 @@ dc_recipe_resolve_inputs() {
   fi
 
   # user overrides team, per key. List keys replace (not union).
-  _dc_recipe_merge_sides user team
-  _dc_recipe_materialize_merged_inputs || return 1
+  _dce_recipe_merge_sides user team
+  _dce_recipe_materialize_merged_inputs || return 1
   return 0
 }

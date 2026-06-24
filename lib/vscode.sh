@@ -10,15 +10,15 @@
 
 # Auto-source deps if this lib is loaded directly (single-import convenience).
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
-  _dc_vscode_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  source "$_dc_vscode_lib_dir/common.sh"
-  unset _dc_vscode_lib_dir
+  _dce_vscode_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  source "$_dce_vscode_lib_dir/common.sh"
+  unset _dce_vscode_lib_dir
 fi
 
 if [[ -z "${_DC_PLATFORM_SH_LOADED:-}" ]]; then
-  _dc_vscode_platform_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  source "$_dc_vscode_platform_lib_dir/platform.sh"
-  unset _dc_vscode_platform_lib_dir
+  _dce_vscode_platform_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  source "$_dce_vscode_platform_lib_dir/platform.sh"
+  unset _dce_vscode_platform_lib_dir
 fi
 
 if [[ -n "${_DC_VSCODE_SH_LOADED:-}" ]]; then
@@ -28,7 +28,7 @@ declare -gr _DC_VSCODE_SH_LOADED=1
 
 # Print candidate VS Code Remote-Containers globalStorage dirs for this OS.
 # Covers both stable and Insiders installs; callers filter to existing ones.
-dc_vscode_remote_containers_storage_candidates() {
+dce_vscode_remote_containers_storage_candidates() {
   case "$(platform_os)" in
     macos)
       printf '%s\n' \
@@ -46,7 +46,7 @@ dc_vscode_remote_containers_storage_candidates() {
 # Return the candidate storage dirs that look "live enough" to write into -
 # i.e. the storage dir, its parent, or the User dir already exists. Writing a
 # nameConfig subdir only makes sense once VS Code has been run at least once.
-dc_vscode_remote_containers_storage_dirs() {
+dce_vscode_remote_containers_storage_dirs() {
   local candidate=""
   local parent=""
   local user_dir=""
@@ -58,13 +58,13 @@ dc_vscode_remote_containers_storage_dirs() {
     if [[ -d "$candidate" || -d "$parent" || -d "$user_dir" ]]; then
       printf '%s\n' "$candidate"
     fi
-  done < <(dc_vscode_remote_containers_storage_candidates)
+  done < <(dce_vscode_remote_containers_storage_candidates)
 }
 
 # URL-encode a container name into the key VS Code uses for its per-container
 # attach config file (e.g. "/" -> "%2f"). Only encodes the few characters that
 # appear in container names and are unsafe in filenames.
-dc_vscode_encode_attach_key() {
+dce_vscode_encode_attach_key() {
   local raw_name="$1"
   local name="${raw_name#/}"
   local encoded=""
@@ -96,7 +96,7 @@ dc_vscode_encode_attach_key() {
 # Running Container" opens /workspace. Creates the config if missing, warns (and
 # leaves it untouched) if it exists with a different workspaceFolder. Echoes
 # each config file path touched/found.
-dc_vscode_seed_named_attach_config() {
+dce_vscode_seed_named_attach_config() {
   local container_name="$1"
   local workspace_folder="${2:-/workspace}"
   local encoded_name=""
@@ -105,7 +105,7 @@ dc_vscode_seed_named_attach_config() {
   local config_file=""
   local existing_workspace=""
 
-  encoded_name="$(dc_vscode_encode_attach_key "$container_name")"
+  encoded_name="$(dce_vscode_encode_attach_key "$container_name")"
 
   while IFS= read -r storage_dir; do
     [[ -z "$storage_dir" ]] && continue
@@ -116,14 +116,14 @@ dc_vscode_seed_named_attach_config() {
     if [[ -f "$config_file" ]]; then
       existing_workspace="$(grep -Eo '"workspaceFolder"[[:space:]]*:[[:space:]]*"[^"]*"' "$config_file" 2>/dev/null || true)"
       if [[ "$existing_workspace" != *"\"$workspace_folder\""* ]]; then
-        dc_warn "Named attach config exists with a different workspaceFolder: $config_file"
+        dce_warn "Named attach config exists with a different workspaceFolder: $config_file"
       fi
       printf '%s\n' "$config_file"
       continue
     fi
 
     if ! mkdir -p "$config_dir"; then
-      dc_warn "Unable to create VS Code attach config directory: $config_dir"
+      dce_warn "Unable to create VS Code attach config directory: $config_dir"
       continue
     fi
 
@@ -133,10 +133,10 @@ dc_vscode_seed_named_attach_config() {
 }
 EOF
     then
-      dc_warn "Unable to write VS Code attach config: $config_file"
+      dce_warn "Unable to write VS Code attach config: $config_file"
       continue
     fi
 
     printf '%s\n' "$config_file"
-  done < <(dc_vscode_remote_containers_storage_dirs)
+  done < <(dce_vscode_remote_containers_storage_dirs)
 }

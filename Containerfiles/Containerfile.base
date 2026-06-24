@@ -2,7 +2,7 @@
 # mutable `ubuntu:24.04` tag so a build reproduces the exact reviewed image.
 # Bumping the digest is an intentional, reviewed change: pull the current
 # multi-arch digest for ubuntu:24.04 and replace @sha256:... below, then run
-# `dc rebuild-image base`.
+# `dce rebuild-image base`.
 FROM ubuntu:24.04@sha256:786a8b558f7be160c6c8c4a54f9a57274f3b4fb1491cf65146521ae77ff1dc54
 
 # Avoid interactive prompts during apt installs
@@ -11,7 +11,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # `tzdata` installs the IANA timezone *database* only (/usr/share/zoneinfo/); it
 # does NOT select a timezone -- DEBIAN_FRONTEND=noninteractive leaves /etc/localtime
 # at UTC. The per-developer zone is applied at create time via `--env TZ=` in
-# `dc new`/`dc rebuild-container`, which needs this database to resolve a named
+# `dce new`/`dce rebuild-container`, which needs this database to resolve a named
 # zone. (Like ca-certificates: install the bundle; trust is decided elsewhere.)
 RUN apt-get update && apt-get install -y \
     git \

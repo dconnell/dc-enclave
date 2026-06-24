@@ -1,4 +1,4 @@
-FROM dev-base:latest
+FROM dce-base:latest
 
 USER root
 
@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
 
 USER dev
 
-# Sensible dev-container defaults: opt out of first-run telemetry/notice and skip
+# Sensible DC Enclave defaults: opt out of first-run telemetry/notice and skip
 # the per-user ASP.NET dev cert prompt.
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1
 ENV DOTNET_NOLOGO=true
@@ -23,11 +23,11 @@ ENV DOTNET_GENERATE_ASPNET_CERTIFICATE=0
 # dotnet global tools live here.
 ENV PATH="/home/dev/.dotnet/tools:$PATH"
 
-# Redirect the NuGet global packages cache under /workspace so `dc --hide` (which
+# Redirect the NuGet global packages cache under /workspace so `dce --hide` (which
 # is /workspace-relative) can cover it. This is the node_modules-equivalent for
 # .NET: large, shareable, and worth keeping off the host bind mount. Operators
 # then hide:
-#   dc new <project> dotnet --hide .nuget [ports...]
+#   dce new <project> dotnet --hide .nuget [ports...]
 ENV NUGET_PACKAGES="/workspace/.nuget/packages"
 
 # Verify
@@ -35,11 +35,11 @@ RUN dotnet --version
 
 WORKDIR /workspace
 
-# This overlay supports the dc hidden-volume feature and installs a
+# This overlay supports the dce hidden-volume feature and installs a
 # dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
 # scripts/compose-containerfile.sh). To use it:
 #
-#   dc new <project> dotnet --hide .nuget [ports...]
+#   dce new <project> dotnet --hide .nuget [ports...]
 #
 # The sync hook:
 # - skips install when no project/solution file is found,
@@ -53,14 +53,14 @@ WORKDIR /workspace
 # has no lockfile by default; `--locked-mode` requires you to opt into
 # packages.lock.json (set RestorePackagesWithLockFile=true in your project).
 
-RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-dotnet-entrypoint.sh <<'ENTRYPOINT_EOF'
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dce-dotnet-entrypoint.sh <<'ENTRYPOINT_EOF'
 #!/bin/sh
 set -eu
 
 APP_DIR="${APP_DIR:-/workspace}"
 STRICT="${DC_DOTNET_INSTALL_STRICT:-0}"
 NUGET_CACHE="${NUGET_PACKAGES:-/workspace/.nuget/packages}"
-HASH_FILE="$NUGET_CACHE/.dc-install-hash"
+HASH_FILE="$NUGET_CACHE/.dce-install-hash"
 
 log() { printf '%s\n' "[dotnet-hide] $*"; }
 
@@ -128,4 +128,4 @@ fi
 exit 0
 ENTRYPOINT_EOF
 
-RUN chmod +x /home/dev/.local/bin/dc-dotnet-entrypoint.sh
+RUN chmod +x /home/dev/.local/bin/dce-dotnet-entrypoint.sh

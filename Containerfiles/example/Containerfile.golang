@@ -1,4 +1,4 @@
-FROM dev-base:latest
+FROM dce-base:latest
 
 USER root
 
@@ -35,9 +35,9 @@ ENV GOPATH="/home/dev/go"
 ENV GOBIN="/home/dev/go/bin"
 ENV PATH="$PATH:/home/dev/go/bin"
 
-# Redirect the Go module + build caches under /workspace so `dc --hide` (which is
+# Redirect the Go module + build caches under /workspace so `dce --hide` (which is
 # /workspace-relative) can cover them. Operators then hide:
-#   dc new <project> golang --hide .cache/go/mod,.cache/go/build [ports...]
+#   dce new <project> golang --hide .cache/go/mod,.cache/go/build [ports...]
 ENV GOMODCACHE="/workspace/.cache/go/mod"
 ENV GOCACHE="/workspace/.cache/go/build"
 
@@ -48,11 +48,11 @@ RUN go version
 
 WORKDIR /workspace
 
-# This overlay supports the dc hidden-volume feature and installs a
+# This overlay supports the dce hidden-volume feature and installs a
 # dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
 # scripts/compose-containerfile.sh). To use it:
 #
-#   dc new <project> golang --hide .cache/go/mod,.cache/go/build [ports...]
+#   dce new <project> golang --hide .cache/go/mod,.cache/go/build [ports...]
 #
 # The sync hook:
 # - skips install when go.mod is absent,
@@ -62,14 +62,14 @@ WORKDIR /workspace
 # `go mod download` does not execute fetched module code, so unlike npm/uv there
 # is no lifecycle-script risk at install time.
 
-RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-go-entrypoint.sh <<'ENTRYPOINT_EOF'
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dce-go-entrypoint.sh <<'ENTRYPOINT_EOF'
 #!/bin/sh
 set -eu
 
 APP_DIR="${APP_DIR:-/workspace}"
 STRICT="${DC_GO_INSTALL_STRICT:-0}"
 GOMODCACHE_DIR="${GOMODCACHE:-/workspace/.cache/go/mod}"
-HASH_FILE="$GOMODCACHE_DIR/.dc-install-hash"
+HASH_FILE="$GOMODCACHE_DIR/.dce-install-hash"
 
 log() { printf '%s\n' "[go-hide] $*"; }
 
@@ -120,4 +120,4 @@ fi
 exit 0
 ENTRYPOINT_EOF
 
-RUN chmod +x /home/dev/.local/bin/dc-go-entrypoint.sh
+RUN chmod +x /home/dev/.local/bin/dce-go-entrypoint.sh

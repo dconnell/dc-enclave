@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/logs.sh - `dc logs`: fetch a container's stdout/stderr log stream.
+# scripts/logs.sh - `dce logs`: fetch a container's stdout/stderr log stream.
 #
-# Unlike `dc shell`, this reads the container's log driver output (entrypoint,
+# Unlike `dce shell`, this reads the container's log driver output (entrypoint,
 # startup banners, the Node overlay's npm-install sentinel, SSH/credential
-# injection messages from `dc start`, and crash output) - none of which is
+# injection messages from `dce start`, and crash output) - none of which is
 # visible from an interactive shell or VS Code terminal attached to the
 # container. Works on stopped containers so a failed start can be diagnosed.
 # =============================================================================
@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "ERROR: Unknown option: $1" >&2
-      echo "Usage: dc logs <name> [-f|--follow] [--tail N]" >&2
+      echo "Usage: dce logs <name> [-f|--follow] [--tail N]" >&2
       exit 1
       ;;
     *)
@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
         PROJECT="$1"
       else
         echo "ERROR: Unexpected argument: $1" >&2
-        echo "Usage: dc logs <name> [-f|--follow] [--tail N]" >&2
+        echo "Usage: dce logs <name> [-f|--follow] [--tail N]" >&2
         exit 1
       fi
       shift
@@ -53,7 +53,7 @@ done
 
 if [[ -z "$PROJECT" ]]; then
   echo "ERROR: Project name is required." >&2
-  echo "Usage: dc logs <name> [-f|--follow] [--tail N]" >&2
+  echo "Usage: dce logs <name> [-f|--follow] [--tail N]" >&2
   exit 1
 fi
 
@@ -75,19 +75,19 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
-CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
+CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'. Run: dc new $PROJECT" >&2
+  echo "ERROR: No config for '$PROJECT'. Run: dce new $PROJECT" >&2
   exit 1
 fi
 
-dc_load_project_config "$CONFIG"
+dce_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 
 if ! backend_exists "$PROJECT"; then
   echo "ERROR: Container '$PROJECT' does not exist on backend '$ACTIVE_BACKEND'." >&2
-  echo "  Run: dc start $PROJECT" >&2
+  echo "  Run: dce start $PROJECT" >&2
   exit 1
 fi
 

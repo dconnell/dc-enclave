@@ -49,15 +49,15 @@ backend_list_volumes() {
 }
 
 reset_stubs
-if ! dc_rebuild_handle_hidden_volumes "myproj" true "node_modules" >/dev/null; then
+if ! dce_rebuild_handle_hidden_volumes "myproj" true "node_modules" >/dev/null; then
   fail "keep-hidden mode should succeed"
 fi
 [[ ${#REMOVE_CALLS[@]} -eq 0 ]] || fail "keep-hidden mode should not remove volumes"
 
 reset_stubs
-expected_a="$(dc_hidden_volume_name "myproj" "node_modules")"
-expected_b="$(dc_hidden_volume_name "myproj" "apps/web/node_modules")"
-if ! dc_rebuild_handle_hidden_volumes "myproj" false "node_modules" "apps/web/node_modules" >/dev/null; then
+expected_a="$(dce_hidden_volume_name "myproj" "node_modules")"
+expected_b="$(dce_hidden_volume_name "myproj" "apps/web/node_modules")"
+if ! dce_rebuild_handle_hidden_volumes "myproj" false "node_modules" "apps/web/node_modules" >/dev/null; then
   fail "default remove mode should succeed when removals succeed"
 fi
 [[ ${#REMOVE_CALLS[@]} -eq 2 ]] || fail "expected two removal calls"
@@ -65,25 +65,25 @@ fi
 [[ "${REMOVE_CALLS[1]}" == "$expected_b" ]] || fail "unexpected second removed volume"
 
 reset_stubs
-missing_volume="$(dc_hidden_volume_name "myproj" "node_modules")"
+missing_volume="$(dce_hidden_volume_name "myproj" "node_modules")"
 STUB_REMOVE_FAIL_VOLUMES=("$missing_volume")
-if ! dc_rebuild_handle_hidden_volumes "myproj" false "node_modules" >/dev/null; then
+if ! dce_rebuild_handle_hidden_volumes "myproj" false "node_modules" >/dev/null; then
   fail "remove failure should be tolerated only when volume is already absent"
 fi
 
 reset_stubs
-compromised_volume="$(dc_hidden_volume_name "myproj" "node_modules")"
+compromised_volume="$(dce_hidden_volume_name "myproj" "node_modules")"
 STUB_REMOVE_FAIL_VOLUMES=("$compromised_volume")
 STUB_EXISTING_VOLUMES=("$compromised_volume")
-if dc_rebuild_handle_hidden_volumes "myproj" false "node_modules" >/dev/null 2>&1; then
+if dce_rebuild_handle_hidden_volumes "myproj" false "node_modules" >/dev/null 2>&1; then
   fail "remove failure with existing volume must fail"
 fi
 
 reset_stubs
-unverifiable_volume="$(dc_hidden_volume_name "myproj" "node_modules")"
+unverifiable_volume="$(dce_hidden_volume_name "myproj" "node_modules")"
 STUB_REMOVE_FAIL_VOLUMES=("$unverifiable_volume")
 STUB_LIST_FAIL=true
-if dc_rebuild_handle_hidden_volumes "myproj" false "node_modules" >/dev/null 2>&1; then
+if dce_rebuild_handle_hidden_volumes "myproj" false "node_modules" >/dev/null 2>&1; then
   fail "remove failure with unverifiable state must fail"
 fi
 

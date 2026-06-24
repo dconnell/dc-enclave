@@ -34,18 +34,18 @@ bind mount.
 Example:
 
 ```
-dc new myapp python --hide .venv,.cache/uv 8000:8000
-dc new svc rust --hide target 8080:8080
+dce new myapp python --hide .venv,.cache/uv 8000:8000
+dce new svc rust --hide target 8080:8080
 ```
 
 ## Dependency-sync hooks
 
-Each language overlay installs a sync hook (`dc-<lang>-entrypoint.sh`) under
+Each language overlay installs a sync hook (`dce-<lang>-entrypoint.sh`) under
 `/home/dev/.local/bin`. The overlays intentionally do **not** declare
 `ENTRYPOINT`/`CMD` themselves — the composed image owns a single chained
 entrypoint (`scripts/compose-containerfile.sh` emits it) that runs every
-`dc-*-entrypoint.sh` hook on container start, then `exec`s the long-running
-CMD. This is what lets a multi-language container (`dc new app golang,rust,…`)
+`dce-*-entrypoint.sh` hook on container start, then `exec`s the long-running
+CMD. This is what lets a multi-language container (`dce new app golang,rust,…`)
 sync *every* ecosystem rather than only the last one.
 
 Each hook shares the same shape:
@@ -126,12 +126,12 @@ overlay's safe-mode env when creating/starting the container:
 
 ```
 # nodejs: npm install/ci runs with --ignore-scripts
-dc new myapp nodejs --hide node_modules 3000:3000
-DC_NODE_IGNORE_SCRIPTS=1 dc start myapp
+dce new myapp nodejs --hide node_modules 3000:3000
+DC_NODE_IGNORE_SCRIPTS=1 dce start myapp
 
 # python: uv sync runs with --no-build (wheel-only)
-dc new myapp python --hide .venv,.cache/uv 8000:8000
-DC_PYTHON_IGNORE_SCRIPTS=1 dc start myapp
+dce new myapp python --hide .venv,.cache/uv 8000:8000
+DC_PYTHON_IGNORE_SCRIPTS=1 dce start myapp
 ```
 
 Caveats:

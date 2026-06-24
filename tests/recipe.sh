@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/recipe.sh - Container recipe loading/merge coverage for `dc new`.
+# tests/recipe.sh - Container recipe loading/merge coverage for `dce new`.
 #
 # Covers plans/container-recipe.md phase 2 behavior:
 #   - magic lookup by project name under team/user container-recipes/
@@ -25,7 +25,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dev-containers"
+DC_ROOT="$HOME/.config/dce-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 TEAM_OD="$TEAM_DIR/overlays"
@@ -49,7 +49,7 @@ LOG="$WORK/calls.log"
 IMAGES="$WORK/images.lst"
 NETWORKS="$WORK/networks.lst"
 : > "$LOG"
-printf 'dev-base:latest\n' > "$IMAGES"
+printf 'dce-base:latest\n' > "$IMAGES"
 printf 'app\nobs\n' > "$NETWORKS"
 
 cat > "$STUB_DIR/_cli" <<'STUB'
@@ -101,15 +101,15 @@ run_new() {
 
 load_cfg() {
   local project="$1"
-  local cfg="$HOME/.config/dev-containers/$project/config"
+  local cfg="$HOME/.config/dce-enclave/$project/config"
   [[ -f "$cfg" ]] || fail "missing config for $project"
   PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
-  dc_load_project_config "$cfg"
+  dce_load_project_config "$cfg"
 }
 
 assert_no_config() {
   local project="$1"
-  [[ ! -f "$HOME/.config/dev-containers/$project/config" ]] \
+  [[ ! -f "$HOME/.config/dce-enclave/$project/config" ]] \
     || fail "unexpected config created for failing recipe: $project"
 }
 

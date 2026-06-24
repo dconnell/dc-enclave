@@ -6,9 +6,9 @@
 #   - Shared discovery (lib/complete-data.sh): project names, scope dedup/order,
 #     the hardened global-config parser, and the subcommand list. This data is
 #     shared by the bash and zsh front-ends, so it is the highest-leverage test.
-#   - Bash dispatcher (scripts/dc-complete.bash): driven in-process by faking
-#     COMP_WORDS/COMP_CWORD. Pins the variadic-project fix (dc start a b <TAB>).
-#   - zsh completion (scripts/_dc): gated on zsh being installed; checks load +
+#   - Bash dispatcher (scripts/dce-complete.bash): driven in-process by faking
+#     COMP_WORDS/COMP_CWORD. Pins the variadic-project fix (dce start a b <TAB>).
+#   - zsh completion (scripts/_dce): gated on zsh being installed; checks load +
 #     registration, project exclusion, scope dedup, and per-subcommand specs.
 #   - Shell-aware wiring (lib/platform.sh) + the migration that strips a stale
 #     bash-completion line from a zsh rc.
@@ -25,7 +25,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK"
-DC_ROOT="$HOME/.config/dev-containers"
+DC_ROOT="$HOME/.config/dce-enclave"
 mkdir -p "$DC_ROOT"/{alpha,beta,gamma}
 touch "$DC_ROOT"/alpha/config "$DC_ROOT"/beta/config "$DC_ROOT"/gamma/config
 # A dir without a config file must NOT be offered as a project.
@@ -57,19 +57,19 @@ expect_sorted() {
 }
 
 expect_sorted "projects list" \
-  "$(dc_complete_projects)" alpha beta gamma
+  "$(dce_complete_projects)" alpha beta gamma
 
 expect_sorted "projects prefix filter (al)" \
-  "$(dc_complete_projects al)" alpha
+  "$(dce_complete_projects al)" alpha
 
 # Scopes dedup node (team+user) and preserve first-seen order; gamma-style
 # whole-line matching prevents partial collisions.
-scopes_out="$(dc_complete_scopes | sort)"
+scopes_out="$(dce_complete_scopes | sort)"
 [[ "$scopes_out" == "$(printf '%s\n' all golang node | sort)" ]] \
   || fail "scopes dedup: expected [all golang node] got [$scopes_out]"
 pass "scopes dedup + membership"
 
-subs="$(dc_complete_subcommands | sort)"
+subs="$(dce_complete_subcommands | sort)"
 for c in new start stop status s list ls shell logs exec restart rm \
          rebuild-container rebuild-image provenance clean network net doctor install version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
@@ -78,47 +78,47 @@ pass "subcommands list"
 
 # doctor targets: the five backend names plus configured projects.
 expect_sorted "doctor targets" \
-  "$(dc_complete_doctor_targets)" apple docker orbstack colima podman alpha beta gamma
+  "$(dce_complete_doctor_targets)" apple docker orbstack colima podman alpha beta gamma
 
 # Hardened global-config parser: must accept a clean quoted value and reject
 # anything that could execute ($, backtick, or unquoted).
 ok_cfg="$DC_ROOT/config"
-[[ "$(_dc_read_team_dir "$ok_cfg")" == "$TEAM_DIR" ]] \
+[[ "$(_dce_read_team_dir "$ok_cfg")" == "$TEAM_DIR" ]] \
   || fail "parser should accept valid DC_TEAM_DIR quoted value"
-[[ "$(_dc_read_user_dir "$ok_cfg")" == "$USER_DIR" ]] \
+[[ "$(_dce_read_user_dir "$ok_cfg")" == "$USER_DIR" ]] \
   || fail "parser should accept valid DC_USER_DIR quoted value"
 printf 'DC_TEAM_DIR="$HOME/evil"\n' > "$WORK/dollar"
 printf 'DC_TEAM_DIR="x`id`"\n'      > "$WORK/btick"
 printf 'DC_TEAM_DIR=unquoted\n'      > "$WORK/unq"
-_dc_read_team_dir "$WORK/dollar" >/dev/null && fail "parser leaked a \$-value"
-_dc_read_team_dir "$WORK/btick"  >/dev/null && fail "parser leaked a backtick-value"
-_dc_read_team_dir "$WORK/unq"    >/dev/null && fail "parser leaked an unquoted value"
+_dce_read_team_dir "$WORK/dollar" >/dev/null && fail "parser leaked a \$-value"
+_dce_read_team_dir "$WORK/btick"  >/dev/null && fail "parser leaked a backtick-value"
+_dce_read_team_dir "$WORK/unq"    >/dev/null && fail "parser leaked an unquoted value"
 pass "hardened parser accepts valid, rejects unsafe"
 
 # Empty/missing dirs must not crash under either shell.
 EMPTY_HOME="$(mktemp -d)"
 ( HOME="$EMPTY_HOME" bash -c "source '$ROOT_DIR/lib/complete-data.sh'; \
-     dc_complete_projects >/dev/null; dc_complete_scopes >/dev/null" ) \
+     dce_complete_projects >/dev/null; dce_complete_scopes >/dev/null" ) \
   || fail "empty HOME crashed the discovery functions under bash"
 rm -rf "$EMPTY_HOME"
 pass "discovery safe on empty HOME (bash)"
 
 # ---------------------------------------------------------------------------
-# Section 2 - bash dispatcher (scripts/dc-complete.bash)
+# Section 2 - bash dispatcher (scripts/dce-complete.bash)
 # ---------------------------------------------------------------------------
 # Stub `complete` so sourcing the file does not register globally.
 complete() { :; }
-# shellcheck source=../scripts/dc-complete.bash
-source "$ROOT_DIR/scripts/dc-complete.bash"
+# shellcheck source=../scripts/dce-complete.bash
+source "$ROOT_DIR/scripts/dce-complete.bash"
 
-# Drive _dc_complete by faking the completion line. $1 = COMP_CWORD, rest =
+# Drive _dce_complete by faking the completion line. $1 = COMP_CWORD, rest =
 # COMP_WORDS (the word being completed is COMP_WORDS[COMP_CWORD]).
 drive() {
   local cword="$1"; shift
   COMP_WORDS=("$@")
   COMP_CWORD="$cword"
   COMPREPLY=()
-  _dc_complete
+  _dce_complete
 }
 
 reply_sorted() {
@@ -140,88 +140,88 @@ assert_empty() {
   pass "$label"
 }
 
-drive 1 dc "st"; assert_reply "subcommand prefix 'st'" start stop status
+drive 1 dce "st"; assert_reply "subcommand prefix 'st'" start stop status
 
 # Headline regression: variadic project completion + already-typed exclusion.
-drive 3 dc start alpha "";            assert_reply "start alpha <TAB>" beta gamma
-drive 4 dc start alpha beta "";       assert_reply "start alpha beta <TAB>" gamma
-drive 5 dc stop alpha beta gamma "";  assert_empty   "stop all three <TAB>"
+drive 3 dce start alpha "";            assert_reply "start alpha <TAB>" beta gamma
+drive 4 dce start alpha beta "";       assert_reply "start alpha beta <TAB>" gamma
+drive 5 dce stop alpha beta gamma "";  assert_empty   "stop all three <TAB>"
 
 # shell takes exactly one project; nothing past it.
-drive 2 dc shell "";       assert_reply "shell <TAB>" alpha beta gamma
-drive 3 dc shell alpha ""; assert_empty   "shell alpha <TAB>"
+drive 2 dce shell "";       assert_reply "shell <TAB>" alpha beta gamma
+drive 3 dce shell alpha ""; assert_empty   "shell alpha <TAB>"
 
 # rebuild-container: one project, then the two flags.
-drive 2 dc rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
-drive 3 dc rebuild-container alpha "--"; assert_reply "rebuild-container alpha --<TAB>" \
+drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
+drive 3 dce rebuild-container alpha "--"; assert_reply "rebuild-container alpha --<TAB>" \
   --keep-hidden-volumes --rotate-keys
 
 # install: one project, then a directory.
-drive 2 dc install "";     assert_reply "install <TAB>" alpha beta gamma
+drive 2 dce install "";     assert_reply "install <TAB>" alpha beta gamma
 # Directory completion is cwd-based (compgen -d), so run it from a controlled
 # dir with a known subdir instead of depending on wherever this test (or a
 # runner like run-all.sh) was invoked from.
 mkdir -p "$WORK/dirs/subdir"
 _prev_pwd="$PWD"
 cd "$WORK/dirs"
-drive 3 dc install alpha ""; COMPREPLY=("${COMPREPLY[@]/%//}")  # dirs get a trailing /
+drive 3 dce install alpha ""; COMPREPLY=("${COMPREPLY[@]/%//}")  # dirs get a trailing /
 [[ "${COMPREPLY[*]}" == *subdir/* ]] \
   || fail "install pos3 should complete directories (got [${COMPREPLY[*]:-}])"
 cd "$_prev_pwd"
 pass "install pos3 completes directories"
 
 # rebuild-image targets.
-drive 2 dc rebuild-image ""; assert_reply "rebuild-image <TAB>" all base
+drive 2 dce rebuild-image ""; assert_reply "rebuild-image <TAB>" all base
 
 # provenance: one project, then --history/--all flags.
-drive 2 dc provenance "";              assert_reply "provenance <TAB>" alpha beta gamma
-drive 3 dc provenance alpha "--";      assert_reply "provenance alpha --<TAB>" --all --history
+drive 2 dce provenance "";              assert_reply "provenance <TAB>" alpha beta gamma
+drive 3 dce provenance alpha "--";      assert_reply "provenance alpha --<TAB>" --all --history
 
 # network: subactions at position 2.
-drive 2 dc network ""; assert_reply "network <TAB>" \
+drive 2 dce network ""; assert_reply "network <TAB>" \
   add create list ls members remove rm
 
 # doctor: one optional target (backend or project). Backends are always offered;
 # configured projects (alpha/beta/gamma) appear too.
-drive 2 dc doctor ""; assert_reply "doctor <TAB>" \
+drive 2 dce doctor ""; assert_reply "doctor <TAB>" \
   apple colima docker gamma orbstack podman alpha beta
 
 # logs: one project, then log flags (--tail's value is not completed).
-drive 2 dc logs "";                assert_reply "logs <TAB>" alpha beta gamma
-drive 3 dc logs alpha "";          assert_reply "logs alpha <TAB>" --follow -f --tail
-drive 3 dc logs alpha "--";        assert_reply "logs alpha --<TAB>" --follow --tail
-drive 4 dc logs alpha --tail "";   assert_empty "logs alpha --tail <val> (no completion)"
+drive 2 dce logs "";                assert_reply "logs <TAB>" alpha beta gamma
+drive 3 dce logs alpha "";          assert_reply "logs alpha <TAB>" --follow -f --tail
+drive 3 dce logs alpha "--";        assert_reply "logs alpha --<TAB>" --follow --tail
+drive 4 dce logs alpha --tail "";   assert_empty "logs alpha --tail <val> (no completion)"
 
 # exec: optional leading --root, one project, then a free-form command.
-drive 2 dc exec "";                assert_reply "exec <TAB>" --root alpha beta gamma
-drive 3 dc exec --root "";         assert_reply "exec --root <TAB>" alpha beta gamma
-drive 3 dc exec alpha "";          assert_empty "exec alpha <cmd> (free-form)"
+drive 2 dce exec "";                assert_reply "exec <TAB>" --root alpha beta gamma
+drive 3 dce exec --root "";         assert_reply "exec --root <TAB>" alpha beta gamma
+drive 3 dce exec alpha "";          assert_empty "exec alpha <cmd> (free-form)"
 
 # restart: variadic projects (excludes already-typed), like start/stop.
-drive 2 dc restart "";             assert_reply "restart <TAB>" alpha beta gamma
-drive 3 dc restart alpha "";       assert_reply "restart alpha <TAB>" beta gamma
+drive 2 dce restart "";             assert_reply "restart <TAB>" alpha beta gamma
+drive 3 dce restart alpha "";       assert_reply "restart alpha <TAB>" beta gamma
 
 # rm: one project, then removal flags.
-drive 2 dc rm "";                  assert_reply "rm <TAB>" alpha beta gamma
-drive 3 dc rm alpha "";            assert_reply "rm alpha <TAB>" --yes -y --keep-config --keep-volumes
+drive 2 dce rm "";                  assert_reply "rm <TAB>" alpha beta gamma
+drive 3 dce rm alpha "";            assert_reply "rm alpha <TAB>" --yes -y --keep-config --keep-volumes
 
 # clean: flags + a single project when --hidden-volumes is active.
-drive 2 dc clean "--"; assert_reply "clean --<TAB>" --dry-run --hidden-volumes
-drive 3 dc clean --hidden-volumes ""; assert_reply "clean --hidden-volumes <TAB>" \
+drive 2 dce clean "--"; assert_reply "clean --<TAB>" --dry-run --hidden-volumes
+drive 3 dce clean --hidden-volumes ""; assert_reply "clean --hidden-volumes <TAB>" \
   --dry-run --hidden-volumes alpha beta gamma
 # once a project is typed, only flags remain.
-drive 4 dc clean --hidden-volumes alpha "--"; assert_reply "clean --hidden-volumes alpha --<TAB>" \
+drive 4 dce clean --hidden-volumes alpha "--"; assert_reply "clean --hidden-volumes alpha --<TAB>" \
   --dry-run --hidden-volumes
 
 # new: name is free text (no completion), pos3 = scope + flags.
-drive 2 dc new "";               assert_empty "new <name> (free text, no completion)"
-drive 3 dc new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
+drive 2 dce new "";               assert_empty "new <name> (free text, no completion)"
+drive 3 dce new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
   --config --cpus --hide --ip --memory --network --repo-path --save-team --save-user all golang node
 # --network/--ip consume a value (no completion offered for the value).
-drive 4 dc new foo --network ""; assert_empty "new foo --network <val> (no completion)"
+drive 4 dce new foo --network ""; assert_empty "new foo --network <val> (no completion)"
 
 # ---------------------------------------------------------------------------
-# Section 3 - zsh completion (scripts/_dc), gated on zsh being installed
+# Section 3 - zsh completion (scripts/_dce), gated on zsh being installed
 # ---------------------------------------------------------------------------
 if command -v zsh >/dev/null 2>&1; then
   # 3a. Load + registration: the file must define its functions and register
@@ -229,9 +229,9 @@ if command -v zsh >/dev/null 2>&1; then
   zsh -c "
     fpath=('$ROOT_DIR/scripts' \$fpath)
     autoload -Uz compinit && compinit -u 2>/dev/null
-    autoload -Uz _dc
-    compdef _dc dc
-    [[ \"\${_comps[dc]}\" == _dc ]] || { print 'FAIL: compdef did not register _dc for dc'; exit 1 }
+    autoload -Uz _dce
+    compdef _dce dce
+    [[ \"\${_comps[dce]}\" == _dce ]] || { print 'FAIL: compdef did not register _dce for dce'; exit 1 }
     print 'PASS: zsh load + compdef registration'
   " || fail "zsh completion load/registration failed"
 
@@ -242,6 +242,41 @@ if command -v zsh >/dev/null 2>&1; then
   #     the real _arguments engine (which needs a live ZLE widget).
   zsh -c '
     typeset -ga ADD SPEC
+    # Validate option specs enough to catch parser-level authoring mistakes.
+    # The prior stub only recorded strings and never parsed them, so malformed
+    # specs (like an unescaped "[" inside an option description) were missed.
+    _validate_zsh_option_spec() {
+      local spec="$1"
+      local i ch in_desc=0 escaped=0
+      for ((i = 1; i <= ${#spec}; i++)); do
+        ch="${spec[i]}"
+        if (( escaped )); then
+          escaped=0
+          continue
+        fi
+        if [[ "$ch" == "\\" ]]; then
+          escaped=1
+          continue
+        fi
+        if (( in_desc )); then
+          if [[ "$ch" == "[" ]]; then
+            print "FAIL: zsh option spec has unescaped [ in description: $spec"
+            return 1
+          fi
+          if [[ "$ch" == "]" ]]; then
+            in_desc=0
+          fi
+          continue
+        fi
+        [[ "$ch" == "[" ]] && in_desc=1
+      done
+      if (( in_desc )); then
+        print "FAIL: zsh option spec has unterminated description: $spec"
+        return 1
+      fi
+      return 0
+    }
+
     # _arguments stub: detect the top-level router call by its ->state specs
     # and emulate the state transition + the *:: word re-slice. Per-subcommand
     # spec calls (no ->) are just recorded for later assertion.
@@ -257,6 +292,14 @@ if command -v zsh >/dev/null 2>&1; then
           (( CURRENT-- ))
         fi
       else
+        # Mirror enough parser behavior to catch malformed option specs.
+        for spec in "$@"; do
+          if [[ "$spec" == -* || "$spec" == +* || "$spec" == \** ]]; then
+            if [[ "$spec" == *"["* ]]; then
+              _validate_zsh_option_spec "$spec" || return 1
+            fi
+          fi
+        done
         SPEC+=("$@")
       fi
     }
@@ -280,75 +323,75 @@ if command -v zsh >/dev/null 2>&1; then
     }
 
     source "'"$ROOT_DIR"'/lib/complete-data.sh"
-    source "'"$ROOT_DIR"'/scripts/_dc"
+    source "'"$ROOT_DIR"'/scripts/_dce"
     # The lib is already sourced above, so the lazy loader should be a no-op.
-    _dc_load_complete_data() { return 0; }
+    _dce_load_complete_data() { return 0; }
 
     # Top-level routing. Completing the subcommand slot (CURRENT==2, whether
     # empty or partially typed) must offer subcommands; once a subcommand token
-    # is committed, _dc_dispatch runs in the REDUCED context produced by the
+    # is committed, _dce_dispatch runs in the REDUCED context produced by the
     # *:: reset -- $words[1] is the subcommand and $CURRENT is decremented.
     # This is the regression for the off-by-one: without the reset, $words[1]
-    # would be `dc` and $CURRENT would stay unchanged, so every numbered
+    # would be `dce` and $CURRENT would stay unchanged, so every numbered
     # _arguments spec would target the wrong slot.
-    functions -c _dc_subcommands _dc_subcommands_real
-    functions -c _dc_dispatch _dc_dispatch_real
+    functions -c _dce_subcommands _dce_subcommands_real
+    functions -c _dce_dispatch _dce_dispatch_real
     typeset TOP="" RC_CURRENT=0 RC_W1=""
-    _dc_subcommands() { TOP="subs"; }
-    _dc_dispatch() { TOP="dispatch:$1"; RC_CURRENT=$CURRENT; RC_W1="${words[1]}"; }
+    _dce_subcommands() { TOP="subs"; }
+    _dce_dispatch() { TOP="dispatch:$1"; RC_CURRENT=$CURRENT; RC_W1="${words[1]}"; }
 
-    for line in "dc |2" "dc st|2"; do
+    for line in "dce |2" "dce st|2"; do
       w="${line%|*}"; c="${line#*|}"
       words=(${(z)w})
       CURRENT=$c
-      TOP=""; _dc
+      TOP=""; _dce
       [[ "$TOP" == "subs" ]] || { print "FAIL: zsh subcommand routing for [$w] -> [$TOP]"; exit 1 }
     done
 
-    words=(dc shell "")
+    words=(dce shell "")
     CURRENT=3
-    TOP=""; RC_CURRENT=99; RC_W1=""; _dc
+    TOP=""; RC_CURRENT=99; RC_W1=""; _dce
     [[ "$TOP" == "dispatch:shell" ]] || { print "FAIL: zsh dispatch arg -> [$TOP]"; exit 1 }
     [[ "$RC_W1" == "shell" ]] || { print "FAIL: *:: reset words[1] should be the subcommand, got [$RC_W1]"; exit 1 }
     [[ "$RC_CURRENT" == 2 ]] || { print "FAIL: *:: reset should decrement CURRENT to 2, got [$RC_CURRENT]"; exit 1 }
 
     # Variadic position keeps the same reset (start: further args still route).
-    words=(dc start alpha "")
+    words=(dce start alpha "")
     CURRENT=4
-    TOP=""; RC_CURRENT=99; _dc
+    TOP=""; RC_CURRENT=99; _dce
     [[ "$TOP" == "dispatch:start" && "$RC_CURRENT" == 3 ]] \
       || { print "FAIL: zsh variadic routing/reset -> [$TOP] CURRENT=[$RC_CURRENT]"; exit 1 }
 
-    functions -c _dc_subcommands_real _dc_subcommands
-    functions -c _dc_dispatch_real _dc_dispatch
-    unfunction _dc_subcommands_real _dc_dispatch_real
+    functions -c _dce_subcommands_real _dce_subcommands
+    functions -c _dce_dispatch_real _dce_dispatch
+    unfunction _dce_subcommands_real _dce_dispatch_real
     print "PASS: zsh top-level routing + *:: word/CURRENT reset"
 
-    ADD=(); _dc_projects alpha beta
+    ADD=(); _dce_projects alpha beta
     [[ "${ADD[*]}" == "gamma" ]] || { print "FAIL: zsh project exclude -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh projects exclude already-typed"
 
-    ADD=(); _dc_scopes
+    ADD=(); _dce_scopes
     expected="all golang node"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$expected " ]] \
       || { print "FAIL: zsh scopes -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh scopes dedup"
 
     # rebuild-image targets come from the shared lib (single source of truth).
-    ADD=(); _dc_rebuild_image_targets
+    ADD=(); _dce_rebuild_image_targets
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "all base " ]] \
       || { print "FAIL: zsh rebuild-image targets -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh rebuild-image targets"
 
     # Subcommand candidate set (also from the shared lib).
-    ADD=(); _dc_subcommands
+    ADD=(); _dce_subcommands
     local want="--help --version -h -v clean doctor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm s shell start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
 
     # Dispatch specs encode the per-command grammar (the main authoring risk).
-    chk() { SPEC=(); _dc_dispatch "$1"; [[ "${SPEC[*]}" == *"$2"* ]] || { print "FAIL: zsh $1 spec missing [$2] got [${SPEC[*]}]"; exit 1 }; }
+    chk() { SPEC=(); _dce_dispatch "$1"; [[ "${SPEC[*]}" == *"$2"* ]] || { print "FAIL: zsh $1 spec missing [$2] got [${SPEC[*]}]"; exit 1 }; }
     chk start            "*:project:"
     chk shell            "1:project:"
     chk logs             "1:project:"
@@ -360,10 +403,13 @@ if command -v zsh >/dev/null 2>&1; then
     chk rm               "--keep-config["
     chk rebuild-container "--rotate-keys["
     chk install          "2:dotfiles directory:_files -/"
-    chk rebuild-image    "1:target:_dc_rebuild_image_targets"
-    chk provenance       "1:project:_dc_projects_simple"
+    chk rebuild-image    "1:target:_dce_rebuild_image_targets"
+    chk provenance       "1:project:_dce_projects_simple"
     chk provenance       "--history["
-    chk new              "2:scope:_dc_scopes"
+    chk new              "2:scope:_dce_scopes"
+    chk new              "*--hide["
+    chk new              "*--network["
+    chk new              "--ip+["
     print "PASS: zsh per-subcommand dispatch specs"
   ' || fail "zsh completion logic/spec test failed"
 else
@@ -396,16 +442,16 @@ check_profile bash .bashrc
 mig_rc="$WORK/.zshrc"
 {
   echo "# my config"
-  echo "alias dc='$ROOT_DIR/scripts/dc'"
-  echo "source '$ROOT_DIR/scripts/dc-complete.bash'"
+  echo "alias dce='$ROOT_DIR/scripts/dce'"
+  echo "source '$ROOT_DIR/scripts/dce-complete.bash'"
   echo "export EDITOR=vim"
 } > "$mig_rc"
-stale="source '$ROOT_DIR/scripts/dc-complete.bash'"
+stale="source '$ROOT_DIR/scripts/dce-complete.bash'"
 grep -Fv "$stale" "$mig_rc" > "$WORK/.zshrc.new"
 cat "$WORK/.zshrc.new" > "$mig_rc"
 grep -Fq "$stale" "$mig_rc" && fail "migration did not remove the stale line"
 grep -Fq "# my config" "$mig_rc" || fail "migration dropped unrelated content"
-grep -Fq "alias dc='$ROOT_DIR/scripts/dc'" "$mig_rc" || fail "migration unexpectedly removed legacy dc alias"
+grep -Fq "alias dce='$ROOT_DIR/scripts/dce'" "$mig_rc" || fail "migration unexpectedly removed legacy dce alias"
 grep -Fq "export EDITOR=vim" "$mig_rc" || fail "migration dropped unrelated content"
 pass "migration strips only the stale bash-completion line"
 
@@ -414,19 +460,19 @@ pass "migration strips only the stale bash-completion line"
 sim_rc="$WORK/.zshrc.setup"
 {
   echo "# preexisting"
-  echo "alias dc='$ROOT_DIR/scripts/dc'"
+  echo "alias dce='$ROOT_DIR/scripts/dce'"
 } > "$sim_rc"
 
-dc_unalias="unalias dc 2>/dev/null"
-dc_func="dc() { \"$ROOT_DIR/scripts/dc\" \"\$@\"; }"
-legacy_alias="alias dc='$ROOT_DIR/scripts/dc'"
+dce_unalias="unalias dce 2>/dev/null"
+dce_func="dce() { \"$ROOT_DIR/scripts/dce\" \"\$@\"; }"
+legacy_alias="alias dce='$ROOT_DIR/scripts/dce'"
 
-if ! grep -Fxq "$dc_func" "$sim_rc"; then
+if ! grep -Fxq "$dce_func" "$sim_rc"; then
   {
     echo ""
-    echo "# dev-containers command"
-    echo "$dc_unalias"
-    echo "$dc_func"
+    echo "# DC Enclave command"
+    echo "$dce_unalias"
+    echo "$dce_func"
   } >> "$sim_rc"
 fi
 if grep -Fxq "$legacy_alias" "$sim_rc"; then
@@ -437,12 +483,12 @@ fi
 
 # Re-run simulation: no duplicates should be appended.
 before_hash="$(sha256sum "$sim_rc" | cut -d' ' -f1)"
-if ! grep -Fxq "$dc_func" "$sim_rc"; then
+if ! grep -Fxq "$dce_func" "$sim_rc"; then
   {
     echo ""
-    echo "# dev-containers command"
-    echo "$dc_unalias"
-    echo "$dc_func"
+    echo "# DC Enclave command"
+    echo "$dce_unalias"
+    echo "$dce_func"
   } >> "$sim_rc"
 fi
 if grep -Fxq "$legacy_alias" "$sim_rc"; then
@@ -452,20 +498,20 @@ if grep -Fxq "$legacy_alias" "$sim_rc"; then
 fi
 after_hash="$(sha256sum "$sim_rc" | cut -d' ' -f1)"
 
-grep -Fxq "$dc_unalias" "$sim_rc" || fail "zsh setup simulation missing unalias line"
-grep -Fxq "$dc_func" "$sim_rc" || fail "zsh setup simulation missing dc function"
+grep -Fxq "$dce_unalias" "$sim_rc" || fail "zsh setup simulation missing unalias line"
+grep -Fxq "$dce_func" "$sim_rc" || fail "zsh setup simulation missing dce function"
 grep -Fxq "$legacy_alias" "$sim_rc" && fail "zsh setup simulation kept legacy alias"
 [[ "$before_hash" == "$after_hash" ]] || fail "zsh setup simulation is not idempotent"
 pass "zsh setup command wiring migrates alias -> function idempotently"
 
-# setup.sh compdef migration: the canonical line is `compdef _dc dc` (dc is a
+# setup.sh compdef migration: the canonical line is `compdef _dce dce` (dce is a
 # shell function, so no path-keyed binding). A pre-existing path-qualified line
 # from older setups must migrate to it. Regression guard: the "already present"
 # check must be an exact-line match (-Fxq), because the new short line is a
 # substring of the legacy path-qualified line -- a plain -F substring check
 # would falsely treat the legacy line as already migrated.
-compdef_new="compdef _dc dc"
-compdef_legacy="compdef _dc dc '$ROOT_DIR/scripts/dc'"
+compdef_new="compdef _dce dce"
+compdef_legacy="compdef _dce dce '$ROOT_DIR/scripts/dce'"
 
 run_compdef_migration() {  # <rc contents on stdin>
   local rc="$WORK/.zshrc.compdef"
@@ -484,7 +530,7 @@ run_compdef_migration() {  # <rc contents on stdin>
     grep -Fxv "$compdef_legacy" "$rc" > "$t"
     cat "$t" > "$rc"
   fi
-  printf '%s' "$(grep -E '^compdef _dc' "$rc")"
+  printf '%s' "$(grep -E '^compdef _dce' "$rc")"
 }
 
 out="$(printf '%s\n' "$compdef_legacy" | run_compdef_migration)"
@@ -495,7 +541,7 @@ out="$(printf '# fresh\n' | run_compdef_migration)"
 [[ "$out" == "$compdef_new" ]] || fail "compdef migration: fresh install not wired -> [$out]"
 out="$(printf '%s\n%s\n' "$compdef_new" "$compdef_legacy" | run_compdef_migration)"
 [[ "$out" == "$compdef_new" ]] || fail "compdef migration: both-present did not drop legacy -> [$out]"
-pass "zsh compdef migrates path-form -> compdef _dc dc"
+pass "zsh compdef migrates path-form -> compdef _dce dce"
 
 echo ""
 echo "All completion checks passed."

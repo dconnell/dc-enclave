@@ -38,10 +38,10 @@ write_valid_config() {
   mkdir -p "$dir"
   chmod 700 "$dir"
   {
-    echo '# dev-container config'
+    echo '# DC Enclave config'
     echo 'CONTAINER_PROJECT="testproj"'
     echo 'CONTAINER_OVERLAY_SCOPES=""'
-    echo 'CONTAINER_IMAGE="dev-base:latest"'
+    echo 'CONTAINER_IMAGE="dce-base:latest"'
     echo 'CONTAINER_BACKEND="docker"'
     echo "CONTAINER_CPUS=\"$cpus\""
     echo "CONTAINER_MEMORY=\"$mem\""
@@ -57,42 +57,42 @@ write_valid_config() {
 }
 
 # --- cpus validator -----------------------------------------------------------
-dc_validate_cpus_value "" || fail "empty cpus should be valid (means default)"
-dc_validate_cpus_value "1" 2>/dev/null || fail "cpus '1' should be valid"
-dc_validate_cpus_value "2" 2>/dev/null || fail "cpus '2' should be valid"
-dc_validate_cpus_value "1.5" 2>/dev/null || fail "cpus '1.5' should be valid"
-dc_validate_cpus_value "0.25" 2>/dev/null || fail "cpus '0.25' should be valid"
-dc_validate_cpus_value "0" 2>/dev/null && fail "cpus '0' should be invalid"
-dc_validate_cpus_value "-1" 2>/dev/null && fail "negative cpus should be invalid"
-dc_validate_cpus_value "1e5" 2>/dev/null && fail "exponent cpus should be invalid"
-dc_validate_cpus_value "1.5.2" 2>/dev/null && fail "multi-dot cpus should be invalid"
-dc_validate_cpus_value '1 core' 2>/dev/null && fail "whitespace cpus should be invalid"
-dc_validate_cpus_value '$(touch x)' 2>/dev/null && fail "command-subst cpus should be invalid"
-dc_validate_cpus_value '2;rm' 2>/dev/null && fail "metachar cpus should be invalid"
+dce_validate_cpus_value "" || fail "empty cpus should be valid (means default)"
+dce_validate_cpus_value "1" 2>/dev/null || fail "cpus '1' should be valid"
+dce_validate_cpus_value "2" 2>/dev/null || fail "cpus '2' should be valid"
+dce_validate_cpus_value "1.5" 2>/dev/null || fail "cpus '1.5' should be valid"
+dce_validate_cpus_value "0.25" 2>/dev/null || fail "cpus '0.25' should be valid"
+dce_validate_cpus_value "0" 2>/dev/null && fail "cpus '0' should be invalid"
+dce_validate_cpus_value "-1" 2>/dev/null && fail "negative cpus should be invalid"
+dce_validate_cpus_value "1e5" 2>/dev/null && fail "exponent cpus should be invalid"
+dce_validate_cpus_value "1.5.2" 2>/dev/null && fail "multi-dot cpus should be invalid"
+dce_validate_cpus_value '1 core' 2>/dev/null && fail "whitespace cpus should be invalid"
+dce_validate_cpus_value '$(touch x)' 2>/dev/null && fail "command-subst cpus should be invalid"
+dce_validate_cpus_value '2;rm' 2>/dev/null && fail "metachar cpus should be invalid"
 
 # --- memory validator ---------------------------------------------------------
-dc_validate_memory_value "" || fail "empty memory should be valid (means default)"
-dc_validate_memory_value "512m" 2>/dev/null || fail "memory '512m' should be valid"
-dc_validate_memory_value "4g" 2>/dev/null || fail "memory '4g' should be valid"
-dc_validate_memory_value "1024" 2>/dev/null || fail "memory '1024' should be valid"
-dc_validate_memory_value "100K" 2>/dev/null || fail "memory '100K' should be valid"
-dc_validate_memory_value "0" 2>/dev/null && fail "memory '0' should be invalid"
-dc_validate_memory_value "-4g" 2>/dev/null && fail "negative memory should be invalid"
-dc_validate_memory_value "4t" 2>/dev/null && fail "unsupported suffix '4t' should be invalid"
-dc_validate_memory_value "4gb" 2>/dev/null && fail "double-letter '4gb' should be invalid"
-dc_validate_memory_value '$(touch x)' 2>/dev/null && fail "command-subst memory should be invalid"
+dce_validate_memory_value "" || fail "empty memory should be valid (means default)"
+dce_validate_memory_value "512m" 2>/dev/null || fail "memory '512m' should be valid"
+dce_validate_memory_value "4g" 2>/dev/null || fail "memory '4g' should be valid"
+dce_validate_memory_value "1024" 2>/dev/null || fail "memory '1024' should be valid"
+dce_validate_memory_value "100K" 2>/dev/null || fail "memory '100K' should be valid"
+dce_validate_memory_value "0" 2>/dev/null && fail "memory '0' should be invalid"
+dce_validate_memory_value "-4g" 2>/dev/null && fail "negative memory should be invalid"
+dce_validate_memory_value "4t" 2>/dev/null && fail "unsupported suffix '4t' should be invalid"
+dce_validate_memory_value "4gb" 2>/dev/null && fail "double-letter '4gb' should be invalid"
+dce_validate_memory_value '$(touch x)' 2>/dev/null && fail "command-subst memory should be invalid"
 
 pass "cpus/memory validators"
 
 # --- serializer ---------------------------------------------------------------
 # Backslash first, then quote, $, and backtick must all be escaped.
-got="$(dc_escape_config_value 'a$b`c"d\e')" || fail "serializer failed"
+got="$(dce_escape_config_value 'a$b`c"d\e')" || fail "serializer failed"
 expected='a\$b\`c\"d\\e'
 [[ "$got" == "$expected" ]] || fail "serializer escape mismatch (got '$got', expected '$expected')"
 
 # Control characters (incl. tab/newline) must be rejected, never silently emitted.
-dc_escape_config_value $'a\tb' 2>/dev/null && fail "tab control char should be rejected"
-dc_escape_config_value $'a\nb' 2>/dev/null && fail "newline control char should be rejected"
+dce_escape_config_value $'a\tb' 2>/dev/null && fail "tab control char should be rejected"
+dce_escape_config_value $'a\nb' 2>/dev/null && fail "newline control char should be rejected"
 
 pass "config value serializer"
 
@@ -101,7 +101,7 @@ pass "config value serializer"
 # must NEVER execute during the load.
 PAYLOAD='/tmp/foo$(touch /tmp/m1-esc-pwn)`touch /tmp/m1-esc-pwn2`bar'
 rm -f /tmp/m1-esc-pwn /tmp/m1-esc-pwn2
-ESC="$(dc_escape_config_value "$PAYLOAD")" || fail "escape payload failed"
+ESC="$(dce_escape_config_value "$PAYLOAD")" || fail "escape payload failed"
 
 cfg_esc="$WORK/escproj/config"
 mkdir -p "$(dirname "$cfg_esc")"
@@ -109,7 +109,7 @@ chmod 700 "$(dirname "$cfg_esc")"
 {
   echo 'CONTAINER_PROJECT="testproj"'
   echo 'CONTAINER_BACKEND="docker"'
-  echo 'CONTAINER_IMAGE="dev-base:latest"'
+  echo 'CONTAINER_IMAGE="dce-base:latest"'
   echo "REPOS_DIR=\"$ESC\""
   echo 'PORTS=()'
   echo 'CONTAINER_HIDDEN_PATHS=()'
@@ -117,8 +117,8 @@ chmod 700 "$(dirname "$cfg_esc")"
 chmod 600 "$cfg_esc"
 
 # Load in current shell so we can inspect the round-tripped variable. This call
-# is expected to succeed, so dc_die (which would exit) must not fire.
-dc_load_project_config "$cfg_esc"
+# is expected to succeed, so dce_die (which would exit) must not fire.
+dce_load_project_config "$cfg_esc"
 [[ ! -e /tmp/m1-esc-pwn ]] || fail "escaped payload \$(...) executed during load"
 [[ ! -e /tmp/m1-esc-pwn2 ]] || fail "escaped backtick payload executed during load"
 [[ "${REPOS_DIR:-}" == "$PAYLOAD" ]] || fail "escaped value must round-trip (got '${REPOS_DIR:-}')"
@@ -133,14 +133,14 @@ chmod 700 "$(dirname "$cfg_mal")"
 {
   echo 'CONTAINER_PROJECT="testproj"'
   echo 'CONTAINER_BACKEND="docker"'
-  echo 'CONTAINER_IMAGE="dev-base:latest"'
+  echo 'CONTAINER_IMAGE="dce-base:latest"'
   echo 'CONTAINER_CPUS="$(touch /tmp/m1-malicious-pwn)"'
   echo 'PORTS=()'
   echo 'CONTAINER_HIDDEN_PATHS=()'
 } > "$cfg_mal"
 chmod 600 "$cfg_mal"
 
-if ( dc_load_project_config "$cfg_mal" ) >/dev/null 2>&1; then
+if ( dce_load_project_config "$cfg_mal" ) >/dev/null 2>&1; then
   fail "loader must reject unescaped command substitution in config"
 fi
 [[ ! -e /tmp/m1-malicious-pwn ]] || fail "malicious line executed before rejection"
@@ -158,7 +158,7 @@ chmod 700 "$(dirname "$cfg_inject")"
   echo 'CONTAINER_HIDDEN_PATHS=()'
 } > "$cfg_inject"
 chmod 600 "$cfg_inject"
-if ( dc_load_project_config "$cfg_inject" ) >/dev/null 2>&1; then
+if ( dce_load_project_config "$cfg_inject" ) >/dev/null 2>&1; then
   fail "loader must reject trailing shell syntax after assignment"
 fi
 
@@ -175,7 +175,7 @@ chmod 700 "$(dirname "$cfg_unknown")"
   echo 'CONTAINER_HIDDEN_PATHS=()'
 } > "$cfg_unknown"
 chmod 600 "$cfg_unknown"
-if ( dc_load_project_config "$cfg_unknown" ) >/dev/null 2>&1; then
+if ( dce_load_project_config "$cfg_unknown" ) >/dev/null 2>&1; then
   fail "loader must reject unknown config keys"
 fi
 
@@ -187,7 +187,7 @@ mkdir -p "$(dirname "$cfg_link")"
 chmod 700 "$(dirname "$cfg_link")"
 write_valid_config "$WORK/real_config"
 ln -s "$WORK/real_config" "$cfg_link"
-if ( dc_load_project_config "$cfg_link" ) >/dev/null 2>&1; then
+if ( dce_load_project_config "$cfg_link" ) >/dev/null 2>&1; then
   fail "loader must refuse to load a config via symlink"
 fi
 
@@ -199,7 +199,7 @@ mkdir -p "$(dirname "$cfg_world")"
 chmod 700 "$(dirname "$cfg_world")"
 write_valid_config "$cfg_world"
 chmod 666 "$cfg_world"
-if ( dc_load_project_config "$cfg_world" ) >/dev/null 2>&1; then
+if ( dce_load_project_config "$cfg_world" ) >/dev/null 2>&1; then
   fail "loader must reject group/other-writable config"
 fi
 
@@ -208,13 +208,13 @@ pass "group/other-writable config rejected"
 # --- invalid persisted cpus/memory rejected at load ---------------------------
 cfg_badcpus="$WORK/badcpusproj/config"
 write_valid_config "$cfg_badcpus" "not-a-number" ""
-if ( dc_load_project_config "$cfg_badcpus" ) >/dev/null 2>&1; then
+if ( dce_load_project_config "$cfg_badcpus" ) >/dev/null 2>&1; then
   fail "loader must reject invalid persisted CONTAINER_CPUS"
 fi
 
 cfg_badmem="$WORK/badmemproj/config"
 write_valid_config "$cfg_badmem" "" "999z"
-if ( dc_load_project_config "$cfg_badmem" ) >/dev/null 2>&1; then
+if ( dce_load_project_config "$cfg_badmem" ) >/dev/null 2>&1; then
   fail "loader must reject invalid persisted CONTAINER_MEMORY"
 fi
 
@@ -223,7 +223,7 @@ pass "invalid persisted resource values rejected at load"
 # --- valid legacy config continues to load ------------------------------------
 cfg_ok="$WORK/okproj/config"
 write_valid_config "$cfg_ok" "2" "4g"
-dc_load_project_config "$cfg_ok"
+dce_load_project_config "$cfg_ok"
 [[ "${CONTAINER_CPUS:-}" == "2" ]] || fail "legacy cpus not loaded"
 [[ "${CONTAINER_MEMORY:-}" == "4g" ]] || fail "legacy memory not loaded"
 [[ "${CONTAINER_BACKEND:-}" == "docker" ]] || fail "legacy backend not loaded"
@@ -237,12 +237,12 @@ chmod 700 "$(dirname "$cfg_ports")"
 {
   echo 'CONTAINER_PROJECT="testproj"'
   echo 'CONTAINER_BACKEND="docker"'
-  echo 'CONTAINER_IMAGE="dev-base:latest"'
+  echo 'CONTAINER_IMAGE="dce-base:latest"'
   echo 'PORTS=(5173:5173 8080)'
   echo 'CONTAINER_HIDDEN_PATHS=(node_modules apps/web/node_modules)'
 } > "$cfg_ports"
 chmod 600 "$cfg_ports"
-dc_load_project_config "$cfg_ports"
+dce_load_project_config "$cfg_ports"
 [[ "${PORTS[0]:-}" == "5173:5173" ]] || fail "ports not loaded"
 [[ "${CONTAINER_HIDDEN_PATHS[1]:-}" == "apps/web/node_modules" ]] || fail "hidden paths not loaded"
 
@@ -257,13 +257,13 @@ gcfg="$WORK/globalconfig"
   echo 'DC_USER_DIR="/tmp/user-root"'
   echo 'OTHER="$(touch /tmp/m1-global-pwn)"'
 } > "$gcfg"
-got="$(dc_config_extract_scalar "$gcfg" DC_TEAM_DIR)" || fail "global extract failed"
+got="$(dce_config_extract_scalar "$gcfg" DC_TEAM_DIR)" || fail "global extract failed"
 [[ "$got" == "/tmp/team-root" ]] || fail "global extract mismatch (got '$got')"
 [[ ! -e /tmp/m1-global-pwn ]] || fail "global extract must not execute config"
 
 pass "global config parsed without execution"
 
-# --- dc-complete parses overlays dir without executing config -----------------
+# --- dce-complete parses overlays dir without executing config -----------------
 rm -f /tmp/m1-complete-pwn
 gccfg="$WORK/complete-global-config"
 {
@@ -273,12 +273,12 @@ gccfg="$WORK/complete-global-config"
   echo 'EVIL="$(touch /tmp/m1-complete-pwn)"'
 } > "$gccfg"
 # shellcheck source=/dev/null
-source "$ROOT_DIR/scripts/dc-complete.bash"
-got="$(_dc_read_team_dir "$gccfg")" || fail "dc-complete team root parse failed"
-[[ "$got" == "/tmp/safe-team" ]] || fail "dc-complete team root mismatch (got '$got')"
-[[ ! -e /tmp/m1-complete-pwn ]] || fail "dc-complete must not execute config code"
+source "$ROOT_DIR/scripts/dce-complete.bash"
+got="$(_dce_read_team_dir "$gccfg")" || fail "dce-complete team root parse failed"
+[[ "$got" == "/tmp/safe-team" ]] || fail "dce-complete team root mismatch (got '$got')"
+[[ ! -e /tmp/m1-complete-pwn ]] || fail "dce-complete must not execute config code"
 
-pass "dc-complete parses global config without execution"
+pass "dce-complete parses global config without execution"
 
 echo ""
 echo "All M1 config-security checks passed."

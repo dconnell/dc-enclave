@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# lib/network.sh - Private-network orchestration for dc-managed containers.
+# lib/network.sh - Private-network orchestration for dce-managed containers.
 #
 # Sourced (never executed) by scripts that create/rebuild containers and by the
-# `dc network` subcommand. Sits on top of lib/common.sh (pure validators + the
+# `dce network` subcommand. Sits on top of lib/common.sh (pure validators + the
 # hardened config loader) and lib/container-backend.sh (the backend_network_*
 # dispatch). All per-CLI divergence lives there; this file is backend-aware but
 # CLI-agnostic.
 #
 # Model (see plans/internal-networking.md):
 #   - Networks are first-class daemon objects; existence is the source of truth.
-#     dc stores NO subnet bookkeeping -- both backend families auto-allocate and
+#     dce stores NO subnet bookkeeping -- both backend families auto-allocate and
 #     validate overlap natively.
 #   - Per-container membership lives in the project config as
 #     CONTAINER_NETWORKS=( <name>[:<ip>] ... ), alongside everything else.
@@ -24,16 +24,16 @@
 # Auto-source the two libs this file depends on, so sourcing network.sh alone is
 # enough (mirrors how container-backend.sh auto-sources common.sh).
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
-  _dc_network_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _dce_network_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck source=common.sh
-  source "$_dc_network_lib_dir/common.sh"
-  unset _dc_network_lib_dir
+  source "$_dce_network_lib_dir/common.sh"
+  unset _dce_network_lib_dir
 fi
 if [[ -z "${_DC_BACKEND_SH_LOADED:-}" ]]; then
-  _dc_network_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _dce_network_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   # shellcheck source=container-backend.sh
-  source "$_dc_network_lib_dir/container-backend.sh"
-  unset _dc_network_lib_dir
+  source "$_dce_network_lib_dir/container-backend.sh"
+  unset _dce_network_lib_dir
 fi
 
 if [[ -n "${_DC_NETWORK_SH_LOADED:-}" ]]; then
@@ -47,7 +47,7 @@ declare -gr _DC_NETWORK_SH_LOADED=1
 # and de-duplicates by name (first occurrence wins; a conflicting IP for an
 # already-seen name is an error). Echoes the CSV (possibly empty); returns 1 on
 # any invalid token.
-dc_normalize_network_arg() {
+dce_normalize_network_arg() {
   local input="$1"
 
   if [[ -z "${input//[[:space:]]/}" ]]; then
@@ -82,7 +82,7 @@ dc_normalize_network_arg() {
     ip="${ip#"${ip%%[![:space:]]*}"}"
     ip="${ip%"${ip##*[![:space:]]}"}"
 
-    # A second colon (e.g. "a:b:c") means a malformed entry; dc_validate_ip_value
+    # A second colon (e.g. "a:b:c") means a malformed entry; dce_validate_ip_value
     # rejects any residual whitespace/format below.
     if [[ "$ip" == *:* ]]; then
       printf 'ERROR: Invalid network entry %q (bad IP field).\n' "$token" >&2
@@ -91,14 +91,14 @@ dc_normalize_network_arg() {
 
     name="${name,,}"
 
-    if ! dc_validate_network_name "$name"; then
+    if ! dce_validate_network_name "$name"; then
       printf 'ERROR: Invalid network name: %s\n' "$name" >&2
       printf '  Allowed pattern: ^[a-z0-9][a-z0-9._-]*$\n' >&2
       return 1
     fi
 
     if [[ -n "$ip" ]]; then
-      if ! dc_validate_ip_value "$ip" >&2; then
+      if ! dce_validate_ip_value "$ip" >&2; then
         return 1
       fi
     fi
@@ -120,11 +120,11 @@ dc_normalize_network_arg() {
     fi
   done
 
-  dc_join_by ',' "${normalized[@]}"
+  dce_join_by ',' "${normalized[@]}"
 }
 
 # Extract the network name from a `name[:ip]` entry.
-dc_network_entry_name() {
+dce_network_entry_name() {
   local entry="$1"
   if [[ "$entry" == *:* ]]; then
     printf '%s' "${entry%%:*}"
@@ -134,7 +134,7 @@ dc_network_entry_name() {
 }
 
 # Extract the static IP from a `name[:ip]` entry (empty if none).
-dc_network_entry_ip() {
+dce_network_entry_ip() {
   local entry="$1"
   if [[ "$entry" == *:* ]]; then
     printf '%s' "${entry#*:}"
@@ -147,7 +147,7 @@ dc_network_entry_ip() {
 # supports a single network per container (attached at create) and has no static
 # IP assignment, so reject extra networks and any IP. Docker-compatible backends
 # are unrestricted here. Returns 0/1.
-dc_network_check_backend_limits() {
+dce_network_check_backend_limits() {
   local backend="$1"
   shift
   local -a entries=("$@")
@@ -165,7 +165,7 @@ dc_network_check_backend_limits() {
 
   for entry in "${entries[@]}"; do
     [[ -z "$entry" ]] && continue
-    if [[ -n "$(dc_network_entry_ip "$entry")" ]]; then
+    if [[ -n "$(dce_network_entry_ip "$entry")" ]]; then
       echo "ERROR: apple/container does not support static container IPs." >&2
       echo "       Drop --ip / the ':ip' suffix, or use a Docker-compatible backend." >&2
       return 1
@@ -177,22 +177,22 @@ dc_network_check_backend_limits() {
 
 # Ensure every referenced network exists on the active backend. A missing
 # network fails fast with create guidance rather than silently auto-creating it
-# (networks are first-class objects created via `dc network create`). Returns 0
+# (networks are first-class objects created via `dce network create`). Returns 0
 # if all exist, 1 if any is missing or the list call failed.
-dc_networks_ensure_exist() {
+dce_networks_ensure_exist() {
   local -a entries=("$@")
   local entry="" name="" rc=0
 
   for entry in "${entries[@]}"; do
     [[ -z "$entry" ]] && continue
-    name="$(dc_network_entry_name "$entry")"
+    name="$(dce_network_entry_name "$entry")"
     if ! backend_network_exists "$name"; then
       rc=$?
       if [[ "$rc" -eq 2 ]]; then
         printf 'ERROR: Could not verify network %q on the backend.\n' "$name" >&2
       else
         printf 'ERROR: Network %q does not exist on backend %q.\n' "$name" "${DEV_CONTAINERS_BACKEND:-?}" >&2
-        printf '       Create it first: dc network create %s\n' "$name" >&2
+        printf '       Create it first: dce network create %s\n' "$name" >&2
       fi
       return 1
     fi
@@ -203,10 +203,10 @@ dc_networks_ensure_exist() {
 
 # Emit the create-time network args for the active backend, one arg per line
 # (caller captures with `mapfile -t arr < <(...)`). The PRIMARY (first) entry is
-# attached at create; extras are handled by dc_networks_attach_extras. On apple
+# attached at create; extras are handled by dce_networks_attach_extras. On apple
 # the single network is attached with no IP. Emits nothing when there are no
 # networks.
-dc_networks_create_args() {
+dce_networks_create_args() {
   local -a entries=("$@")
   local backend="${DEV_CONTAINERS_BACKEND:-}"
 
@@ -214,8 +214,8 @@ dc_networks_create_args() {
 
   local primary="${entries[0]}"
   local primary_name="" primary_ip=""
-  primary_name="$(dc_network_entry_name "$primary")"
-  primary_ip="$(dc_network_entry_ip "$primary")"
+  primary_name="$(dce_network_entry_name "$primary")"
+  primary_ip="$(dce_network_entry_ip "$primary")"
 
   if [[ "$backend" == "apple" ]]; then
     printf '%s\n%s\n' "--network" "$primary_name"
@@ -231,7 +231,7 @@ dc_networks_create_args() {
 # After create: live-connect every network beyond the primary (Docker-only; on
 # apple the limits check already rejected extras). Returns 0 if all connects
 # succeed, 1 otherwise.
-dc_networks_attach_extras() {
+dce_networks_attach_extras() {
   local project="$1"
   shift
   local -a entries=("$@")
@@ -244,8 +244,8 @@ dc_networks_attach_extras() {
   for ((i = 1; i < ${#entries[@]}; i++)); do
     entry="${entries[$i]}"
     [[ -z "$entry" ]] && continue
-    name="$(dc_network_entry_name "$entry")"
-    ip="$(dc_network_entry_ip "$entry")"
+    name="$(dce_network_entry_name "$entry")"
+    ip="$(dce_network_entry_ip "$entry")"
     if [[ -n "$ip" ]]; then
       if ! backend_network_connect "$name" "$project" --ip "$ip"; then
         printf 'ERROR: Failed to attach container %q to network %q.\n' "$project" "$name" >&2
@@ -265,9 +265,9 @@ dc_networks_attach_extras() {
 # Scan every project config and emit one line per (project, network) membership:
 # "<project>\t<network>\t<ip>" (ip is "-" when none). Each project loads through
 # the hardened loader inside a subshell so a single bad config cannot abort the
-# scan. Used by `dc network ls` / `dc network members`.
-dc_network_scan_membership() {
-  local base="$HOME/.config/dev-containers"
+# scan. Used by `dce network ls` / `dce network members`.
+dce_network_scan_membership() {
+  local base="$HOME/.config/dce-enclave"
   local config_file="" project="" line="" ip=""
 
   [[ -d "$base" ]] || return 0
@@ -283,7 +283,7 @@ dc_network_scan_membership() {
       PORTS=()
       CONTAINER_HIDDEN_PATHS=()
       CONTAINER_NETWORKS=()
-      if dc_load_project_config "$config_file" 2>/dev/null; then
+      if dce_load_project_config "$config_file" 2>/dev/null; then
         # NOTE: this runs in a process-substitution subshell, not a function, so
         # `local` is unavailable; plain assignments are correctly scoped here.
         for _scan_e in "${CONTAINER_NETWORKS[@]}"; do
@@ -299,19 +299,19 @@ dc_network_scan_membership() {
 }
 
 # Print membership for a single network: "<project>\t<ip>" lines (ip "-" if none).
-dc_network_members_of() {
+dce_network_members_of() {
   local name="$1"
   local p net ip
 
   while IFS=$'\t' read -r p net ip; do
     [[ "$net" == "$name" ]] || continue
     printf '%s\t%s\n' "$p" "$ip"
-  done < <(dc_network_scan_membership)
+  done < <(dce_network_scan_membership)
 }
 
 # Print the list of project names currently referencing a network (space-sep),
-# for the `dc network rm` membership guard. Returns 0 always; empty if none.
-dc_network_referencing_projects() {
+# for the `dce network rm` membership guard. Returns 0 always; empty if none.
+dce_network_referencing_projects() {
   local name="$1"
   local -a out=()
   local p net ip
@@ -319,7 +319,7 @@ dc_network_referencing_projects() {
   while IFS=$'\t' read -r p net ip; do
     [[ "$net" == "$name" ]] || continue
     out+=("$p")
-  done < <(dc_network_scan_membership)
+  done < <(dce_network_scan_membership)
 
   printf '%s' "${out[*]}"
 }

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/dc - The `dc` command entry point / subcommand dispatcher.
+# scripts/dce - The `dce` command entry point / subcommand dispatcher.
 #
-# Exposed as the `dc` shell command by setup.sh (zsh function / bash alias).
+# Exposed as the `dce` shell command by setup.sh (zsh function / bash alias).
 # Each subcommand execs a dedicated script under scripts/, so adding a command means: write
-# scripts/<cmd>.sh and add a case branch here (and to dc-complete.bash).
-# `dc` with no args shows help.
+# scripts/<cmd>.sh and add a case branch here (and to dce-complete.bash).
+# `dce` with no args shows help.
 # =============================================================================
 set -euo pipefail
 
 # Resolve the real location of this file (following symlinks) and the repo
-# root. Needed because `dc` may be invoked via a shell wrapper and may be symlinked.
+# root. Needed because `dce` may be invoked via a shell wrapper and may be symlinked.
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"
@@ -82,14 +82,14 @@ case "$SUBCOMMAND" in
     exec "$SCRIPT_DIR/install-dotfiles.sh" "$@"
     ;;
   version|--version|-v)
-    echo "dc $DC_VERSION"
+    echo "dce $DC_VERSION"
     ;;
   help|--help|-h)
     exec "$SCRIPT_DIR/help.sh" "$@"
     ;;
   *)
     echo "Unknown command: $SUBCOMMAND"
-    echo "Run 'dc help' for usage."
+    echo "Run 'dce help' for usage."
     exit 1
     ;;
 esac

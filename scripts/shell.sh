@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/shell.sh - `dc shell`: open an interactive shell (or run one command)
+# scripts/shell.sh - `dce shell`: open an interactive shell (or run one command)
 # in a dev container. Starts the container if it isn't running, and injects the
 # project's GITHUB_TOKEN into the shell environment when set.
 # =============================================================================
@@ -29,13 +29,13 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
-CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
+CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'. Run: dc new $PROJECT <scope>"
+  echo "ERROR: No config for '$PROJECT'. Run: dce new $PROJECT <scope>"
   exit 1
 fi
 
-dc_load_project_config "$CONFIG"
+dce_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 
@@ -76,31 +76,31 @@ echo ""
 # substitution in the wrapper, so token-file metacharacters are never executed;
 # the file is deleted before the user shell is exec'd and best-effort removed
 # again on exit/interrupt.
-_dc_token_env_file=""
+_dce_token_env_file=""
 
-_dc_seed_token_file() {
-  _dc_token_env_file="$(backend_exec "$PROJECT" mktemp "/tmp/dc-gh-token.XXXXXX")"
-  backend_exec "$PROJECT" chmod 600 "$_dc_token_env_file"
+_dce_seed_token_file() {
+  _dce_token_env_file="$(backend_exec "$PROJECT" mktemp "/tmp/dce-gh-token.XXXXXX")"
+  backend_exec "$PROJECT" chmod 600 "$_dce_token_env_file"
   printf '%s' "$GITHUB_TOKEN" \
-    | backend_exec_stdin "$PROJECT" sh -c 'cat >"$1"' _ "$_dc_token_env_file"
+    | backend_exec_stdin "$PROJECT" sh -c 'cat >"$1"' _ "$_dce_token_env_file"
 }
 
-_dc_cleanup_token_file() {
-  if [[ -n "$_dc_token_env_file" ]]; then
-    backend_exec "$PROJECT" rm -f "$_dc_token_env_file" 2>/dev/null || true
+_dce_cleanup_token_file() {
+  if [[ -n "$_dce_token_env_file" ]]; then
+    backend_exec "$PROJECT" rm -f "$_dce_token_env_file" 2>/dev/null || true
   fi
 }
 # Best-effort cleanup on normal exit or launch-time interrupt; never let a failed
 # cleanup break normal shell usage.
-trap '_dc_cleanup_token_file' EXIT INT TERM
+trap '_dce_cleanup_token_file' EXIT INT TERM
 
 if $HAS_COMMAND; then
   if [[ -n "$GITHUB_TOKEN" ]]; then
-    _dc_seed_token_file
+    _dce_seed_token_file
     backend_exec "$PROJECT" env \
       "PS1=[${PROJECT}] %~ %# " \
       sh -lc 'export GITHUB_TOKEN="$(cat "$1")"; rm -f "$1"; exec zsh -ic "$2"' \
-      _ "$_dc_token_env_file" "$COMMAND"
+      _ "$_dce_token_env_file" "$COMMAND"
   else
     backend_exec "$PROJECT" env \
       "PS1=[${PROJECT}] %~ %# " \
@@ -109,12 +109,12 @@ if $HAS_COMMAND; then
 else
   backend_exec "$PROJECT" sh -lc 'echo "  Connected to container: $(hostname) (user=$(whoami), pwd=$(pwd))"'
   if [[ -n "$GITHUB_TOKEN" ]]; then
-    _dc_seed_token_file
+    _dce_seed_token_file
     backend_exec_interactive "$PROJECT" \
       --env "PS1=[${PROJECT}] %~ %# " \
       -- \
       sh -lc 'export GITHUB_TOKEN="$(cat "$1")"; rm -f "$1"; cd /workspace 2>/dev/null || true; exec zsh -i' \
-      _ "$_dc_token_env_file"
+      _ "$_dce_token_env_file"
   else
     backend_exec_interactive "$PROJECT" \
       --env "PS1=[${PROJECT}] %~ %# " \

@@ -1,86 +1,99 @@
-# dev-containers
+# DC Enclave
 
-Isolated development containers for macOS, Linux, and WSL2 with one shared Bash codebase and five supported backends:
+Isolated dev containers for any repo. Spin one up with a single command, shell in from the terminal or open it in VS Code, and run your code and AI agents inside a sandbox you can wipe and rebuild in seconds.
 
-- apple/container (macOS)
-- Docker Desktop (macOS, Linux, WSL2)
-- OrbStack (macOS)
-- Colima (macOS, Linux)
-- Podman (macOS, Linux, WSL2)
+Runs on macOS, Linux, and WSL2 across five backends: apple/container, Docker Desktop, OrbStack, Colima, and Podman.
 
-## Goal
+## Why
 
-**dev-containers** standardizes per-project containerized development environments from a shared Bash codebase. After one-time setup, `dc new` creates an isolated workspace for any repo while letting each developer use their preferred backend, tools, and dotfiles through overlay Containerfiles. Teams share the same base image and overlay model, and projects can optionally keep separate credentials and container state. If an environment is compromised or drifts, you can regenerate it quickly with `dc rebuild-image all` + `dc rebuild-container`, then audit repos and rotate access tokens.
+Every developer now runs tools that touch their whole repo — AI agents in VS Code extensions, TUI runners like Claude Code, OpenCode, or Pi launched from the terminal, build scripts, dependency installers. Left on the host, each one can read your global credentials, mutate files outside the project, and leave state that survives the session. DC Enclave puts a hard boundary around all of it: the container is the boundary, and anything you run inside it stays inside.
 
-## Requirements
+- **Whatever runs in the container, stays in the container.** Launch a TUI agent from `dce shell`, or run a VS Code extension from the integrated terminal — both operate inside the same boundary. Your host filesystem, shell history, and global credentials stay out of reach.
+- **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it. Link them only when you mean to.
+- **A bad session is one command to undo.** `dce rebuild-container <name>` destroys the container filesystem and recreates it from a known-good image. No snapshots to manage, no manual cleanup, no digging through `git reflog`.
+- **Trust is pinned, not learned on first use.** GitHub's SSH host keys are baked into the base image and verified by a guard test, so a hijacked network can't silently redirect git traffic.
+- **Your host code is never touched.** Repos live on the host and bind-mount in; destroying the container leaves your checkout exactly where it was.
 
-- **Bash 4+** — all scripts require Bash 4 or later
-  - macOS: `brew install bash` (macOS ships bash 3.2)
-  - Linux: included by default on most distros
-  - WSL2: included by default
-- One container backend installed and running (see Backend selection below)
+The container is the undo button. Rebuild it and you're back to a known-good state in under a minute.
 
-Podman support policy:
+## Quick start
 
-- dev-containers supports the latest stable Podman release only
-- tested baseline at migration: Podman 5.2.x
-- if you hit Podman behavior differences on older releases, upgrade Podman first
+```bash
+# one-time: build the base image and wire up the `dce` command
+scripts/setup.sh
 
-Colima support policy:
+# create an isolated container for a repo
+dce new myapp nodejs 3000:3000
 
-- dev-containers supports the latest stable Colima release only
-- use Colima with Docker runtime (`colima start --runtime docker`)
-- if Colima is running with a non-Docker runtime (for example containerd), switch back to Docker runtime before using dev-containers
+# shell in from the terminal
+dce shell myapp
+
+# or open the repo folder in VS Code and run: Dev Containers: Reopen in Container
+```
+
+You now have a container named `myapp` running your chosen toolchain, your repo bind-mounted at `/workspace`, your per-project credentials injected, and a generated `devcontainer.json` so VS Code lands on the exact same container `dce shell` uses.
+
+The generated `devcontainer.json` follows the [dev container spec](https://containers.dev), so other spec-compliant clients (Codespaces, etc.) can attach too — only VS Code Dev Containers is tested.
+
+`dce new` also generates a per-project SSH keypair and creates placeholder files for a GitHub token and `.npmrc` under `~/.config/dce-enclave/<name>/`. Completing them is optional hardening — see [Isolation design](#isolation-design).
+
+## Design principles
+
+- **The orchestrator has no install footprint.** `dce` is pure Bash 4+ — no Node runtime, no Python, no `npm install -g`, no Homebrew formula. The tool that manages your sandboxes is just shell scripts running on the Bash every Unix already ships. Nothing outside your containers needs a package manager, so nothing outside your containers needs patching, pinning, or CVE auditing. Clone, run `setup.sh`, done.
+- **Per-project isolation by default.** Each container gets its own credentials, hidden volumes, and (optionally) its own network. Projects can't see each other unless you explicitly link them.
+- **Rebuildable, not stateful.** Containers are disposable; your code and config are not. Everything that matters lives on the host or in version-controlled overlay files; the container is regenerated from them on demand.
+- **Reproducible by provenance.** Every built image records the overlay commits and content fingerprints that produced it, so you can answer "what state were my overlays in when this image was built?" without archaeology.
+- **Fail-closed on trust.** Host keys pinned in-image, no runtime `ssh-keyscan`, no `accept-new`. A poisoned pin is caught by a test, not by a breach.
 
 ## Isolation design
 
-Each project container is set up with its own credentials and container state so projects stay independent:
+Each project container runs with its own credentials and container state, so projects stay independent. The credentials below are **optional hardening** — the container runs fine without any of them. `dce new` generates the SSH keypair and creates placeholder/template files for the rest, then prints a checklist steering you through completing the ones you want.
 
-- Per-project GitHub PAT — store a fine-grained, repo-scoped token (no admin) in `~/.config/dev-containers/<name>/github-token`
-- Per-project SSH deploy key — add a dedicated key pair under `~/.config/dev-containers/<name>/`
-- Per-project .npmrc — place a config alongside the other secrets for projects that use npm
-- Host-mounted workspace — code lives at `${DC_REPOS_DIR:-$HOME/repos}/<project>` on your machine and is bind-mounted to `/workspace` inside the container
+- Per-project SSH deploy key (generated) — `dce new` creates a dedicated keypair at `~/.config/dce-enclave/<name>/ssh_key` and prints the `.pub`. Add it as a GitHub deploy key to use it; skip if you don't need repo write from inside the container.
+- Per-project GitHub PAT (optional) — drop a fine-grained, repo-scoped token (no admin) into `~/.config/dce-enclave/<name>/github-token`. `dce shell` injects it as `GITHUB_TOKEN` only when the file is non-empty.
+- Per-project .npmrc (optional) — a template is created at `~/.config/dce-enclave/<name>/.npmrc`; edit it for projects that use npm. It is mounted read-only at `/home/dev/.npmrc`.
+- Host-mounted workspace — code lives at `${DC_REPOS_DIR:-$HOME/repos}/<project>` on your machine and is bind-mounted to `/workspace` inside the container.
 
-If a container's state is ever suspect, `dc rebuild-container` replaces the container from a known-good image without touching your host repos.
+If a container's state is ever suspect, `dce rebuild-container` replaces the container from a known-good image without touching your host repos.
 
 ### GitHub SSH host key pinning
 
-GitHub's SSH host keys are **pinned in the base image** (`Containerfiles/ssh/github_known_hosts`), not learned at runtime. The base image sets `StrictHostKeyChecking yes` for `github.com` and points its `UserKnownHostsFile` at the pinned file, so an unknown or mismatched host key fails closed instead of being silently trusted on first contact. `dc new`, `dc start`, and `dc rebuild-container` only inject your deploy key — they no longer run `ssh-keyscan`.
+GitHub's SSH host keys are **pinned in the base image** (`Containerfiles/ssh/github_known_hosts`), not learned at runtime. The base image sets `StrictHostKeyChecking yes` for `github.com` and points its `UserKnownHostsFile` at the pinned file, so an unknown or mismatched host key fails closed instead of being silently trusted on first contact. `dce new`, `dce start`, and `dce rebuild-container` only inject your deploy key — they no longer run `ssh-keyscan`.
 
 Rotating the pin (e.g. when GitHub changes a key) is a deliberate, reviewed change:
 
 1. Re-verify the new keys against three independent channels — see `plans/security/m4.md` ("Verification channels").
 2. Update `Containerfiles/ssh/github_known_hosts` **and** the `FP_*` constants in `tests/security-ssh-host-trust.sh` in the same change.
-3. `dc rebuild-image base` then `dc rebuild-container <name>` to pick up the new pin.
+3. `dce rebuild-image base` then `dce rebuild-container <name>` to pick up the new pin.
 
 The `tests/security-ssh-host-trust.sh` guard blocks a wrong/poisoned pin (it asserts the pinned fingerprints match GitHub's published values) and fails if `accept-new` or runtime `ssh-keyscan github.com` is reintroduced.
 
 ## Command reference
 
-The day-to-day interface is the `dc` command with subcommands. All subcommands dispatch to scripts under `scripts/`.
+The day-to-day interface is the `dce` command with subcommands. All subcommands dispatch to scripts under `scripts/`.
 
 | Command | Description |
 |---|---|
-| `dc new` (forms below) | Create a new isolated container project |
-| `dc status` (`dc s`) | Show overall status and per-project details |
-| `dc start [name ...]` | Start one or more projects, or all configured projects if none given |
-| `dc stop [name ...]` | Stop one or more projects, or all configured projects if none given |
-| `dc list` (`dc ls`) | List dev-containers and their running/stopped state |
-| `dc shell <name> [command]` | Open a shell or run one command inside a project container |
-| `dc logs <name> [-f\|--follow] [--tail N]` | Fetch a container's stdout/stderr log stream (works on stopped containers) |
-| `dc exec [--root] <name> <command...>` | Run a single command in a running container (docker-exec style; auto-TTY) |
-| `dc restart [name ...]` | Restart one or more projects, or all configured projects |
-| `dc rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, and config+secrets (host code preserved) |
-| `dc rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]` | Destroy and recreate container from selected image |
-| `dc rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
-| `dc provenance <name> [--history]` | Show image provenance: team/user overlay commits + content fingerprints + base id + build time for the project's image |
-| `dc clean [--dry-run] [--hidden-volumes [name]]` | Remove old/orphan managed image tags or orphan managed hidden volumes |
-| `dc doctor [backend\|project]` | Run read-only preflight checks and report pass/fail per subsystem (nonzero if any fail) |
-| `dc install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
-| `dc version` (`dc --version`, `dc -v`) | Print the dev-containers version |
-| `dc help [command]` (`dc --help`, `dc -h`) | Show usage summary or detailed help for a specific command |
+| `dce new` (forms below) | Create a new isolated container project |
+| `dce status` (`dce s`) | Show overall status and per-project details |
+| `dce start [name ...]` | Start one or more projects, or all configured projects if none given |
+| `dce stop [name ...]` | Stop one or more projects, or all configured projects if none given |
+| `dce list` (`dce ls`) | List DC Enclave and their running/stopped state |
+| `dce shell <name> [command]` | Open a shell or run one command inside a project container |
+| `dce logs <name> [-f\|--follow] [--tail N]` | Fetch a container's stdout/stderr log stream (works on stopped containers) |
+| `dce exec [--root] <name> <command...>` | Run a single command in a running container (docker-exec style; auto-TTY) |
+| `dce restart [name ...]` | Restart one or more projects, or all configured projects |
+| `dce rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, and config+secrets (host code preserved) |
+| `dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]` | Destroy and recreate container from selected image |
+| `dce rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
+| `dce provenance <name> [--history]` | Show image provenance: team/user overlay commits + content fingerprints + base id + build time for the project's image |
+| `dce clean [--dry-run] [--hidden-volumes [name]]` | Remove old/orphan managed image tags or orphan managed hidden volumes |
+| `dce doctor [backend\|project]` | Run read-only preflight checks and report pass/fail per subsystem (nonzero if any fail) |
+| `dce install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
+| `dce version` (`dce --version`, `dce -v`) | Print the DC Enclave version |
+| `dce help [command]` (`dce --help`, `dce -h`) | Show usage summary or detailed help for a specific command |
 
-`<scope>` values in `dc new` are overlay scopes that match `Containerfile.<scope>` files in your overlay directories. Scope is optional — `dc new <name>` creates a base-only project. The `all` scope is always auto-layered when `Containerfile.all` exists.
+`<scope>` values in `dce new` are overlay scopes that match `Containerfile.<scope>` files in your overlay directories. Scope is optional — `dce new <name>` creates a base-only project. The `all` scope is always auto-layered when `Containerfile.all` exists.
 
 ### Command aliases
 
@@ -88,36 +101,36 @@ Several commands have short aliases:
 
 | Command | Aliases |
 |---|---|
-| `dc status` | `dc s` |
-| `dc list` | `dc ls` |
-| `dc version` | `dc --version`, `dc -v` |
-| `dc help` | `dc --help`, `dc -h` |
+| `dce status` | `dce s` |
+| `dce list` | `dce ls` |
+| `dce version` | `dce --version`, `dce -v` |
+| `dce help` | `dce --help`, `dce -h` |
 
-`dc start` and `dc stop` accept multiple project names (for example `dc start web api db`) — when no names are given they operate on every configured project.
+`dce start` and `dce stop` accept multiple project names (for example `dce start web api db`) — when no names are given they operate on every configured project.
 
-**`dc new` forms** — `<scope>` can be any scope name matching a `Containerfile.<scope>` in your overlays or a comma-separated combination:
+**`dce new` forms** — `<scope>` can be any scope name matching a `Containerfile.<scope>` in your overlays or a comma-separated combination:
 
 | Form | Description |
 |---|---|
-| `dc new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
-| `dc new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]` | With recipe defaults, optional recipe save, resource limits, and hidden paths (see [Hiding generated paths](#hiding-generated-paths-from-the-host---hide)) |
+| `dce new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
+| `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]` | With recipe defaults, optional recipe save, resource limits, and hidden paths (see [Hiding generated paths](#hiding-generated-paths-from-the-host---hide)) |
 
 ## Global configuration and overlays
 
 `setup.sh` bootstraps global configuration in:
 
 ```
-~/.config/dev-containers/config
+~/.config/dce-enclave/config
 ```
 
 Required keys:
 
 ```bash
-DC_TEAM_DIR="$HOME/.config/dev-containers/team"
-DC_USER_DIR="$HOME/.config/dev-containers/user"
+DC_TEAM_DIR="$HOME/.config/dce-enclave/team"
+DC_USER_DIR="$HOME/.config/dce-enclave/user"
 ```
 
-`dc new`, `dc rebuild-image`, and `dc rebuild-container` load `DC_TEAM_DIR` and `DC_USER_DIR` from this config file. If the global config file is missing, either root is unset, or a root does not exist, the command fails fast with remediation guidance.
+`dce new`, `dce rebuild-image`, and `dce rebuild-container` load `DC_TEAM_DIR` and `DC_USER_DIR` from this config file. If the global config file is missing, either root is unset, or a root does not exist, the command fails fast with remediation guidance.
 
 Each root is an independent directory (each may be its own git repo) holding two namespaces:
 
@@ -126,7 +139,7 @@ $DC_TEAM_DIR/                      # team root (optional git repo)
   overlays/                        # image overlay Containerfile fragments
   ├── Containerfile.all            # auto-layered when it exists
   └── Containerfile.<scope>        # any scope name you define
-  container-recipes/               # shareable dc new recipe files
+  container-recipes/               # shareable dce new recipe files
   └── <name>                       # filename is the container name
 $DC_USER_DIR/                      # user root (optional git repo)
   overlays/
@@ -140,7 +153,7 @@ $DC_USER_DIR/                      # user root (optional git repo)
 
 ### Container recipes (`container-recipes/`)
 
-`dc new <name>` auto-loads recipes by container name from:
+`dce new <name>` auto-loads recipes by container name from:
 
 - `$DC_TEAM_DIR/container-recipes/<name>`
 - `$DC_USER_DIR/container-recipes/<name>`
@@ -164,7 +177,7 @@ Merge and override rules:
 
 You can load one explicit recipe file with `--config <path>`.
 
-You can also persist the CLI-supplied recipe keys from a `dc new` run:
+You can also persist the CLI-supplied recipe keys from a `dce new` run:
 
 - `--save-team` writes `$DC_TEAM_DIR/container-recipes/<name>`
 - `--save-user` writes `$DC_USER_DIR/container-recipes/<name>`
@@ -176,8 +189,8 @@ values inherited from an existing team/user recipe).
 Example:
 
 ```bash
-dc new api nodejs,golang --cpus 2 --memory 4g --hide node_modules 3000:3000 --save-team
-dc new api --cpus 3 --hide .cache --save-user
+dce new api nodejs,golang --cpus 2 --memory 4g --hide node_modules 3000:3000 --save-team
+dce new api --cpus 3 --hide .cache --save-user
 ```
 
 ### Overlay ownership model
@@ -199,34 +212,34 @@ For scope list `<scope1>,<scope2>`, overlay composition order is:
 6. `user/<scope2>`
 
 
-`dev-base` is always the only repo-defined base layer. The `all` scope is always checked first — if `Containerfile.all` exists in team or user overlays, it is included automatically even without specifying `all` on the command line.
+`dce-base` is always the only repo-defined base layer. The `all` scope is always checked first — if `Containerfile.all` exists in team or user overlays, it is included automatically even without specifying `all` on the command line.
 
 Missing unrequested overlay files are skipped silently. If you request a named scope and it is missing in both `team/` and `user/`, the command fails fast.
 
-## Why dev-containers?
+## Why DC Enclave?
 
-If you are already comfortable with Docker, Podman, or apple/container CLIs, `dc` still saves work by orchestrating repetitive setup and recovery steps consistently across projects and machines.
+If you are already comfortable with Docker, Podman, or apple/container CLIs, `dce` still saves work by orchestrating repetitive setup and recovery steps consistently across projects and machines.
 
-What `dc` adds beyond raw backend commands:
+What `dce` adds beyond raw backend commands:
 
 - project bootstrap from a shared base image plus optional overlay Containerfiles
-- persisted per-project configuration in `~/.config/dev-containers/<name>/config`
+- persisted per-project configuration in `~/.config/dce-enclave/<name>/config`
 - consistent mounts, ports, and resource limit handling across backends
 - optional per-project credential layout for PAT/SSH key/.npmrc with repeatable rebuild flows
 - one-command rebuild and key-rotation workflows for incident response
 
-The table below intentionally focuses on the high-leverage commands where `dc` saves the most effort. It is not a complete mapping of every subcommand. Docker, OrbStack, and Colima are grouped because they share the Docker CLI.
+The table below intentionally focuses on the high-leverage commands where `dce` saves the most effort. It is not a complete mapping of every subcommand. Docker, OrbStack, and Colima are grouped because they share the Docker CLI.
 
-| `dc` command | docker / orbstack / colima | podman | apple/container |
+| `dce` command | docker / orbstack / colima | podman | apple/container |
 |---|---|---|---|
-| `dc new myapp nodejs 3000:3000` | Compose Containerfile layers, run `docker build`, `docker create` (mounts/ports/limits), and `docker start`; then set up project config, keys, and editor files | Same flow with `podman` | Same flow with `container` |
-| `dc new ...` (with overlay) | Merge team/user overlay fragments over `dev-base` (composition rules), then build/create/start | Same flow | Same flow |
-| `dc rebuild-container myapp` | Re-derive target image from scopes, then `docker rm -f myapp`, recreate with the original `docker create` flags, and `docker start` | Same flow with `podman` | `container delete myapp`, then recreate and start |
-| `dc rebuild-container myapp --rotate-keys` | Rebuild-container flow plus SSH key regeneration and deploy-key rotation | Same flow | Same flow |
-| `dc clean` | `docker image ls` + remove non-`latest` tags for managed repos | Same flow with `podman image ls/rm` | Same flow with `container image ls/rm` |
-| `dc install myapp ~/.dotfiles` | Stream dotfiles via `tar` + `docker exec`, run `install.sh`, then remove temp files | Same flow with `podman` | Same flow with `container exec` |
+| `dce new myapp nodejs 3000:3000` | Compose Containerfile layers, run `docker build`, `docker create` (mounts/ports/limits), and `docker start`; then set up project config, keys, and editor files | Same flow with `podman` | Same flow with `container` |
+| `dce new ...` (with overlay) | Merge team/user overlay fragments over `dce-base` (composition rules), then build/create/start | Same flow | Same flow |
+| `dce rebuild-container myapp` | Re-derive target image from scopes, then `docker rm -f myapp`, recreate with the original `docker create` flags, and `docker start` | Same flow with `podman` | `container delete myapp`, then recreate and start |
+| `dce rebuild-container myapp --rotate-keys` | Rebuild-container flow plus SSH key regeneration and deploy-key rotation | Same flow | Same flow |
+| `dce clean` | `docker image ls` + remove non-`latest` tags for managed repos | Same flow with `podman image ls/rm` | Same flow with `container image ls/rm` |
+| `dce install myapp ~/.dotfiles` | Stream dotfiles via `tar` + `docker exec`, run `install.sh`, then remove temp files | Same flow with `podman` | Same flow with `container exec` |
 
-`dc new`, `dc rebuild-image`, and `dc rebuild-container` are the biggest differentiators: repeatable orchestration for image lifecycle, container recovery, and security response without retyping fragile backend-specific command sequences. `dc clean` and `dc install` reduce ongoing maintenance overhead once projects are up and running.
+`dce new`, `dce rebuild-image`, and `dce rebuild-container` are the biggest differentiators: repeatable orchestration for image lifecycle, container recovery, and security response without retyping fragile backend-specific command sequences. `dce clean` and `dce install` reduce ongoing maintenance overhead once projects are up and running.
 
 ## Common Tools Included In Base Image
 
@@ -267,11 +280,18 @@ If not set, detection order is:
 
 Docker context notes:
 
-- Docker context is a Docker CLI concept (`docker context ...`), not a dev-containers-specific setting
-- dev-containers reads the active context to distinguish OrbStack/Colima from generic Docker
-- when forcing `CONTAINER_BACKEND=colima`, dev-containers requires a Colima Docker context and will fail fast if the active context is not Colima
+- Docker context is a Docker CLI concept (`docker context ...`), not a DC Enclave-specific setting
+- DC Enclave reads the active context to distinguish OrbStack/Colima from generic Docker
+- when forcing `CONTAINER_BACKEND=colima`, DC Enclave requires a Colima Docker context and will fail fast if the active context is not Colima
 
-Selected backend is stored per project in `~/.config/dev-containers/<name>/config`.
+Selected backend is stored per project in `~/.config/dce-enclave/<name>/config`.
+
+### Backend support policy
+
+DC Enclave targets the **latest stable release** of each backend. If you hit behavior differences on an older version, upgrade the backend first.
+
+- **Podman** — tested baseline at migration: Podman 5.2.x.
+- **Colima** — use Colima with Docker runtime (`colima start --runtime docker`). If Colima is running with a non-Docker runtime (for example containerd), switch back to Docker runtime before using DC Enclave.
 
 ### Platform-specific notes
 
@@ -279,7 +299,7 @@ Selected backend is stored per project in `~/.config/dev-containers/<name>/confi
 
 **Linux + Colima**: Install Colima and Docker CLI, then run `colima start --runtime docker`. Ensure virtualization support is available (for example KVM access where required by your distro setup).
 
-**macOS + Podman**: Podman runs in a VM on macOS. Run `podman machine start` before using dev-containers, or let `setup.sh` start it for you.
+**macOS + Podman**: Podman runs in a VM on macOS. Run `podman machine start` before using DC Enclave, or let `setup.sh` start it for you.
 
 **Linux + Podman**: Podman runs rootless with no daemon. Works out of the box on most distros (`apt install podman`, `dnf install podman`).
 
@@ -288,7 +308,7 @@ Selected backend is stored per project in `~/.config/dev-containers/<name>/confi
 ## Repository layout
 
 ```
-dev-containers/
+dce-enclave/
 ├── Containerfiles/
 │   ├── Containerfile.base
 │   ├── ssh/
@@ -309,11 +329,11 @@ dev-containers/
 │   ├── container-backend.sh            # backend abstraction
 │   └── vscode.sh                       # VS Code attach-config seeding
 ├── scripts/
-│   ├── dc                               # CLI entry point
-│   ├── dc-complete.bash                 # bash tab completion
-│   ├── _dc                              # native zsh tab completion
+│   ├── dce                               # CLI entry point
+│   ├── dce-complete.bash                 # bash tab completion
+│   ├── _dce                              # native zsh tab completion
 │   ├── setup.sh
-│   ├── help.sh                          # per-command help text (dc help <command>)
+│   ├── help.sh                          # per-command help text (dce help <command>)
 │   ├── compose-containerfile.sh
 │   ├── new-container.sh
 │   ├── start.sh
@@ -336,17 +356,17 @@ dev-containers/
 Host-side paths:
 
 - code: ${DC_REPOS_DIR:-$HOME/repos}/<project>
-- secrets: ~/.config/dev-containers/<project>
-- per-project config: ~/.config/dev-containers/<project>/config (backend, image, ports, resource limits, secrets paths)
-- global config: ~/.config/dev-containers/config
-- team root: `DC_TEAM_DIR` (typically `~/.config/dev-containers/team`) — holds `overlays/` and `container-recipes/`
-- user root: `DC_USER_DIR` (typically `~/.config/dev-containers/user`) — holds `overlays/` and `container-recipes/`
+- secrets: ~/.config/dce-enclave/<project>
+- per-project config: ~/.config/dce-enclave/<project>/config (backend, image, ports, resource limits, secrets paths)
+- global config: ~/.config/dce-enclave/config
+- team root: `DC_TEAM_DIR` (typically `~/.config/dce-enclave/team`) — holds `overlays/` and `container-recipes/`
+- user root: `DC_USER_DIR` (typically `~/.config/dce-enclave/user`) — holds `overlays/` and `container-recipes/`
 
 ## Three-source model (repo, team overlays, user overlays)
 
 Keep these sources separate:
 
-1. **dev-containers repo** (`Containerfiles/base + Containerfiles/example`, scripts, docs)
+1. **DC Enclave repo** (`Containerfiles/base + Containerfiles/example`, scripts, docs)
 2. **team overlays source** (files synced into `$DC_TEAM_DIR/overlays`)
 3. **user overlays source** (files synced into `$DC_USER_DIR/overlays`)
 
@@ -356,13 +376,13 @@ Recommended flow:
 
 - keep `$DC_TEAM_DIR` as a git checkout of a private team root repository (overlays + recipes) and update with `git pull`
 - keep `$DC_USER_DIR` as a git checkout of your personal root repository (overlays + recipes) and update with `git pull`
-- keep the public `dev-containers` repository focused on base image definition and reference templates under `Containerfiles/example/`
+- keep the public `DC Enclave` repository focused on base image definition and reference templates under `Containerfiles/example/`
 
 Example setup:
 
 ```
-git clone git@github.com:YOUR-ORG/dev-container-team-root.git "$DC_TEAM_DIR"
-git clone git@github.com:YOUR-USER/dev-container-user-root.git "$DC_USER_DIR"
+git clone git@github.com:YOUR-ORG/dc-enclave-team-root.git "$DC_TEAM_DIR"
+git clone git@github.com:YOUR-USER/dc-enclave-user-root.git "$DC_USER_DIR"
 ```
 
 Then keep them current:
@@ -374,18 +394,18 @@ git -C "$DC_USER_DIR" pull --ff-only
 
 ## Initial setup
 
-**Important**: `setup.sh` builds `dev-base` into the selected backend's image store. Each container backend maintains its own separate image store. If you want to use multiple backends, you must run `setup.sh` once per backend:
+**Important**: `setup.sh` builds `dce-base` into the selected backend's image store. Each container backend maintains its own separate image store. If you want to use multiple backends, you must run `setup.sh` once per backend:
 
 ```
 CONTAINER_BACKEND=docker scripts/setup.sh
 CONTAINER_BACKEND=colima scripts/setup.sh
 ```
 
-Images built on one backend are not visible to another. `dc new` checks for `dev-base:latest` on the active backend and fails early if setup has not been run for that backend.
+Images built on one backend are not visible to another. `dce new` checks for `dce-base:latest` on the active backend and fails early if setup has not been run for that backend.
 
 `setup.sh` also bootstraps global configuration and directories:
 
-- `~/.config/dev-containers/config` with `DC_TEAM_DIR` and `DC_USER_DIR`
+- `~/.config/dce-enclave/config` with `DC_TEAM_DIR` and `DC_USER_DIR`
 - `$DC_TEAM_DIR/overlays` and `$DC_TEAM_DIR/container-recipes`
 - `$DC_USER_DIR/overlays` and `$DC_USER_DIR/container-recipes`
 
@@ -408,8 +428,8 @@ macOS users: if version is 3.x, run `brew install bash`.
 3. Initialize repository and aliases:
 
 ```
-cd ~/dev-containers
-chmod +x scripts/*.sh scripts/dc
+cd ~/dce-enclave
+chmod +x scripts/*.sh scripts/dce
 scripts/setup.sh
 ```
 
@@ -430,49 +450,49 @@ CONTAINER_BACKEND=colima scripts/setup.sh
 
 ### Shell completion
 
-`setup.sh` wires tab completion for `dc` into whichever shell your `$SHELL` points at:
+`setup.sh` wires tab completion for `dce` into whichever shell your `$SHELL` points at:
 
-- **zsh** — setup defines `dc` as a shell function (`dc() { '<repo>/scripts/dc' "$@"; }`) and removes the legacy managed alias line, so `dc` cannot be shadowed by another PATH command. Native completion (`scripts/_dc`, a real `#compdef dc` function) is autoloaded by adding `scripts/` to `fpath` and binding both `dc` and `<repo>/scripts/dc`: `compdef _dc dc '<repo>/scripts/dc'`.
-- **bash** — `scripts/dc-complete.bash` is sourced. Setup writes to `~/.bash_profile` on macOS or `~/.bashrc` elsewhere.
+- **zsh** — setup defines `dce` as a shell function (`dce() { '<repo>/scripts/dce' "$@"; }`) and removes the legacy managed alias line, so `dce` cannot be shadowed by another PATH command. Native completion (`scripts/_dce`, a real `#compdef dce` function) is autoloaded by adding `scripts/` to `fpath` and bound to `dce` with `compdef _dce dce`.
+- **bash** — `scripts/dce-complete.bash` is sourced. Setup writes to `~/.bash_profile` on macOS or `~/.bashrc` elsewhere.
 
 Both front-ends share one discovery layer (`lib/complete-data.sh`), including the hardened global-config parser, so project/scope lists and security guarantees are identical across shells. If you previously bridged the bash completion into zsh by hand, re-running `setup.sh` removes that stale line in favor of native zsh completion.
 
-Completion covers each command's real argument grammar, e.g. `dc start`/`dc stop` complete multiple project names (excluding ones already typed), `dc rebuild-container` offers `--rotate-keys`/`--keep-hidden-volumes`, and `dc install` completes a dotfiles directory after the project.
+Completion covers each command's real argument grammar, e.g. `dce start`/`dce stop` complete multiple project names (excluding ones already typed), `dce rebuild-container` offers `--rotate-keys`/`--keep-hidden-volumes`, and `dce install` completes a dotfiles directory after the project.
 
 ## Setup of a new repo
 
-Use `dc new` (shell command), not direct script invocation.
+Use `dce new` (shell command), not direct script invocation.
 
 Base-only example (no scopes needed — base image plus `Containerfile.all` if present):
 
 ```
-dc new myapp 3000:3000
+dce new myapp 3000:3000
 ```
 
 Single-scope examples (scope names match `Containerfile.<scope>` in your overlay dirs):
 
 ```
-dc new myapp-frontend nodejs 3000:3000 5173:5173
-dc new myapp-backend golang 8080:8080 9000:9000
-dc new work-api golang --repo-path ~/code/company/api 8080:8080
+dce new myapp-frontend nodejs 3000:3000 5173:5173
+dce new myapp-backend golang 8080:8080 9000:9000
+dce new work-api golang --repo-path ~/code/company/api 8080:8080
 ```
 
 Monorepo with multiple overlay scopes and multiple ports:
 
 ```
-dc new myapp-monorepo nodejs,golang 3000:3000 5173:5173 8080:8080 9000:9000
+dce new myapp-monorepo nodejs,golang 3000:3000 5173:5173 8080:8080 9000:9000
 ```
 
 Auto overlays example (`team/all`, `user/all`, plus scope-specific files when present):
 
 ```
-dc new myapp-monorepo nodejs,golang 3000:3000 8080:8080
+dce new myapp-monorepo nodejs,golang 3000:3000 8080:8080
 ```
 
 With resource limits:
 
 ```
-dc new myapp-backend golang --cpus 2 --memory 4g 8080:8080
+dce new myapp-backend golang --cpus 2 --memory 4g 8080:8080
 ```
 
 What scope combinations mean:
@@ -485,7 +505,7 @@ What scope combinations mean:
 
 Overlay contract:
 
-- Treated as Dockerfile fragments layered on top of `dev-base`
+- Treated as Dockerfile fragments layered on top of `dce-base`
 - `FROM` and `CMD` are ignored during composition
 - `COPY` and `ADD` are not allowed (to avoid external build-context coupling)
 
@@ -494,16 +514,16 @@ Starter file note:
 - `Containerfiles/example/Containerfile.all` is a reference template.
 - Copy it into `$DC_TEAM_DIR/overlays` or `$DC_USER_DIR/overlays`, then customize.
 
-After dc new:
+After dce new:
 
-1. Edit ~/.config/dev-containers/<name>/github-token
-2. Add ~/.config/dev-containers/<name>/ssh_key.pub as GitHub Deploy Key
+1. Edit ~/.config/dce-enclave/<name>/github-token
+2. Add ~/.config/dce-enclave/<name>/ssh_key.pub as GitHub Deploy Key
 3. Clone repo(s) into ${DC_REPOS_DIR:-$HOME/repos}/<name>
 
 Port mapping notes:
 
 - Format is host-port:container-port
-- Multiple mappings are supported in one dc new command
+- Multiple mappings are supported in one dce new command
 - Example: 3000:3000 5173:5173 8080:8080
 
 ## CPU and memory limits
@@ -513,24 +533,24 @@ All five backends support per-container CPU and memory limits. Set them at creat
 Set limits at creation:
 
 ```
-dc new myapp nodejs --cpus 2 --memory 4g 3000:3000
+dce new myapp nodejs --cpus 2 --memory 4g 3000:3000
 ```
 
 Omit scope for a base-only project with resource limits:
 
 ```
-dc new myapp --cpus 2 --memory 4g 3000:3000
+dce new myapp --cpus 2 --memory 4g 3000:3000
 ```
 
 Omit both flags to use backend defaults (typically unrestricted).
 
 Change limits on an existing project:
 
-1. Edit `~/.config/dev-containers/<name>/config`
+1. Edit `~/.config/dce-enclave/<name>/config`
 2. Update `CONTAINER_CPUS` and/or `CONTAINER_MEMORY`
-3. Run `dc rebuild-container <name>`
+3. Run `dce rebuild-container <name>`
 
-Resource limits are applied at container creation time. Changes to the config file take effect only after `dc rebuild-container` — `dc start` simply starts the existing container with its existing limits.
+Resource limits are applied at container creation time. Changes to the config file take effect only after `dce rebuild-container` — `dce start` simply starts the existing container with its existing limits.
 
 Config keys:
 
@@ -543,7 +563,7 @@ All backends use the same flag syntax (`--cpus`, `--memory`). No backend-specifi
 
 Each container mirrors its developer's host timezone, so timestamps (`date`, logs, build output) match the local machine. This is applied per-container at creation time — the timezone is **not** baked into the shared image, because a team may span multiple timezones and every developer should see their own.
 
-On `dc new` and `dc rebuild-container`, the host zone is detected and passed to the container as `--env TZ=<zone>`:
+On `dce new` and `dce rebuild-container`, the host zone is detected and passed to the container as `--env TZ=<zone>`:
 
 1. If `$TZ` is set in your shell, that value is used (must be a clean IANA name like `America/New_York`).
 2. Otherwise the zone is read from `/etc/localtime` (works on macOS and Linux hosts).
@@ -552,17 +572,17 @@ On `dc new` and `dc rebuild-container`, the host zone is detected and passed to 
 Override the detected zone for a single command:
 
 ```
-TZ=Europe/Berlin dc new myapp nodejs 3000:3000
+TZ=Europe/Berlin dce new myapp nodejs 3000:3000
 ```
 
 For the base image to resolve a named zone, it ships the IANA timezone database (`tzdata`). This installs only the global database — it does **not** select a zone — so it stays timezone-neutral and safe to share across the team. Picking up `tzdata` after an upgrade requires rebuilding the base image:
 
 ```
-dc rebuild-image base
-dc rebuild-container <name>
+dce rebuild-image base
+dce rebuild-container <name>
 ```
 
-On Docker-compatible backends, `dc new` also writes the detected `TZ` into the generated `.devcontainer/devcontainer.json` (`containerEnv`), so a VS Code "Reopen in Container" build lands on the same timezone as the `dc`-created container.
+On Docker-compatible backends, `dce new` also writes the detected `TZ` into the generated `.devcontainer/devcontainer.json` (`containerEnv`), so a VS Code "Reopen in Container" build lands on the same timezone as the `dce`-created container.
 
 ## Hiding generated paths from the host (`--hide`)
 
@@ -581,8 +601,8 @@ The `--hide` flag solves this by mounting a named container volume over a `/work
 `--hide` accepts one or more comma-separated paths and can be repeated. Paths are relative to `/workspace`:
 
 ```
-dc new myapp nodejs --hide node_modules 3000:3000
-dc new monorepo nodejs,golang \
+dce new myapp nodejs --hide node_modules 3000:3000
+dce new monorepo nodejs,golang \
   --hide node_modules \
   --hide apps/web/node_modules,apps/api/node_modules \
   --hide .cache/go/mod,.cache/go/build \
@@ -591,10 +611,10 @@ dc new monorepo nodejs,golang \
 
 ### How it works
 
-- Each hidden path gets a deterministic named volume (`dc-hide-<project>-<hash>`) mounted at `/workspace/<path>`.
-- After container start, dc ensures the hidden mount points are writable by the `dev` user (root `mkdir`/`chown` fallback applied across all backends).
-- Hidden paths are persisted in the project config (`CONTAINER_HIDDEN_PATHS`) and automatically remounted on `dc rebuild-container`.
-- **`dc rebuild-container` removes hidden volumes by default** for a clean slate (fresh dependency install, no stale caches). Use `--keep-hidden-volumes` to preserve them.
+- Each hidden path gets a deterministic named volume (`dce-hide-<project>-<hash>`) mounted at `/workspace/<path>`.
+- After container start, dce ensures the hidden mount points are writable by the `dev` user (root `mkdir`/`chown` fallback applied across all backends).
+- Hidden paths are persisted in the project config (`CONTAINER_HIDDEN_PATHS`) and automatically remounted on `dce rebuild-container`.
+- **`dce rebuild-container` removes hidden volumes by default** for a clean slate (fresh dependency install, no stale caches). Use `--keep-hidden-volumes` to preserve them.
 - For Docker-compatible backends, hidden mounts are also added to the generated `devcontainer.json` so VS Code Dev Containers uses the same layout.
 
 ### Overlay integration
@@ -625,22 +645,22 @@ This means you get fast, correct dependency sync without any `node_modules` file
 
 ### Cleaning up hidden volumes
 
-Hidden volumes are removed automatically during `dc rebuild-container` (default behavior) so the rebuilt container starts clean. To reclaim space from orphaned volumes left behind by deleted projects:
+Hidden volumes are removed automatically during `dce rebuild-container` (default behavior) so the rebuilt container starts clean. To reclaim space from orphaned volumes left behind by deleted projects:
 
 ```
-dc clean --hidden-volumes --dry-run    # preview what would be removed
-dc clean --hidden-volumes              # remove orphan hidden volumes
-dc clean --hidden-volumes myproject    # scope to one project
+dce clean --hidden-volumes --dry-run    # preview what would be removed
+dce clean --hidden-volumes              # remove orphan hidden volumes
+dce clean --hidden-volumes myproject    # scope to one project
 ```
 
-Only `dc-hide-*` managed volumes that no longer correspond to an active project config are removed.
+Only `dce-hide-*` managed volumes that no longer correspond to an active project config are removed.
 
 ## Monorepo and multi-repo patterns
 
 Monorepo:
 
 - One container, one workspace tree (example: ${DC_REPOS_DIR:-$HOME/repos}/myapp-monorepo)
-- Can combine scopes with dc new ... `<scope1>,<scope2>` ...
+- Can combine scopes with dce new ... `<scope1>,<scope2>` ...
 
 Multi-repo with separate trust boundaries:
 
@@ -656,17 +676,17 @@ Single-container multi-repo workspace:
 
 docker/orbstack/colima/podman backends:
 
-- dc new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json
+- dce new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json
 - For multi-scope and/or overlay projects, it points to a generated composed Containerfile
 - Existing devcontainer.json is not overwritten
-- To attach VS Code to the exact same running container as dc shell, use: Dev Containers: Attach to Running Container... and choose <project>
-- dc new and dc rebuild-container also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
+- To attach VS Code to the exact same running container as dce shell, use: Dev Containers: Attach to Running Container... and choose <project>
+- dce new and dce rebuild-container also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
 - Dev Containers: Reopen in Container may create a separate `vsc-*` container for editor workflows
 
 apple backend:
 
-- dc new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.vscode/settings.json
-- Integrated terminal profile routes through dc shell
+- dce new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.vscode/settings.json
+- Integrated terminal profile routes through dce shell
 - Existing settings.json is not overwritten
 
 VS Code is optional. Alias-based shell workflow is always supported.
@@ -675,11 +695,11 @@ VS Code is optional. Alias-based shell workflow is always supported.
 
 ```
 # status and lifecycle
-dc status
-dc start myapp-monorepo
+dce status
+dce start myapp-monorepo
 
 # shell into the container
-dc shell myapp-monorepo
+dce shell myapp-monorepo
 cd /workspace
 
 # run frontend and backend commands as needed
@@ -687,19 +707,19 @@ npm run dev
 go test ./...
 
 # one-shot command
-dc shell myapp-monorepo "go run ./cmd/server"
+dce shell myapp-monorepo "go run ./cmd/server"
 
 # raw one-off command in the running container (no token/zsh wrapping)
-dc exec myapp-monorepo node -v
+dce exec myapp-monorepo node -v
 
 # check why a container exited (works on stopped containers)
-dc logs myapp-monorepo --tail 100
+dce logs myapp-monorepo --tail 100
 
 # restart (re-applies hidden mounts and SSH key, like stop+start)
-dc restart myapp-monorepo
+dce restart myapp-monorepo
 
 # stop when done
-dc stop myapp-monorepo
+dce stop myapp-monorepo
 ```
 
 ## Daily usage example with VS Code Dev Containers
@@ -714,11 +734,11 @@ code ${DC_REPOS_DIR:-$HOME/repos}/myapp-monorepo
 
 2. Run: Dev Containers: Reopen in Container
 3. Use integrated terminals and editor as usual
-4. Use dc commands for lifecycle/recovery:
+4. Use dce commands for lifecycle/recovery:
 
 ```
-dc status
-dc rebuild-container myapp-monorepo
+dce status
+dce rebuild-container myapp-monorepo
 ```
 
 For apple backend, use normal local folder + generated terminal profile instead of Dev Containers extension.
@@ -728,19 +748,19 @@ For apple backend, use normal local folder + generated terminal profile instead 
 Rebuild container (hidden volumes removed by default for a clean slate):
 
 ```
-dc rebuild-container myapp-monorepo
+dce rebuild-container myapp-monorepo
 ```
 
 Rebuild and rotate SSH key:
 
 ```
-dc rebuild-container myapp-monorepo --rotate-keys
+dce rebuild-container myapp-monorepo --rotate-keys
 ```
 
 Rebuild while preserving hidden volumes (skip dependency re-install):
 
 ```
-dc rebuild-container myapp-monorepo --keep-hidden-volumes
+dce rebuild-container myapp-monorepo --keep-hidden-volumes
 ```
 
 For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. When the project has hidden paths configured, combining `--rotate-keys` with `--keep-hidden-volumes` triggers a loud warning (key rotation implies incident response, where preserving volumes may be unsafe).
@@ -750,71 +770,71 @@ For incident recovery (e.g. suspected supply-chain compromise), always rebuild *
 If you change `Containerfile.base`, rebuild managed images first, then recreate containers:
 
 ```
-dc rebuild-image all
-dc rebuild-container myapp-monorepo
+dce rebuild-image all
+dce rebuild-container myapp-monorepo
 ```
 
 If you change overlay Containerfiles, rebuild managed images then recreate containers:
 
 ```
-dc rebuild-image all
-dc rebuild-container myapp-monorepo
+dce rebuild-image all
+dce rebuild-container myapp-monorepo
 ```
 
-`dc rebuild-image all` rebuilds the shared base image and all derived images selected by configured project scopes.
+`dce rebuild-image all` rebuilds the shared base image and all derived images selected by configured project scopes.
 
-`dc rebuild-container` re-derives the image for that project and recreates only the container.
+`dce rebuild-container` re-derives the image for that project and recreates only the container.
 
 If you changed multiple Containerfiles and want everything refreshed:
 
 ```
-dc rebuild-image all
-dc rebuild-container myapp-monorepo
+dce rebuild-image all
+dce rebuild-container myapp-monorepo
 ```
 
 Notes:
 
-- `dc rebuild-image` is backend-agnostic (apple/colima/docker/orbstack/podman via `CONTAINER_BACKEND` detection/override).
-- `dc rebuild-image all` rebuilds `dev-base` and all configured derived images.
-- `dc rebuild-container <project>` never rebuilds images. If the required image is missing, it fails and instructs you to run `dc rebuild-image all`.
+- `dce rebuild-image` is backend-agnostic (apple/colima/docker/orbstack/podman via `CONTAINER_BACKEND` detection/override).
+- `dce rebuild-image all` rebuilds `dce-base` and all configured derived images.
+- `dce rebuild-container <project>` never rebuilds images. If the required image is missing, it fails and instructs you to run `dce rebuild-image all`.
 
 ## Image provenance
 
-Each derived image (`dev-img-*`) is rebuilt in place and `:latest` is overwritten on every rebuild by design, so to answer *"what state were my overlay repos in when this image was built?"* dev-containers records provenance:
+Each derived image (`dce-img-*`) is rebuilt in place and `:latest` is overwritten on every rebuild by design, so to answer *"what state were my overlay repos in when this image was built?"* DC Enclave records provenance:
 
-- **OCI labels on the image** — `docker image inspect <img>` / `podman image inspect <img>` show `devcontainers.team.git_commit`, `devcontainers.user.git_commit`, `devcontainers.team.content_hash`, `devcontainers.content.hash`, `devcontainers.base.id`, `devcontainers.scopes`, `devcontainers.built.utc`, and `org.opencontainers.image.revision`. Per overlay source (`team/`, `user/`) the git HEAD commit is recorded when that directory is a git checkout; a content fingerprint of the layered files is always recorded.
-- **A per-project log** — `~/.config/dev-containers/<name>/provenance.jsonl` (JSON Lines, owner-only) appends one entry per distinct image state, so the history survives the `:latest` overwrite. It is written when a derived image is actually built (`dc new`, `dc rebuild-image`), not on `dc rebuild-container` (which does not build) or base-only projects.
+- **OCI labels on the image** — `docker image inspect <img>` / `podman image inspect <img>` show `dce.team.git_commit`, `dce.user.git_commit`, `dce.team.content_hash`, `dce.content.hash`, `dce.base.id`, `dce.scopes`, `dce.built.utc`, and `org.opencontainers.image.revision`. Per overlay source (`team/`, `user/`) the git HEAD commit is recorded when that directory is a git checkout; a content fingerprint of the layered files is always recorded.
+- **A per-project log** — `~/.config/dce-enclave/<name>/provenance.jsonl` (JSON Lines, owner-only) appends one entry per distinct image state, so the history survives the `:latest` overwrite. It is written when a derived image is actually built (`dce new`, `dce rebuild-image`), not on `dce rebuild-container` (which does not build) or base-only projects.
 
 Read it back with:
 
 ```
-dc provenance myapp                 # current build's provenance (pretty)
-dc provenance myapp --history       # full timeline as a table
-dc status                           # one-line provenance summary per project
+dce provenance myapp                 # current build's provenance (pretty)
+dce provenance myapp --history       # full timeline as a table
+dce status                           # one-line provenance summary per project
 ```
 
-To reproduce a build for debugging: read the `team`/`user` commit from `dc provenance`, check it out in the corresponding root (`git -C "$DC_TEAM_DIR" checkout <sha>` or `git -C "$DC_USER_DIR" checkout <sha>`), then `dc rebuild-image all && dc rebuild-container <name>`. A side not under git shows only its content fingerprint — no commit to check out, but the fingerprint still tells you whether your current files match that build.
+To reproduce a build for debugging: read the `team`/`user` commit from `dce provenance`, check it out in the corresponding root (`git -C "$DC_TEAM_DIR" checkout <sha>` or `git -C "$DC_USER_DIR" checkout <sha>`), then `dce rebuild-image all && dce rebuild-container <name>`. A side not under git shows only its content fingerprint — no commit to check out, but the fingerprint still tells you whether your current files match that build.
 
 `git_dirty: true` (label / log) means the image includes uncommitted overlay edits at build time.
 
-## Cleaning old dev-container images
+## Cleaning old DC Enclave images
 
-To clean managed dev-container images:
+To clean managed DC Enclave images:
 
 ```
-dc clean
+dce clean
 ```
 
 Preview only:
 
 ```
-dc clean --dry-run
+dce clean --dry-run
 ```
 
 Safety and cleanup scope:
 
-- `dc clean` is backend-agnostic and uses the active backend (apple/colima/docker/orbstack/podman).
-- It targets managed image repositories (`dev-base` and `dev-img-<hash>`) discovered from current project configs and backend image state.
+- `dce clean` is backend-agnostic and uses the active backend (apple/colima/docker/orbstack/podman).
+- It targets managed image repositories (`dce-base` and `dce-img-<hash>`) discovered from current project configs and backend image state.
 - For expected managed repos, it preserves `:latest` and removes non-latest tags.
 - For orphan managed repos, it removes all tags (including `:latest`).
 - It does not remove unrelated images (for example VS Code `vsc-*` images).
@@ -822,17 +842,17 @@ Safety and cleanup scope:
 
 ## Removing a project
 
-`dc rm` removes a dev container project outright. By default it performs a full teardown:
+`dce rm` removes a dev container project outright. By default it performs a full teardown:
 
 1. stops the container if it is running, then deletes it
-2. removes every managed hidden volume (`dc-hide-<project>-<hash>`)
-3. removes the per-project config + secrets directory (`~/.config/dev-containers/<name>`), including the SSH key, GitHub token, and `.npmrc`
+2. removes every managed hidden volume (`dce-hide-<project>-<hash>`)
+3. removes the per-project config + secrets directory (`~/.config/dce-enclave/<name>`), including the SSH key, GitHub token, and `.npmrc`
 
 ```
-dc rm myapp                       # remove everything (prompts to confirm)
-dc rm myapp --yes                 # remove everything without prompting
-dc rm myapp --keep-config         # remove container + volumes, keep config/secrets
-dc rm myapp --keep-volumes        # remove container + config/secrets, keep volumes
+dce rm myapp                       # remove everything (prompts to confirm)
+dce rm myapp --yes                 # remove everything without prompting
+dce rm myapp --keep-config         # remove container + volumes, keep config/secrets
+dce rm myapp --keep-volumes        # remove container + config/secrets, keep volumes
 ```
 
 Safety notes:
@@ -841,10 +861,10 @@ Safety notes:
   ```
   rm -rf "${DC_REPOS_DIR:-$HOME/repos}/myapp"
   ```
-- `dc rm` is destructive and prompts for confirmation (type `yes`) unless `--yes`/`-y` is given.
-- The project name is validated and the secrets directory's real path is checked to reside under the dev-containers config root, so a symlinked project directory cannot redirect deletion elsewhere.
+- `dce rm` is destructive and prompts for confirmation (type `yes`) unless `--yes`/`-y` is given.
+- The project name is validated and the secrets directory's real path is checked to reside under the DC Enclave config root, so a symlinked project directory cannot redirect deletion elsewhere.
 - If the backend is unreachable, container/volume removal is skipped with a warning, but the config + secrets are still removed (unless `--keep-config`).
-- To wipe only the container filesystem while keeping config and code, use `dc rebuild-container <name>` instead.
+- To wipe only the container filesystem while keeping config and code, use `dce rebuild-container <name>` instead.
 
 ## Personal configuration (dotfiles)
 
@@ -877,7 +897,7 @@ The Dev Containers extension clones or copies your dotfiles and runs the install
 ### Command line (any backend)
 
 ```
-dc install myapp ~/.dotfiles
+dce install myapp ~/.dotfiles
 ```
 
 Copies the dotfiles directory into the running container and executes its `install.sh`. Safe to re-run — idempotent if your install script is. This works with all backends and is the only option for the apple/container backend since it doesn't use the Dev Containers extension.
@@ -886,8 +906,8 @@ Copies the dotfiles directory into the running container and executes its `insta
 
 - Shared essentials → `Containerfile.base`
 - Overlay examples (copy-first templates) → `Containerfiles/example/` (`Containerfile.all`, `Containerfile.nodejs`, `Containerfile.golang`, and any others you add)
-- Preferred day-to-day tools → user overlay Containerfile(s) layered during `dc new`/`dc rebuild-image`
-- Project secrets (PAT, SSH key, .npmrc) → `~/.config/dev-containers/<name>/`
+- Preferred day-to-day tools → user overlay Containerfile(s) layered during `dce new`/`dce rebuild-image`
+- Project secrets (PAT, SSH key, .npmrc) → `~/.config/dce-enclave/<name>/`
 - Personal preferences (git identity, vim, shell) → your dotfiles repo
 
 ### Starter dotfiles
@@ -896,12 +916,12 @@ See `templates/dotfiles/` in this repo for a ready-to-fork example.
 
 ## Troubleshooting
 
-Run `dc doctor` first. It runs read-only preflight checks across the host environment and every detected backend (or one backend / one project if given) and prints a pass/fail per subsystem — bash version, global config and overlay root, backend CLI presence, runtime reachability, Colima context/runtime drift, and a per-backend `dev-base:latest`. It never starts or mutates anything and exits nonzero if anything fails, so it pinpoints drift (Colima context drifted, Podman machine stopped, stale dev-base, wrong bash) in one shot.
+Run `dce doctor` first. It runs read-only preflight checks across the host environment and every detected backend (or one backend / one project if given) and prints a pass/fail per subsystem — bash version, global config and overlay root, backend CLI presence, runtime reachability, Colima context/runtime drift, and a per-backend `dce-base:latest`. It never starts or mutates anything and exits nonzero if anything fails, so it pinpoints drift (Colima context drifted, Podman machine stopped, stale dce-base, wrong bash) in one shot.
 
 ```
-dc doctor              # all detected backends + host checks
-dc doctor colima       # one backend
-dc doctor myapp        # one project + its backend
+dce doctor              # all detected backends + host checks
+dce doctor colima       # one backend
+dce doctor myapp        # one project + its backend
 ```
 
 Bash version too old:
@@ -922,7 +942,7 @@ Need specific backend:
 ```
 CONTAINER_BACKEND=apple scripts/setup.sh
 CONTAINER_BACKEND=colima scripts/setup.sh
-CONTAINER_BACKEND=podman dc new myapp nodejs 3000:3000
+CONTAINER_BACKEND=podman dce new myapp nodejs 3000:3000
 ```
 
 Colima backend issues:
@@ -945,13 +965,13 @@ devcontainer.json or settings.json not overwritten:
 
 Changed ports or resource limits:
 
-- update ~/.config/dev-containers/<name>/config
-- run dc rebuild-container <name>
+- update ~/.config/dce-enclave/<name>/config
+- run dce rebuild-container <name>
 
 SSH auth issues:
 
-- verify ~/.config/dev-containers/<name>/ssh_key and github-token
-- restart with dc start or recreate with dc rebuild-container
+- verify ~/.config/dce-enclave/<name>/ssh_key and github-token
+- restart with dce start or recreate with dce rebuild-container
 
 Podman on macOS not starting:
 
@@ -968,7 +988,7 @@ tests/run-all.sh
 tests/run-all.sh -v   # stream each file's output live
 ```
 
-`tests/smoke.sh` is the lightweight command smoke suite. Help, version, and security-guard checks always run; `dc list`, `dc status`, and `dc clean` checks run when a backend is reachable and are otherwise skipped:
+`tests/smoke.sh` is the lightweight command smoke suite. Help, version, and security-guard checks always run; `dce list`, `dce status`, and `dce clean` checks run when a backend is reachable and are otherwise skipped:
 
 ```
 tests/smoke.sh
@@ -997,7 +1017,7 @@ For podman backend, use `host.containers.internal`:
 postgresql://<user>:<password>@host.containers.internal:5432/<db>
 ```
 
-Note: `dc new` configures podman containers with `host.docker.internal` as an alias, so either hostname works with podman.
+Note: `dce new` configures podman containers with `host.docker.internal` as an alias, so either hostname works with podman.
 
 For this to work, your PostgreSQL instance must allow it:
 
@@ -1008,24 +1028,24 @@ For this to work, your PostgreSQL instance must allow it:
 If you install PostgreSQL client in your overlay Containerfile, verify with:
 
 ```
-dc shell <name> "psql --version"
+dce shell <name> "psql --version"
 ```
 
 ## Private networks between containers
 
-By default dc containers are isolated: they cannot reach each other. To let two
+By default dce containers are isolated: they cannot reach each other. To let two
 containers talk (e.g. an app and its database) **without publishing any port to
 the host**, create a private network and attach both containers to it on purpose:
 
 ```
-dc network create myapp
-dc new myapp-db  --network myapp
-dc new myapp-web --network myapp
+dce network create myapp
+dce new myapp-db  --network myapp
+dce new myapp-web --network myapp
 # myapp-web can now reach myapp-db by name; no -p port publishing required
 ```
 
 Linking is explicit — a container is only reachable from peers that share one of
-its networks. Containers created without `--network` are not dc-linked to anyone.
+its networks. Containers created without `--network` are not dce-linked to anyone.
 
 ### Addressing (peer names)
 
@@ -1043,7 +1063,7 @@ Names are usually all you need. For apps that hardcode an address, pin a static
 IPv4 on the primary network:
 
 ```
-dc new myapp-db --network myapp --ip 10.0.0.10
+dce new myapp-db --network myapp --ip 10.0.0.10
 # or equivalently: --network myapp:10.0.0.10
 ```
 
@@ -1052,16 +1072,16 @@ Static IPs are supported on Docker-compatible backends only (not apple/container
 ### Managing networks
 
 ```
-dc network ls                       # list networks + their dc members
-dc network members myapp            # which projects are on a network
-dc network add myapp myapp-web --ip 10.0.0.20   # attach an existing container
-dc network remove myapp myapp-web   # detach a container
-dc network rm myapp                 # remove (refuses while members exist)
+dce network ls                       # list networks + their dce members
+dce network members myapp            # which projects are on a network
+dce network add myapp myapp-web --ip 10.0.0.20   # attach an existing container
+dce network remove myapp myapp-web   # detach a container
+dce network rm myapp                 # remove (refuses while members exist)
 ```
 
-`dc network add`/`remove` keep the project config in sync, so the membership
-survives `dc rebuild-container`. On apple/container, attach networks at
-`dc new` time (live add/remove and static IPs are not supported, and a container
+`dce network add`/`remove` keep the project config in sync, so the membership
+survives `dce rebuild-container`. On apple/container, attach networks at
+`dce new` time (live add/remove and static IPs are not supported, and a container
 may join a single network).
 
 ### Security note

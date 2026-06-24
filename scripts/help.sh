@@ -21,9 +21,9 @@ source "$ROOT_DIR/lib/common.sh"
 COMMAND="${1:-}"
 
 _show_summary() {
-  echo "dev-containers version $DC_VERSION"
+  echo "DC Enclave version $DC_VERSION"
   echo ""
-  echo "Usage: dc <command> [args]"
+  echo "Usage: dce <command> [args]"
   echo ""
   echo "Commands:"
   echo "  new <name> [scope[,scope...]] [host:container ...]"
@@ -53,13 +53,13 @@ _show_summary() {
   echo "  version                                           Print version (aliases: --version, -v)"
   echo "  help [command]                                    Show this help or detailed help"
   echo ""
-  echo "Run 'dc version' (or 'dc --version' / 'dc -v') to print the version."
-  echo "Run 'dc help <command>' for detailed usage of a specific command."
+  echo "Run 'dce version' (or 'dce --version' / 'dce -v') to print the version."
+  echo "Run 'dce help <command>' for detailed usage of a specific command."
 }
 
 _show_help_new() {
   cat <<'EOF'
-Usage: dc new <name> [scope[,scope...]] [--repo-path <path>]
+Usage: dce new <name> [scope[,scope...]] [--repo-path <path>]
               [--config <path>]
               [--save-team] [--save-user]
               [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]
@@ -69,9 +69,9 @@ Description:
   token placeholder, .npmrc template, and a dedicated workspace mount.
 
   Image selection is scope-driven:
-  - The shared base image is always dev-base:latest.
+  - The shared base image is always dce-base:latest.
   - If effective overlay scopes are present, a deterministic derived image
-    (dev-img-<hash>:latest) is selected.
+    (dce-img-<hash>:latest) is selected.
   - If the derived image does not exist, it is composed and built.
   - If it exists, it is reused.
 
@@ -123,7 +123,7 @@ Options:
                  --hide apps/web/node_modules,apps/api/node_modules
 
   --network <name[,name...]>
-               Attach the container to one or more private dc networks so it can
+               Attach the container to one or more private dce networks so it can
                reach other containers on the same network by name, without
                publishing ports to the host. Each entry is a network name, or
                name:ip to pin a static IPv4. Example: --network myapp,obs
@@ -138,19 +138,19 @@ Options:
               colon-separated pair (e.g. 8080:3000) maps different ports.
 
 Examples:
-  dc new myapp
-  dc new myapp golang
-  dc new myapp node,postgres
-  dc new myapp --config ~/.config/dev-containers/team/container-recipes/api
-  dc new api nodejs --cpus 2 --memory 4g --hide node_modules 3000:3000 --save-team
-  dc new api --cpus 3 --hide .cache --save-user
-  dc new myapp node --repo-path ~/code/myapp
-  dc new myapp --cpus 2 --memory 4g --hide node_modules 5173:5173
-  dc new monorepo nodejs,golang --hide apps/web/node_modules --hide .cache/go/mod,.cache/go/build
+  dce new myapp
+  dce new myapp golang
+  dce new myapp node,postgres
+  dce new myapp --config ~/.config/dce-enclave/team/container-recipes/api
+  dce new api nodejs --cpus 2 --memory 4g --hide node_modules 3000:3000 --save-team
+  dce new api --cpus 3 --hide .cache --save-user
+  dce new myapp node --repo-path ~/code/myapp
+  dce new myapp --cpus 2 --memory 4g --hide node_modules 5173:5173
+  dce new monorepo nodejs,golang --hide apps/web/node_modules --hide .cache/go/mod,.cache/go/build
 
 Notes:
-  - The base image 'dev-base:latest' must exist. Run scripts/setup.sh first.
-  - Config is stored in ~/.config/dev-containers/<name>/config
+  - The base image 'dce-base:latest' must exist. Run scripts/setup.sh first.
+  - Config is stored in ~/.config/dce-enclave/<name>/config
   - Secrets (SSH key, GitHub token, .npmrc) are stored alongside the config
     with restrictive permissions (chmod 600/700).
   - For Docker-compatible backends, a .devcontainer/devcontainer.json is
@@ -160,7 +160,7 @@ EOF
 
 _show_help_start() {
   cat <<'EOF'
-Usage: dc start [name ...]
+Usage: dce start [name ...]
 
 Description:
   Starts one or more dev containers. If no project name is given, all
@@ -177,26 +177,26 @@ Arguments:
               containers are started.
 
 Examples:
-  dc start              Start all containers
-  dc start myapp        Start only myapp
-  dc start web api db   Start multiple containers
+  dce start              Start all containers
+  dce start myapp        Start only myapp
+  dce start web api db   Start multiple containers
 
 Notes:
-  - The project must already exist (created via 'dc new').
-  - Run 'dc status' afterwards to verify running state.
+  - The project must already exist (created via 'dce new').
+  - Run 'dce status' afterwards to verify running state.
 EOF
 }
 
 _show_help_stop() {
   cat <<'EOF'
-Usage: dc stop [name ...]
+Usage: dce stop [name ...]
 
 Description:
   Stops one or more dev containers. If no project name is given, all
   configured containers are stopped.
 
   Stopping preserves the container filesystem - the container can be restarted
-  with 'dc start' without data loss. Use 'dc rebuild-container' to fully
+  with 'dce start' without data loss. Use 'dce rebuild-container' to fully
   destroy and recreate a container.
 
 Arguments:
@@ -204,9 +204,9 @@ Arguments:
               containers are stopped.
 
 Examples:
-  dc stop              Stop all containers
-  dc stop myapp        Stop only myapp
-  dc stop web api db   Stop multiple containers
+  dce stop              Stop all containers
+  dce stop myapp        Stop only myapp
+  dce stop web api db   Stop multiple containers
 
 Notes:
   - If a container is already stopped, it is reported as such (no error).
@@ -216,7 +216,7 @@ EOF
 
 _show_help_status() {
   cat <<'EOF'
-Usage: dc status
+Usage: dce status
 
 Description:
   Shows detailed status of all configured dev containers, including:
@@ -234,46 +234,46 @@ Arguments:
   (none)
 
 Aliases:
-  s         dc s is equivalent to dc status
+  s         dce s is equivalent to dce status
 
 Examples:
-  dc status
-  dc s
+  dce status
+  dce s
 
 Notes:
   - Requires a reachable container backend to show live state.
-  - Use 'dc list' for a compact summary instead.
+  - Use 'dce list' for a compact summary instead.
 EOF
 }
 
 _show_help_list() {
   cat <<'EOF'
-Usage: dc list
+Usage: dce list
 
 Description:
   Prints a compact one-line-per-container summary showing the container name
   and its running/stopped state. Useful for a quick overview without the
-  detail provided by 'dc status'.
+  detail provided by 'dce status'.
 
 Arguments:
   (none)
 
 Aliases:
-  ls        dc ls is equivalent to dc list
+  ls        dce ls is equivalent to dce list
 
 Examples:
-  dc list
-  dc ls
+  dce list
+  dce ls
 
 Notes:
   - Requires a reachable container backend.
-  - Only shows containers managed by dev-containers (prefixed with 'dev-').
+  - Only shows containers managed by DC Enclave (prefixed with 'dce-').
 EOF
 }
 
 _show_help_shell() {
   cat <<'EOF'
-Usage: dc shell <name> [command]
+Usage: dce shell <name> [command]
 
 Description:
   Opens an interactive shell inside a dev container. If the container is not
@@ -293,12 +293,12 @@ Arguments:
              shell config are loaded.
 
 Examples:
-  dc shell myapp                         Open an interactive zsh session
-  dc shell myapp "git pull"              Run a single command and exit
-  dc shell myapp "npm install && npm run dev"
+  dce shell myapp                         Open an interactive zsh session
+  dce shell myapp "git pull"              Run a single command and exit
+  dce shell myapp "npm install && npm run dev"
 
 Notes:
-  - If the container is stopped, 'dc start' is called automatically.
+  - If the container is stopped, 'dce start' is called automatically.
   - The workspace directory /workspace is mounted from the host repos dir.
   - GITHUB_TOKEN is available if the token file has been filled in.
 EOF
@@ -306,17 +306,17 @@ EOF
 
 _show_help_logs() {
   cat <<'EOF'
-Usage: dc logs <name> [-f|--follow] [--tail N]
+Usage: dce logs <name> [-f|--follow] [--tail N]
 
 Description:
   Fetches a container's stdout/stderr log stream from the backend's log
   driver. This is the container process output (entrypoint, startup banners,
   the Node overlay's npm-install sentinel, credential-injection messages from
-  `dc start`, and crash output) - none of which is visible from an interactive
+  `dce start`, and crash output) - none of which is visible from an interactive
   shell or a VS Code terminal attached to the container.
 
   Works on stopped containers, so a container that failed to start (or exited
-  shortly after) can be diagnosed: run `dc logs <name>` after `dc start`
+  shortly after) can be diagnosed: run `dce logs <name>` after `dce start`
   reports the container is no longer running.
 
 Arguments:
@@ -330,21 +330,21 @@ Options:
              May also be given as --tail=N.
 
 Examples:
-  dc logs myapp                       Dump the full log stream once
-  dc logs myapp --tail 100            Last 100 lines
-  dc logs myapp -f                    Follow live output
-  dc logs myapp --follow --tail 50    Last 50 lines, then follow
+  dce logs myapp                       Dump the full log stream once
+  dce logs myapp --tail 100            Last 100 lines
+  dce logs myapp -f                    Follow live output
+  dce logs myapp --follow --tail 50    Last 50 lines, then follow
 
 Notes:
-  - Flag support (-f, --tail) depends on the backend version. dev-containers
+  - Flag support (-f, --tail) depends on the backend version. DC Enclave
     targets the latest stable release of each backend.
-  - To see container state rather than logs, use `dc status` or `dc list`.
+  - To see container state rather than logs, use `dce status` or `dce list`.
 EOF
 }
 
 _show_help_exec() {
   cat <<'EOF'
-Usage: dc exec [--root] <name> <command...>
+Usage: dce exec [--root] <name> <command...>
 
 Description:
   Runs a single command in a running container, docker-exec style: the command
@@ -354,12 +354,12 @@ Description:
   A TTY is allocated automatically only when both stdin and stdout are
   interactive, so piped commands are not corrupted:
 
-      dc exec myapp cat /etc/os-release | grep PRETTY
-      dc exec myapp top            # interactive -> gets a TTY
+      dce exec myapp cat /etc/os-release | grep PRETTY
+      dce exec myapp top            # interactive -> gets a TTY
 
-  This is distinct from `dc shell <name> "command"`, which wraps the command
+  This is distinct from `dce shell <name> "command"`, which wraps the command
   in zsh -ic (loading aliases/interactive config) and seeds GITHUB_TOKEN. Use
-  `dc shell` for token-dependent or alias-dependent one-shots; use `dc exec`
+  `dce shell` for token-dependent or alias-dependent one-shots; use `dce exec`
   for raw, scriptable commands.
 
 Arguments:
@@ -374,22 +374,22 @@ Options:
                 the same root-exec path rebuild-container uses.
 
 Examples:
-  dc exec myapp whoami
-  dc exec myapp node -v
-  dc exec myapp ls -la /workspace
-  dc exec --root myapp chown -R dev:dev /workspace/build
+  dce exec myapp whoami
+  dce exec myapp node -v
+  dce exec myapp ls -la /workspace
+  dce exec --root myapp chown -R dev:dev /workspace/build
 
 Notes:
-  - The container must be running. Start it first with `dc start <name>`.
+  - The container must be running. Start it first with `dce start <name>`.
   - --root never allocates a TTY; for a root interactive session, use
-    `dc shell <name>` and then `sudo`.
-  - For an interactive dev shell, use `dc shell <name>`.
+    `dce shell <name>` and then `sudo`.
+  - For an interactive dev shell, use `dce shell <name>`.
 EOF
 }
 
 _show_help_restart() {
   cat <<'EOF'
-Usage: dc restart [name ...]
+Usage: dce restart [name ...]
 
 Description:
   Restarts one or more dev containers. If no project name is given, all
@@ -398,35 +398,35 @@ Description:
   Implemented as stop -> start, so it reuses the proven per-project flows:
   backend bring-up, hidden-volume re-verification (important on backends like
   OrbStack), and SSH-key re-injection all apply. Functionally equivalent to
-  `dc stop <name> && dc start <name>`.
+  `dce stop <name> && dce start <name>`.
 
 Arguments:
   [name ...]  One or more project names to restart. If omitted, all
               configured containers are restarted.
 
 Examples:
-  dc restart              Restart all containers
-  dc restart myapp        Restart only myapp
-  dc restart web api db   Restart multiple containers
+  dce restart              Restart all containers
+  dce restart myapp        Restart only myapp
+  dce restart web api db   Restart multiple containers
 
 Notes:
   - A stopped container is started; a running container is stopped and started.
   - Restarting preserves the container filesystem (no rebuild). Use
-    `dc rebuild-container` to recreate from the image.
+    `dce rebuild-container` to recreate from the image.
 EOF
 }
 
 _show_help_rm() {
   cat <<'EOF'
-Usage: dc rm <name> [--yes|-y] [--keep-config] [--keep-volumes]
+Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]
 
 Description:
   Removes a dev container project. By default this performs a full teardown:
 
     1. stops the container if it is running, then deletes it
-    2. removes every managed hidden volume (dc-hide-<project>-<hash>)
+    2. removes every managed hidden volume (dce-hide-<project>-<hash>)
     3. removes the per-project config + secrets directory
-       (~/.config/dev-containers/<name>), including the SSH key, GitHub token,
+       (~/.config/dce-enclave/<name>), including the SSH key, GitHub token,
        and .npmrc
 
   Your host code directory ($REPOS_DIR) is NEVER touched by this command.
@@ -447,25 +447,25 @@ Arguments:
   <name>     Project/container name.
 
 Examples:
-  dc rm myapp                       Remove everything (prompts to confirm)
-  dc rm myapp --yes                 Remove everything without prompting
-  dc rm myapp --keep-config         Remove container + volumes, keep config/secrets
-  dc rm myapp --keep-volumes        Remove container + config/secrets, keep volumes
+  dce rm myapp                       Remove everything (prompts to confirm)
+  dce rm myapp --yes                 Remove everything without prompting
+  dce rm myapp --keep-config         Remove container + volumes, keep config/secrets
+  dce rm myapp --keep-volumes        Remove container + config/secrets, keep volumes
 
 Notes:
   - Host code at $REPOS_DIR is preserved. Remove it manually if no longer
     needed:  rm -rf "${DC_REPOS_DIR:-$HOME/repos}/<name>"
   - The generated .devcontainer/devcontainer.json lives under $REPOS_DIR and is
     likewise preserved.
-  - To recreate a removed project, run `dc new <name> [scope] ...` again.
+  - To recreate a removed project, run `dce new <name> [scope] ...` again.
   - To wipe only the container filesystem while keeping config and code, use
-    `dc rebuild-container <name>` instead.
+    `dce rebuild-container <name>` instead.
 EOF
 }
 
 _show_help_rebuild_container() {
   cat <<'EOF'
-Usage: dc rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]
+Usage: dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]
 
 Description:
   Destroys a container and recreates it from its selected image.
@@ -482,7 +482,7 @@ Description:
 
   If the required image is missing, the command fails before destruction and
   instructs you to run:
-    dc rebuild-image all
+    dce rebuild-image all
 
 Arguments:
   <name>     Project/container name. Must already exist.
@@ -504,71 +504,71 @@ Options:
               preserving volumes may be unsafe.
 
 Examples:
-  dc rebuild-container myapp
-  dc rebuild-container myapp --rotate-keys
-  dc rebuild-container myapp --keep-hidden-volumes
-  dc rebuild-container myapp --rotate-keys --keep-hidden-volumes
+  dce rebuild-container myapp
+  dce rebuild-container myapp --rotate-keys
+  dce rebuild-container myapp --keep-hidden-volumes
+  dce rebuild-container myapp --rotate-keys --keep-hidden-volumes
 
 Notes:
   - This is DESTRUCTIVE to the container filesystem. Uncommitted work inside
     the container will be lost. Commit or push from the host repos dir first.
   - Your code on the host ($REPOS_DIR) is safe - it is a bind mount.
   - Hidden volumes are removed by default unless --keep-hidden-volumes is set.
-  - Re-apply dotfiles after rebuild with 'dc install <name> <path>'.
+  - Re-apply dotfiles after rebuild with 'dce install <name> <path>'.
   - You will be prompted to type 'yes' to confirm before destruction.
 EOF
 }
 
 _show_help_rebuild_image() {
   cat <<'EOF'
-Usage: dc rebuild-image [all|base]
+Usage: dce rebuild-image [all|base]
 
 Description:
   Rebuilds managed images for the active backend.
 
 Arguments:
   [all|base]
-    all  Rebuild dev-base:latest and all configured derived images
+    all  Rebuild dce-base:latest and all configured derived images
          (default)
-    base Rebuild dev-base:latest only
+    base Rebuild dce-base:latest only
 
 Examples:
-  dc rebuild-image
-  dc rebuild-image all
-  dc rebuild-image base
+  dce rebuild-image
+  dce rebuild-image all
+  dce rebuild-image base
 
 Notes:
   - Requires a reachable container backend.
   - 'all' scans all project configs and rebuilds every derived image currently
     selected by configured scope sets.
-  - After rebuilding images, run 'dc rebuild-container <name>' for containers
+  - After rebuilding images, run 'dce rebuild-container <name>' for containers
     you want to recreate.
 EOF
 }
 
 _show_help_provenance() {
   cat <<'EOF'
-Usage: dc provenance <project> [--history|--all]
+Usage: dce provenance <project> [--history|--all]
 
 Description:
   Shows the provenance of a project's current image: the team and user overlay
   state that produced it. For each overlay source (team/, user/) it reports the
   git HEAD commit (when that directory is a git checkout) and a content
   fingerprint of the layered files (always available), plus the base image id,
-  scope list, dev-containers version, and build time.
+  scope list, DC Enclave version, and build time.
 
   This lets you answer "what state were my overlay repos in when this image was
   built?" without archaeology: read the team/user commit, check it out in the
   overlay repo, and rebuild to reproduce a build for debugging.
 
   The same data is stamped on the image as OCI labels
-  (devcontainers.team.git_commit, devcontainers.content.hash, ...), so it is
+  (dce.team.git_commit, dce.content.hash, ...), so it is
   also available via `docker image inspect` / `podman image inspect`.
 
 Source:
-  The per-project append-only log ~/.config/dev-containers/<project>/provenance.jsonl,
-  written by `dc new` and `dc rebuild-image` whenever a derived image is built.
-  (dc rebuild-container does not build images and so does not log.)
+  The per-project append-only log ~/.config/dce-enclave/<project>/provenance.jsonl,
+  written by `dce new` and `dce rebuild-image` whenever a derived image is built.
+  (dce rebuild-container does not build images and so does not log.)
 
 Arguments:
   <project>   Project/container name. Must already exist.
@@ -584,8 +584,8 @@ Output:
   printed so the command never hard-requires jq.
 
 Examples:
-  dc provenance myapp                 Show the current image's provenance
-  dc provenance myapp --history       Show the full build timeline
+  dce provenance myapp                 Show the current image's provenance
+  dce provenance myapp --history       Show the full build timeline
 
 Notes:
   - A project created before provenance logging existed has no log; the command
@@ -599,9 +599,9 @@ EOF
 
 _show_help_clean() {
   cat <<'EOF'
-Usage: dc clean [--dry-run]
+Usage: dce clean [--dry-run]
 
-       dc clean [--dry-run] [--hidden-volumes [name]]
+       dce clean [--dry-run] [--hidden-volumes [name]]
 
 Description:
   Cleans managed image tags and orphan managed image repos.
@@ -609,10 +609,10 @@ Description:
   Hidden volume mode:
   - --hidden-volumes enables orphan hidden-volume cleanup.
   - Optional [name] scopes cleanup to one project.
-  - Hidden volume names are managed as dc-hide-<project>-<hash>.
+  - Hidden volume names are managed as dce-hide-<project>-<hash>.
 
   Rules:
-  - Expected managed repos (dev-base + currently configured derived repos):
+  - Expected managed repos (dce-base + currently configured derived repos):
     keep latest, remove non-latest tags.
   - Orphan managed repos (no longer expected):
     remove all tags, including latest.
@@ -625,13 +625,13 @@ Options:
               Optional trailing project name narrows cleanup to one project.
 
 Examples:
-  dc clean --dry-run
-  dc clean
-  dc clean --hidden-volumes --dry-run
-  dc clean --hidden-volumes myproject
+  dce clean --dry-run
+  dce clean
+  dce clean --hidden-volumes --dry-run
+  dce clean --hidden-volumes myproject
 
 Notes:
-  - Managed repos are dev-base and dev-img-<16hex>.
+  - Managed repos are dce-base and dce-img-<16hex>.
   - Images currently in use may fail to remove; those failures are reported.
   - Hidden volume cleanup removes only orphan managed hidden volumes.
   - Requires a reachable container backend.
@@ -640,17 +640,17 @@ EOF
 
 _show_help_network() {
   cat <<'EOF'
-Usage: dc network <create|ls|members|rm|add|remove> ...
+Usage: dce network <create|ls|members|rm|add|remove> ...
 
 Description:
-  Manages private networks that let dc containers talk to each other without
+  Manages private networks that let dce containers talk to each other without
   publishing any port to the host. Linking is explicit: containers are isolated
   by default and only reach peers when placed on the same network on purpose.
 
   Create a network, then attach containers to it:
-    dc network create myapp
-    dc new myapp-db --network myapp
-    dc new myapp-web --network myapp
+    dce network create myapp
+    dce new myapp-db --network myapp
+    dce new myapp-web --network myapp
     # now myapp-web can reach myapp-db by name (no port published)
 
 Addressing:
@@ -664,11 +664,11 @@ Subcommands:
                               Create a private network. The subnet is
                               auto-allocated unless --subnet is given.
 
-  ls | list                   List networks and their dc members.
+  ls | list                   List networks and their dce members.
 
   members <name>              Show which projects are on a network.
 
-  rm <name> [--force]         Remove a network. Refuses while dc projects still
+  rm <name> [--force]         Remove a network. Refuses while dce projects still
                               reference it; --force disconnects them first
                               (Docker-compatible backends only) and warns that
                               their configs still reference the network.
@@ -682,16 +682,16 @@ Subcommands:
                               the project config. Docker-compatible backends only.
 
 Notes:
-  - Networks are daemon objects; use `dc network ls` to see them.
-  - On apple/container, use --network at `dc new` time (live add/remove and
+  - Networks are daemon objects; use `dce network ls` to see them.
+  - On apple/container, use --network at `dce new` time (live add/remove and
     static IPs are not supported); a single network per container.
-  - Containers with no --network are not linked to any dc peer.
+  - Containers with no --network are not linked to any dce peer.
 EOF
 }
 
 _show_help_install() {
   cat <<'EOF'
-Usage: dc install <name> <path>
+Usage: dce install <name> <path>
 
 Description:
   Copies a dotfiles directory into a running container and executes its
@@ -709,12 +709,12 @@ Arguments:
            resolved automatically.
 
 Examples:
-  dc install myapp ~/dotfiles
-  dc install myapp ~/.config/zsh
-  dc install myapp ../my-dotfiles-repo
+  dce install myapp ~/dotfiles
+  dce install myapp ~/.config/zsh
+  dce install myapp ../my-dotfiles-repo
 
 Notes:
-  - The container must be running. Start it first with 'dc start <name>'.
+  - The container must be running. Start it first with 'dce start <name>'.
   - The dotfiles directory must contain an install.sh file.
   - Re-run after any rebuild to reapply your personal config.
   - install.sh runs as the 'dev' user inside the container.
@@ -723,14 +723,14 @@ EOF
 
 _show_help_doctor() {
   cat <<'EOF'
-Usage: dc doctor [backend|project]
+Usage: dce doctor [backend|project]
 
 Description:
   Runs read-only preflight checks and prints pass/fail per subsystem, so you get
-  a single diagnosis instead of assembling one from `dc status` plus tribal
+  a single diagnosis instead of assembling one from `dce status` plus tribal
   knowledge. It catches the common drift classes: wrong bash version, missing or
   broken global config / overlay root, a missing backend CLI, an unreachable
-  runtime, a stale or missing dev-base image, Colima context drift, a non-docker
+  runtime, a stale or missing dce-base image, Colima context drift, a non-docker
   Colima runtime, and (for a project) a broken config, missing image, or missing
   secrets.
 
@@ -739,12 +739,12 @@ Description:
   the exact command to run for each failure.
 
   The exit code is nonzero if any check fails, so doctor is CI- and
-  preflight-friendly: `dc doctor && dc start` only proceeds when healthy.
+  preflight-friendly: `dce doctor && dce start` only proceeds when healthy.
 
 Scope:
   (none)        Every detected backend CLI, plus host checks (bash, global
                 config, overlays). Each backend gets its own section with
-                CLI / runtime / Colima-specific / dev-base checks.
+                CLI / runtime / Colima-specific / dce-base checks.
   <backend>     One of: apple, docker, orbstack, colima, podman.
   <project>     A configured project name: checks that project's backend plus
                 project-specific state (config loads, image present, secrets
@@ -754,16 +754,16 @@ Arguments:
   [backend|project]
                 Optional scope. A known backend name selects that backend; any
                 other name is treated as a project (it must have a config under
-                ~/.config/dev-containers/<name>/config). An unknown name errors.
+                ~/.config/dce-enclave/<name>/config). An unknown name errors.
 
 Examples:
-  dc doctor              check all detected backends + host environment
-  dc doctor colima       check only the Colima backend
-  dc doctor myapp        check the myapp project and its backend
+  dce doctor              check all detected backends + host environment
+  dce doctor colima       check only the Colima backend
+  dce doctor myapp        check the myapp project and its backend
 
 Notes:
   - Read-only: no daemon/machine is started and nothing is written.
-  - Per-backend image stores are independent; a missing dev-base is reported per
+  - Per-backend image stores are independent; a missing dce-base is reported per
     backend (run CONTAINER_BACKEND=<b> scripts/setup.sh to build it there).
   - Container state for a project is informational only (a stopped project is
     normal) and does not count as a failure.
@@ -772,7 +772,7 @@ EOF
 
 _show_help_help() {
   cat <<'EOF'
-Usage: dc help [command]
+Usage: dce help [command]
 
 Description:
   Displays help information. With no argument, shows a summary of all
@@ -785,38 +785,38 @@ Arguments:
               rebuild-container, rebuild-image, provenance, clean, doctor, network, install, version, help
 
 Aliases:
-  --help     Same as 'dc help'
-  -h         Same as 'dc help'
+  --help     Same as 'dce help'
+  -h         Same as 'dce help'
 
 Examples:
-  dc help
-  dc help install
-  dc help rebuild-container
+  dce help
+  dce help install
+  dce help rebuild-container
 
 Notes:
-  - Running 'dc' with no arguments also shows the summary.
+  - Running 'dce' with no arguments also shows the summary.
 EOF
 }
 
 _show_help_version() {
   cat <<'EOF'
-Usage: dc version
+Usage: dce version
 
 Description:
-  Prints the dev-containers version and exits.
+  Prints the DC Enclave version and exits.
 
 Aliases:
-  --version   same as 'dc version'
-  -v          same as 'dc version'
+  --version   same as 'dce version'
+  -v          same as 'dce version'
 
 Examples:
-  dc version
-  dc --version
-  dc -v
+  dce version
+  dce --version
+  dce -v
 
 Notes:
   - The version string is the single source of truth in lib/common.sh (DC_VERSION).
-  - It is bumped in the same commit that tags a release (e.g. git tag v0.1.0).
+  - It is bumped in the same commit that tags a release (e.g. git tag v0.2.0).
 EOF
 }
 
@@ -847,7 +847,7 @@ case "$COMMAND" in
   help|--help|-h)     _show_help_help ;;
   *)
     echo "Unknown command: $COMMAND"
-    echo "Run 'dc help' for a list of available commands."
+    echo "Run 'dce help' for a list of available commands."
     exit 1
     ;;
 esac

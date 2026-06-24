@@ -24,7 +24,7 @@
 #   4. The example README documents the trusted-vs-untrusted matrix, the safe
 #      evaluation recipe, and per-overlay --hide paths.
 #   5. scripts/compose-containerfile.sh strips per-overlay ENTRYPOINT lines and
-#      emits exactly one chained ENTRYPOINT runner over dc-*-entrypoint.sh.
+#      emits exactly one chained ENTRYPOINT runner over dce-*-entrypoint.sh.
 #
 # Entrypoint scripts are embedded in their Containerfile via a heredoc, so the
 # convention tokens are grepped directly against the Containerfile text.
@@ -70,11 +70,11 @@ assert_absent() {
 # Per-overlay expectations. Fields:
 #   scope | entrypoint script | STRICT env | IGNORE_SCRIPTS env (or "")
 declare -a OVERLAYS=(
-  "nodejs|dc-node-entrypoint.sh|DC_NODE_INSTALL_STRICT|DC_NODE_IGNORE_SCRIPTS"
-  "golang|dc-go-entrypoint.sh|DC_GO_INSTALL_STRICT|"
-  "rust|dc-rust-entrypoint.sh|DC_RUST_INSTALL_STRICT|"
-  "dotnet|dc-dotnet-entrypoint.sh|DC_DOTNET_INSTALL_STRICT|"
-  "python|dc-python-entrypoint.sh|DC_PYTHON_INSTALL_STRICT|DC_PYTHON_IGNORE_SCRIPTS"
+  "nodejs|dce-node-entrypoint.sh|DC_NODE_INSTALL_STRICT|DC_NODE_IGNORE_SCRIPTS"
+  "golang|dce-go-entrypoint.sh|DC_GO_INSTALL_STRICT|"
+  "rust|dce-rust-entrypoint.sh|DC_RUST_INSTALL_STRICT|"
+  "dotnet|dce-dotnet-entrypoint.sh|DC_DOTNET_INSTALL_STRICT|"
+  "python|dce-python-entrypoint.sh|DC_PYTHON_INSTALL_STRICT|DC_PYTHON_IGNORE_SCRIPTS"
 )
 
 # Toolchain overlays that must be multi-arch with pinned per-arch checksums.
@@ -136,8 +136,8 @@ done
 # --- (4) compose owns a single chained ENTRYPOINT -----------------------------
 COMPOSE="$ROOT_DIR/scripts/compose-containerfile.sh"
 assert_file "compose: strips per-overlay ENTRYPOINT" 'toupper\(\$1\) == "ENTRYPOINT"' "$COMPOSE"
-assert_file "compose: emits runner ENTRYPOINT" '/home/dev/.local/bin/dc-entrypoint' "$COMPOSE"
-assert_file "compose: runner chains dc-*-entrypoint.sh" 'dc-\*-entrypoint\.sh' "$COMPOSE"
+assert_file "compose: emits runner ENTRYPOINT" '/home/dev/.local/bin/dce-entrypoint' "$COMPOSE"
+assert_file "compose: runner chains dce-*-entrypoint.sh" 'dce-\*-entrypoint\.sh' "$COMPOSE"
 
 # --- (5) example README: trust matrix + safe recipe + hide paths --------------
 readme="$EX/README.md"

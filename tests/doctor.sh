@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/doctor.sh - `dc doctor` preflight diagnostics coverage.
+# tests/doctor.sh - `dce doctor` preflight diagnostics coverage.
 #
 # doctor runs read-only probes across the host environment and each detected
 # backend CLI (and optionally a single backend or project). This test installs
@@ -9,12 +9,12 @@
 # across host / all-backends / single-backend / project scopes.
 #
 # The stub is env-driven so each scenario flips one knob (runtime up/down,
-# context drift, missing dev-base) and re-runs `dc doctor`.
+# context drift, missing dce-base) and re-runs `dce doctor`.
 # =============================================================================
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DC_BIN="$ROOT_DIR/scripts/dc"
+DC_BIN="$ROOT_DIR/scripts/dce"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
@@ -31,7 +31,7 @@ chmod 700 "$WORK"
 #   DC_STUB_DOCKER_CONTEXTS        (newline list for `docker context ls`)
 #   DC_STUB_DOCKER_CONTEXT_ACTIVE  (what `docker context show` returns when
 #                                   DOCKER_CONTEXT is unset)
-#   DC_STUB_HAS_DEVBASE            (image ls emits dev-base:latest)
+#   DC_STUB_HAS_DEVBASE            (image ls emits dce-base:latest)
 #   DC_STUB_CONTAINERS             (newline list for `docker ps`)
 # ---------------------------------------------------------------------------
 STUB_DIR="$WORK/bin"
@@ -56,8 +56,8 @@ case "$name" in
         exit 0 ;;
       image)
         if [[ "${2:-}" == "ls" ]]; then
-          [[ "${DC_STUB_HAS_DEVBASE:-1}" == "1" ]] && printf 'dev-base:latest\n'
-          printf 'dev-img-aaaaaaaaaaaaaaaa:latest\n'
+          [[ "${DC_STUB_HAS_DEVBASE:-1}" == "1" ]] && printf 'dce-base:latest\n'
+          printf 'dce-img-aaaaaaaaaaaaaaaa:latest\n'
           exit 0
         fi
         exit 0 ;;
@@ -70,7 +70,7 @@ case "$name" in
       --version) echo "container stub 1.0"; exit 0 ;;
       image)
         if [[ "${2:-}" == "ls" ]]; then
-          [[ "${DC_STUB_HAS_DEVBASE:-1}" == "1" ]] && printf 'dev-base:latest\n'
+          [[ "${DC_STUB_HAS_DEVBASE:-1}" == "1" ]] && printf 'dce-base:latest\n'
           exit 0
         fi
         exit 0 ;;
@@ -83,7 +83,7 @@ case "$name" in
       --version) echo "podman 99.0 (stub)"; exit 0 ;;
       image)
         if [[ "${2:-}" == "ls" ]]; then
-          [[ "${DC_STUB_HAS_DEVBASE:-1}" == "1" ]] && printf 'dev-base:latest\n'
+          [[ "${DC_STUB_HAS_DEVBASE:-1}" == "1" ]] && printf 'dce-base:latest\n'
           exit 0
         fi
         exit 0 ;;
@@ -111,7 +111,7 @@ done
 
 # Shared fake HOME with a healthy global config + overlays.
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dev-containers"
+DC_ROOT="$HOME/.config/dce-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -156,7 +156,7 @@ ORIG_PATH_NO_COLIMA="$(path_without_cmd colima "$ORIG_PATH")"
 export DC_STUB_DOCKER_CONTEXTS="default colima"
 export DC_STUB_DOCKER_CONTEXT_ACTIVE=colima
 
-# Run `dc doctor` with the current PATH/HOME and a clean backend override.
+# Run `dce doctor` with the current PATH/HOME and a clean backend override.
 # Called DIRECTLY (not via $()) so the exit code reaches the caller's shell:
 # the captured text lands in $RUN_OUT and the exit code in $RUN_RC. (Calling it
 # inside $() would run it in a subshell and lose $RUN_RC.)
@@ -241,9 +241,9 @@ for b in docker podman apple; do
   [[ "$out" == *"Backend: $b"* ]] || fail "all-mode missing Backend: $b section
 $out"
 done
-[[ "$out" == *"dev-base:latest"* ]] || fail "per-backend dev-base check missing
+[[ "$out" == *"dce-base:latest"* ]] || fail "per-backend dce-base check missing
 $out"
-pass "all-mode: detected docker/podman/apple + dev-base checks"
+pass "all-mode: detected docker/podman/apple + dce-base checks"
 
 # Runtime down on docker -> docker section fails, overall nonzero.
 DC_STUB_DOCKER_UP=0 run_doctor; out="$RUN_OUT"
@@ -253,13 +253,13 @@ $out"
 [[ "$RUN_RC" -ne 0 ]] || fail "docker down: expected nonzero overall"
 pass "docker runtime down: reported + nonzero"
 
-# dev-base missing on docker -> failure.
+# dce-base missing on docker -> failure.
 DC_STUB_HAS_DEVBASE=0 run_doctor; out="$RUN_OUT"
-{ printf '%s' "$out" | grep -q "dev-base:latest missing"; } \
-  || fail "missing dev-base: no failure detail
+{ printf '%s' "$out" | grep -q "dce-base:latest missing"; } \
+  || fail "missing dce-base: no failure detail
 $out"
-[[ "$RUN_RC" -ne 0 ]] || fail "missing dev-base: expected nonzero"
-pass "missing dev-base: reported + nonzero"
+[[ "$RUN_RC" -ne 0 ]] || fail "missing dce-base: expected nonzero"
+pass "missing dce-base: reported + nonzero"
 export DC_STUB_HAS_DEVBASE=1
 
 # podman unreachable -> reported.
@@ -309,7 +309,7 @@ export DC_STUB_DOCKER_CONTEXT_ACTIVE=colima DC_STUB_COLIMA_RUNTIME=docker
 # ---------------------------------------------------------------------------
 # Section 4 - scope: single backend, unknown scope
 # ---------------------------------------------------------------------------
-# `dc doctor docker` checks only docker (no podman/apple sections).
+# `dce doctor docker` checks only docker (no podman/apple sections).
 run_doctor docker; out="$RUN_OUT"
 [[ "$out" == *"Backend: docker"* ]] || fail "scoped docker: section missing
 $out"
@@ -320,14 +320,14 @@ $out"
 [[ "$RUN_RC" -eq 0 ]] || fail "scoped healthy docker: expected 0, got $RUN_RC"
 pass "single-backend scope: only that backend"
 
-# `dc doctor <unknown>` exits nonzero with guidance.
+# `dce doctor <unknown>` exits nonzero with guidance.
 run_doctor nosuchbackend; out="$RUN_OUT"
 [[ "$RUN_RC" -ne 0 ]] || fail "unknown scope: expected nonzero"
 [[ "$out" == *"Unknown backend or project"* ]] || fail "unknown scope: no guidance
 $out"
 pass "unknown scope: nonzero + guidance"
 
-# `dc doctor <backend with CLI missing>`: docker absent from PATH -> fail.
+# `dce doctor <backend with CLI missing>`: docker absent from PATH -> fail.
 set +e
 out="$(PATH="$STUB_NODOCKER:$ORIG_PATH_NO_DOCKER" HOME="$HOME" env -u CONTAINER_BACKEND \
         "$DC_BIN" doctor docker 2>&1)"
@@ -343,7 +343,7 @@ pass "backend with missing CLI: reported + nonzero"
 # Section 5 - project scope
 # ---------------------------------------------------------------------------
 make_project() {  # <name> <backend> <image> [token-content]
-  local name="$1" backend="$2" image="${3:-dev-base:latest}" token="${4:-}"
+  local name="$1" backend="$2" image="${3:-dce-base:latest}" token="${4:-}"
   local pdir="$DC_ROOT/$name"
   mkdir -p "$pdir"
   chmod 700 "$pdir"
@@ -373,7 +373,7 @@ EOF
 }
 
 # Healthy project on docker.
-make_project alpha docker dev-base:latest "ghp_realtoken"
+make_project alpha docker dce-base:latest "ghp_realtoken"
 DC_STUB_CONTAINERS="alpha" run_doctor alpha; out="$RUN_OUT"
 [[ "$out" == *"Project: alpha"* ]] || fail "project scope: no Project header
 $out"
@@ -384,7 +384,7 @@ $out"
 pass "project scope: healthy project -> exit 0"
 
 # Project with placeholder token -> secrets failure, nonzero.
-make_project beta docker dev-base:latest ""
+make_project beta docker dce-base:latest ""
 DC_STUB_CONTAINERS="beta" run_doctor beta; out="$RUN_OUT"
 { printf '%s' "$out" | grep -Eq "GitHub token"; } \
   || fail "placeholder token: no token check
@@ -393,7 +393,7 @@ $out"
 pass "project with placeholder token: reported + nonzero"
 
 # Project referencing a missing image -> failure.
-make_project gamma docker dev-img-deadbeefdeadbeef:latest "ghp_realtoken"
+make_project gamma docker dce-img-deadbeefdeadbeef:latest "ghp_realtoken"
 run_doctor gamma; out="$RUN_OUT"
 { printf '%s' "$out" | grep -Eq "image|Image"; } \
   || fail "missing image: no image check line
@@ -402,7 +402,7 @@ $out"
 pass "project with missing image: reported + nonzero"
 
 # Project whose recorded backend CLI is missing -> failure.
-make_project delta podman dev-base:latest "ghp_realtoken"
+make_project delta podman dce-base:latest "ghp_realtoken"
 set +e
 out="$(PATH="$STUB_NOP:$ORIG_PATH_NO_PODMAN" HOME="$HOME" env -u CONTAINER_BACKEND \
         "$DC_BIN" doctor delta 2>&1)"

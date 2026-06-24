@@ -9,15 +9,15 @@
 #
 # Coverage:
 #   A. Pure helpers: normalize, entry accessors, create-args, backend limits.
-#   B. dc new --network/--ip (docker): config persistence, create argv shape,
+#   B. dce new --network/--ip (docker): config persistence, create argv shape,
 #      extras live-connect, image positional last.
-#   C. dc new --network referencing a missing network fails fast (no create).
-#   D. dc new on apple: single-network ok; multi-network / --ip rejected.
-#   E. dc rebuild-container reattaches networks (create-argv parity + extras).
-#   F. dc network create/ls/members (docker).
-#   G. dc network create/ls (apple, incl. columned `network list` header parse).
-#   H. dc network rm refuses with members; --force disconnects then removes.
-#   I. dc network add/remove persist CONTAINER_NETWORKS in the project config.
+#   C. dce new --network referencing a missing network fails fast (no create).
+#   D. dce new on apple: single-network ok; multi-network / --ip rejected.
+#   E. dce rebuild-container reattaches networks (create-argv parity + extras).
+#   F. dce network create/ls/members (docker).
+#   G. dce network create/ls (apple, incl. columned `network list` header parse).
+#   H. dce network rm refuses with members; --force disconnects then removes.
+#   I. dce network add/remove persist CONTAINER_NETWORKS in the project config.
 # =============================================================================
 set -euo pipefail
 
@@ -37,48 +37,48 @@ chmod 700 "$WORK"
 # ===========================================================================
 # Section A - pure helpers (no backend / no stubs)
 # ===========================================================================
-[[ "$(dc_normalize_network_arg "myapp,obs")" == "myapp,obs" ]] || fail "normalize plain"
-[[ "$(dc_normalize_network_arg " A : 10.0.0.5 , b ")" == "a:10.0.0.5,b" ]] || fail "normalize spaced/ip"
-[[ -z "$(dc_normalize_network_arg "")" ]] || fail "normalize empty"
-[[ "$(dc_normalize_network_arg "x,x")" == "x" ]] || fail "normalize dedupe"
-dc_normalize_network_arg "bad name" >/dev/null 2>&1 && fail "normalize rejects whitespace" || true
-dc_normalize_network_arg "a:1.2.3.4,a:5.6.7.8" >/dev/null 2>&1 && fail "normalize rejects conflicting ip" || true
-[[ "$(dc_network_entry_name "a:10.0.0.5")" == "a" ]] || fail "entry name"
-[[ "$(dc_network_entry_ip "a:10.0.0.5")" == "10.0.0.5" ]] || fail "entry ip"
-[[ -z "$(dc_network_entry_ip "a")" ]] || fail "entry ip empty"
+[[ "$(dce_normalize_network_arg "myapp,obs")" == "myapp,obs" ]] || fail "normalize plain"
+[[ "$(dce_normalize_network_arg " A : 10.0.0.5 , b ")" == "a:10.0.0.5,b" ]] || fail "normalize spaced/ip"
+[[ -z "$(dce_normalize_network_arg "")" ]] || fail "normalize empty"
+[[ "$(dce_normalize_network_arg "x,x")" == "x" ]] || fail "normalize dedupe"
+dce_normalize_network_arg "bad name" >/dev/null 2>&1 && fail "normalize rejects whitespace" || true
+dce_normalize_network_arg "a:1.2.3.4,a:5.6.7.8" >/dev/null 2>&1 && fail "normalize rejects conflicting ip" || true
+[[ "$(dce_network_entry_name "a:10.0.0.5")" == "a" ]] || fail "entry name"
+[[ "$(dce_network_entry_ip "a:10.0.0.5")" == "10.0.0.5" ]] || fail "entry ip"
+[[ -z "$(dce_network_entry_ip "a")" ]] || fail "entry ip empty"
 
 # backend limits
-dc_network_check_backend_limits apple "n1" || fail "apple single ok"
-dc_network_check_backend_limits apple "n1" "n2" 2>/dev/null && fail "apple multi rejected" || true
-dc_network_check_backend_limits apple "n1:10.0.0.1" 2>/dev/null && fail "apple ip rejected" || true
-dc_network_check_backend_limits docker "n1" "n2:10.0.0.1" || fail "docker multi+ip ok"
+dce_network_check_backend_limits apple "n1" || fail "apple single ok"
+dce_network_check_backend_limits apple "n1" "n2" 2>/dev/null && fail "apple multi rejected" || true
+dce_network_check_backend_limits apple "n1:10.0.0.1" 2>/dev/null && fail "apple ip rejected" || true
+dce_network_check_backend_limits docker "n1" "n2:10.0.0.1" || fail "docker multi+ip ok"
 
 # create_args
-mapfile -t CA < <(DEV_CONTAINERS_BACKEND=docker dc_networks_create_args "n1:10.0.0.5" "n2")
+mapfile -t CA < <(DEV_CONTAINERS_BACKEND=docker dce_networks_create_args "n1:10.0.0.5" "n2")
 [[ "${CA[*]}" == "--network n1 --ip 10.0.0.5" ]] || fail "create_args docker (got [${CA[*]}])"
-mapfile -t CA < <(DEV_CONTAINERS_BACKEND=apple dc_networks_create_args "n1")
+mapfile -t CA < <(DEV_CONTAINERS_BACKEND=apple dce_networks_create_args "n1")
 [[ "${CA[*]}" == "--network n1" ]] || fail "create_args apple (got [${CA[*]}])"
-mapfile -t CA < <(DEV_CONTAINERS_BACKEND=docker dc_networks_create_args)
+mapfile -t CA < <(DEV_CONTAINERS_BACKEND=docker dce_networks_create_args)
 [[ ${#CA[@]} -eq 0 ]] || fail "create_args empty"
 
 # CONTAINER_NETWORKS round-trips through the hardened loader.
 cfgA="$WORK/sectA/config"; mkdir -p "$(dirname "$cfgA")"; chmod 700 "$(dirname "$cfgA")"
 {
-  echo 'CONTAINER_PROJECT="p"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dev-base:latest"'
+  echo 'CONTAINER_PROJECT="p"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
   echo 'PORTS=()'; echo 'CONTAINER_HIDDEN_PATHS=()'; echo 'CONTAINER_NETWORKS=(myapp:10.0.0.5 obs)'
 } > "$cfgA"; chmod 600 "$cfgA"
 PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
-dc_load_project_config "$cfgA"
+dce_load_project_config "$cfgA"
 [[ "${CONTAINER_NETWORKS[*]}" == "myapp:10.0.0.5 obs" ]] || fail "loader CONTAINER_NETWORKS round-trip"
 
-# dc_set_config_array rewrites the array line and round-trips.
-dc_set_config_array "$cfgA" CONTAINER_NETWORKS "onlynet"
+# dce_set_config_array rewrites the array line and round-trips.
+dce_set_config_array "$cfgA" CONTAINER_NETWORKS "onlynet"
 PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
-dc_load_project_config "$cfgA"
+dce_load_project_config "$cfgA"
 [[ "${CONTAINER_NETWORKS[*]}" == "onlynet" ]] || fail "set_config_array rewrite"
-dc_set_config_array "$cfgA" CONTAINER_NETWORKS   # empty out
+dce_set_config_array "$cfgA" CONTAINER_NETWORKS   # empty out
 PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
-dc_load_project_config "$cfgA"
+dce_load_project_config "$cfgA"
 [[ ${#CONTAINER_NETWORKS[@]} -eq 0 ]] || fail "set_config_array empty"
 
 pass "Section A: pure helpers"
@@ -87,7 +87,7 @@ pass "Section A: pure helpers"
 # Stub harness (shared by B-I): fakes docker/container/podman.
 # ===========================================================================
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dev-containers"
+DC_ROOT="$HOME/.config/dce-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -103,7 +103,7 @@ IMAGES="$WORK/images.lst"
 NETWORKS="$WORK/networks.lst"
 CONTAINERS="$WORK/containers.lst"
 : > "$LOG"
-printf 'dev-base:latest\n' > "$IMAGES"
+printf 'dce-base:latest\n' > "$IMAGES"
 : > "$NETWORKS"
 : > "$CONTAINERS"
 
@@ -178,7 +178,7 @@ run_script() {
 first_call() { grep -En "$1" "$LOG" 2>/dev/null | head -n1 | cut -d: -f1 || true; }
 
 # ===========================================================================
-# Section B - dc new --network/--ip (docker): config + create argv + extras
+# Section B - dce new --network/--ip (docker): config + create argv + extras
 # ===========================================================================
 BACKEND=docker
 printf 'mynet\nobs\n' > "$NETWORKS"   # both networks exist
@@ -186,27 +186,27 @@ printf 'mynet\nobs\n' > "$NETWORKS"   # both networks exist
 
 PROJECT="webproj"
 REPOS_DIR="$WORK/home/repos/$PROJECT"
-SECRET_DIR="$WORK/home/.config/dev-containers/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dce-enclave/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" \
   "$PROJECT" --network "mynet:10.0.0.5,obs" \
-  >"$WORK/b.stdout" 2>"$WORK/b.stderr" || fail "dc new --network exited non-zero
+  >"$WORK/b.stdout" 2>"$WORK/b.stderr" || fail "dce new --network exited non-zero
 -- stderr:$(cat "$WORK/b.stderr")"
 
 # config persistence
 chmod 600 "$CONFIG" 2>/dev/null || true
 PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
-dc_load_project_config "$CONFIG"
+dce_load_project_config "$CONFIG"
 [[ "${CONTAINER_NETWORKS[*]}" == "mynet:10.0.0.5 obs" ]] || fail "config CONTAINER_NETWORKS (got [${CONTAINER_NETWORKS[*]}])"
 
 # create argv: --network mynet --ip 10.0.0.5 present, image LAST
 CREATE="$(grep -E 'create --name webproj' "$LOG" | head -n1)"
-[[ -n "$CREATE" ]] || fail "dc new: no create call"
+[[ -n "$CREATE" ]] || fail "dce new: no create call"
 grep -Fq -- "--network mynet" <<<"$CREATE" || fail "create: --network mynet"
 grep -Fq -- "--ip 10.0.0.5" <<<"$CREATE" || fail "create: --ip"
-[[ "${CREATE##* }" == "dev-base:latest" ]] || fail "create: image must be last (got [${CREATE##* }])"
+[[ "${CREATE##* }" == "dce-base:latest" ]] || fail "create: image must be last (got [${CREATE##* }])"
 
 # extras connected live AFTER create.
 cre_ln="$(first_call 'create --name webproj')"
@@ -218,20 +218,20 @@ obs_con="$(first_call 'network connect obs webproj')"
 
 # devcontainer.json carries runArgs so a Reopen-in-Container build reattaches the
 # primary network (+ its static IP) and extras.
-dc_json="$REPOS_DIR/.devcontainer/devcontainer.json"
-[[ -f "$dc_json" ]] || fail "devcontainer.json missing"
-grep -Fq '"runArgs"' "$dc_json" || fail "devcontainer.json: runArgs block"
-grep -Fq '"--network"' "$dc_json" || fail "devcontainer.json: --network in runArgs"
-grep -Fq '"--ip"' "$dc_json" || fail "devcontainer.json: --ip in runArgs"
-grep -Fq '"mynet"' "$dc_json" || fail "devcontainer.json: primary network name"
-grep -Fq '"obs"' "$dc_json" || fail "devcontainer.json: extra network name"
+dce_json="$REPOS_DIR/.devcontainer/devcontainer.json"
+[[ -f "$dce_json" ]] || fail "devcontainer.json missing"
+grep -Fq '"runArgs"' "$dce_json" || fail "devcontainer.json: runArgs block"
+grep -Fq '"--network"' "$dce_json" || fail "devcontainer.json: --network in runArgs"
+grep -Fq '"--ip"' "$dce_json" || fail "devcontainer.json: --ip in runArgs"
+grep -Fq '"mynet"' "$dce_json" || fail "devcontainer.json: primary network name"
+grep -Fq '"obs"' "$dce_json" || fail "devcontainer.json: extra network name"
 # Validate the whole file is well-formed JSON (runArgs included).
 if command -v python3 >/dev/null 2>&1; then
-  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$dc_json" \
+  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$dce_json" \
     || fail "devcontainer.json is not valid JSON"
 fi
 
-pass "Section B: dc new --network/--ip (docker) config + argv + extras"
+pass "Section B: dce new --network/--ip (docker) config + argv + extras"
 
 # ===========================================================================
 # Section C - missing network fails fast (no create)
@@ -240,13 +240,13 @@ pass "Section B: dc new --network/--ip (docker) config + argv + extras"
 CPROJ="cproj"
 : > "$LOG"
 if run_script "$ROOT_DIR/scripts/new-container.sh" "$CPROJ" --network ghost >"$WORK/c.stdout" 2>"$WORK/c.stderr"; then
-  fail "dc new must fail when network is missing"
+  fail "dce new must fail when network is missing"
 fi
 grep -Fqi 'does not exist' "$WORK/c.stderr" || fail "missing-network error should mention 'does not exist' (stderr)"
-grep -Fqi 'dc network create ghost' "$WORK/c.stderr" || fail "missing-network error should suggest dc network create (stderr)"
-if grep -qE 'create --name cproj' "$LOG"; then fail "dc new: must not create container when network missing"; fi
-if [[ -d "$WORK/home/.config/dev-containers/$CPROJ" ]]; then
-  fail "dc new: must not leave a project config dir when network missing"
+grep -Fqi 'dce network create ghost' "$WORK/c.stderr" || fail "missing-network error should suggest dce network create (stderr)"
+if grep -qE 'create --name cproj' "$LOG"; then fail "dce new: must not create container when network missing"; fi
+if [[ -d "$WORK/home/.config/dce-enclave/$CPROJ" ]]; then
+  fail "dce new: must not leave a project config dir when network missing"
 fi
 pass "Section C: missing network fails fast"
 
@@ -260,7 +260,7 @@ printf 'mynet\n' > "$NETWORKS"
 # single network on apple is allowed.
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" "aproj" --network mynet \
-  >"$WORK/d1.stdout" 2>"$WORK/d1.stderr" || fail "dc new apple single-network failed
+  >"$WORK/d1.stdout" 2>"$WORK/d1.stderr" || fail "dce new apple single-network failed
 -- stderr:$(cat "$WORK/d1.stderr")"
 ACREATE="$(grep -E 'create --name aproj' "$LOG" | head -n1)"
 grep -Fq -- "--network mynet" <<<"$ACREATE" || fail "apple create: --network mynet"
@@ -268,12 +268,12 @@ grep -Fq -- "--network mynet" <<<"$ACREATE" || fail "apple create: --network myn
 # multi-network on apple is rejected.
 : > "$LOG"
 if run_script "$ROOT_DIR/scripts/new-container.sh" "aproj2" --network "a,b" >/dev/null 2>&1; then
-  fail "dc new apple multi-network must fail"
+  fail "dce new apple multi-network must fail"
 fi
 # --ip on apple is rejected.
 : > "$LOG"
 if run_script "$ROOT_DIR/scripts/new-container.sh" "aproj3" --network mynet --ip 10.0.0.9 >/dev/null 2>&1; then
-  fail "dc new apple --ip must fail"
+  fail "dce new apple --ip must fail"
 fi
 pass "Section D: apple backend limits"
 
@@ -283,9 +283,9 @@ pass "Section D: apple backend limits"
 BACKEND=docker
 # Reuse webproj from Section B: its config has mynet:10.0.0.5 + obs.
 printf 'mynet\nobs\n' > "$NETWORKS"
-printf 'dev-img-fakehash00000:latest\n' >> "$IMAGES" 2>/dev/null || true
-# The webproj image was dev-base:latest (no scopes). Ensure it is "present".
-grep -qx 'dev-base:latest' "$IMAGES" || printf 'dev-base:latest\n' >> "$IMAGES"
+printf 'dce-img-fakehash00000:latest\n' >> "$IMAGES" 2>/dev/null || true
+# The webproj image was dce-base:latest (no scopes). Ensure it is "present".
+grep -qx 'dce-base:latest' "$IMAGES" || printf 'dce-base:latest\n' >> "$IMAGES"
 # Pretend the container exists & is running for the stop/exists checks.
 printf 'webproj\n' > "$CONTAINERS"
 
@@ -309,13 +309,13 @@ rb_obs="$(first_call 'network connect obs webproj')"
 pass "Section E: rebuild reattaches networks (parity + extras)"
 
 # ===========================================================================
-# Section F - dc network create/ls/members (docker)
+# Section F - dce network create/ls/members (docker)
 # ===========================================================================
 BACKEND=docker
 : > "$NETWORKS"
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/network.sh" create newnet >"$WORK/f.stdout" 2>"$WORK/f.stderr" \
-  || fail "dc network create failed"
+  || fail "dce network create failed"
 grep -Fq 'CALL docker network create newnet' "$LOG" || fail "network create argv"
 grep -Fxq 'newnet' "$NETWORKS" || fail "network create recorded"
 # idempotent: create again is a no-op (already exists), no second create CALL.
@@ -325,15 +325,15 @@ if [[ "$(grep -c 'network create newnet' "$LOG")" -ne 0 ]]; then
   fail "network create must not re-create an existing network"
 fi
 
-# ls lists networks; newnet has no dc members yet.
+# ls lists networks; newnet has no dce members yet.
 LS_OUT="$(run_script "$ROOT_DIR/scripts/network.sh" ls 2>/dev/null)"
 grep -Fq 'newnet' <<<"$LS_OUT" || fail "network ls should list newnet"
 
 # members: empty for a fresh network.
 MEM_OUT="$(run_script "$ROOT_DIR/scripts/network.sh" members newnet 2>/dev/null)"
-grep -Fqi 'no dc projects' <<<"$MEM_OUT" || fail "members should report none"
+grep -Fqi 'no dce projects' <<<"$MEM_OUT" || fail "members should report none"
 
-pass "Section F: dc network create/ls/members (docker)"
+pass "Section F: dce network create/ls/members (docker)"
 
 # ===========================================================================
 # Section G - apple network create/ls (columned `container network list` parse)
@@ -342,7 +342,7 @@ BACKEND=apple
 : > "$NETWORKS"
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/network.sh" create applenet >"$WORK/g.stdout" 2>"$WORK/g.stderr" \
-  || fail "dc network create (apple) failed
+  || fail "dce network create (apple) failed
 -- stderr:$(cat "$WORK/g.stderr")"
 grep -Fq 'CALL container network create applenet' "$LOG" || fail "apple network create argv"
 # ls must parse the columned table and list applenet (header skipped).
@@ -353,15 +353,15 @@ grep -Fqv 'NETWORK' <<<"$LS_OUT" || true   # header may or may not appear; ensur
 pass "Section G: apple network create/ls (header parse)"
 
 # ===========================================================================
-# Section H - dc network rm refuses with members; --force removes
+# Section H - dce network rm refuses with members; --force removes
 # ===========================================================================
 BACKEND=docker
 printf 'rmnet\n' > "$NETWORKS"
 # webproj references... no. Build a project that references rmnet.
-RP="$WORK/home/.config/dev-containers/rmhost"
+RP="$WORK/home/.config/dce-enclave/rmhost"
 mkdir -p "$RP"; chmod 700 "$RP"
 {
-  echo 'CONTAINER_PROJECT="rmhost"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dev-base:latest"'
+  echo 'CONTAINER_PROJECT="rmhost"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
   echo 'PORTS=()'; echo 'CONTAINER_HIDDEN_PATHS=()'; echo 'CONTAINER_NETWORKS=(rmnet)'
 } > "$RP/config"; chmod 600 "$RP/config"
 
@@ -369,7 +369,7 @@ mkdir -p "$RP"; chmod 700 "$RP"
 if run_script "$ROOT_DIR/scripts/network.sh" rm rmnet >/dev/null 2>&1; then
   fail "network rm must refuse while members exist"
 fi
-grep -Fqi 'dc network remove rmnet' "$WORK"/h*.stdout 2>/dev/null || true
+grep -Fqi 'dce network remove rmnet' "$WORK"/h*.stdout 2>/dev/null || true
 # network still exists.
 grep -Fxq 'rmnet' "$NETWORKS" || fail "network rm: must not remove when members exist (no --force)"
 
@@ -381,18 +381,18 @@ run_script "$ROOT_DIR/scripts/network.sh" rm rmnet --force >"$WORK/hf.stdout" 2>
 grep -Fq 'CALL docker network disconnect rmnet rmhost' "$LOG" || fail "rm --force should disconnect members"
 grep -Fxq 'rmnet' "$NETWORKS" && fail "rm --force should remove the network" || true
 
-pass "Section H: dc network rm membership guard + --force"
+pass "Section H: dce network rm membership guard + --force"
 
 # ===========================================================================
-# Section I - dc network add/remove persist CONTAINER_NETWORKS
+# Section I - dce network add/remove persist CONTAINER_NETWORKS
 # ===========================================================================
 BACKEND=docker
 printf 'addnet\n' > "$NETWORKS"
 IPROJ="iprod"
-ICONFIG="$WORK/home/.config/dev-containers/$IPROJ/config"
+ICONFIG="$WORK/home/.config/dce-enclave/$IPROJ/config"
 mkdir -p "$(dirname "$ICONFIG")"; chmod 700 "$(dirname "$ICONFIG")"
 {
-  echo 'CONTAINER_PROJECT="iprod"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dev-base:latest"'
+  echo 'CONTAINER_PROJECT="iprod"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
   echo 'PORTS=()'; echo 'CONTAINER_HIDDEN_PATHS=()'; echo 'CONTAINER_NETWORKS=()'
 } > "$ICONFIG"; chmod 600 "$ICONFIG"
 printf 'iprod\n' > "$CONTAINERS"
@@ -403,7 +403,7 @@ run_script "$ROOT_DIR/scripts/network.sh" add addnet "$IPROJ" --ip 10.9.0.3 \
 -- stderr:$(cat "$WORK/i.stderr")"
 grep -Fq 'CALL docker network connect --ip 10.9.0.3 addnet iprod' "$LOG" || fail "add: connect argv"
 PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
-dc_load_project_config "$ICONFIG"
+dce_load_project_config "$ICONFIG"
 [[ "${CONTAINER_NETWORKS[*]}" == "addnet:10.9.0.3" ]] || fail "add: config persisted (got [${CONTAINER_NETWORKS[*]}])"
 
 # remove drops it from config.
@@ -412,10 +412,10 @@ run_script "$ROOT_DIR/scripts/network.sh" remove addnet "$IPROJ" \
   >"$WORK/ir.stdout" 2>"$WORK/ir.stderr" || fail "network remove failed"
 grep -Fq 'CALL docker network disconnect addnet iprod' "$LOG" || true
 PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
-dc_load_project_config "$ICONFIG"
+dce_load_project_config "$ICONFIG"
 [[ ${#CONTAINER_NETWORKS[@]} -eq 0 ]] || fail "remove: config should be empty (got [${CONTAINER_NETWORKS[*]}])"
 
-pass "Section I: dc network add/remove persist config"
+pass "Section I: dce network add/remove persist config"
 
 echo ""
 echo "All networking checks passed."

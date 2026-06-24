@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/restart.sh - `dc restart`: restart one or all dev containers.
+# scripts/restart.sh - `dce restart`: restart one or all dev containers.
 #
 # Implemented as stop -> start so it reuses the proven per-project flows in
 # stop.sh / start.sh: backend bring-up, OrbStack hidden-volume re-verification,
@@ -20,6 +20,6 @@ unset _src _dir
 
 # stop then start; each sibling handles per-project backend resolution, hidden
 # mounts, and the named-vs-all argument form. Under set -e a failure in stop
-# (e.g. an unknown project name) prevents start, matching `dc stop` semantics.
+# (e.g. an unknown project name) prevents start, matching `dce stop` semantics.
 "$SCRIPT_DIR/stop.sh" "$@"
 "$SCRIPT_DIR/start.sh" "$@"

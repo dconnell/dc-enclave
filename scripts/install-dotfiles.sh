@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/install-dotfiles.sh - `dc install`: apply personal dotfiles into a
+# scripts/install-dotfiles.sh - `dce install`: apply personal dotfiles into a
 # running container. Streams the dotfiles dir into the container via tar, runs
 # its install.sh as the dev user, then removes the temp copy. Re-run after any
 # rebuild to restore personal config.
@@ -23,16 +23,16 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
-CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
+CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
   echo "ERROR: No config for '$PROJECT'."
   exit 1
 fi
 
-dc_load_project_config "$CONFIG"
+dce_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 
-DOTFILES_SRC="$(dc_resolve_path "$DOTFILES_SRC")" || {
+DOTFILES_SRC="$(dce_resolve_path "$DOTFILES_SRC")" || {
   echo "ERROR: Dotfiles path could not be resolved: $DOTFILES_SRC"
   exit 1
 }
@@ -52,7 +52,7 @@ fi
 
 if ! backend_is_running "$PROJECT"; then
   echo "ERROR: Container '$PROJECT' is not running."
-  echo "  Start it first: dc start $PROJECT"
+  echo "  Start it first: dce start $PROJECT"
   exit 1
 fi
 

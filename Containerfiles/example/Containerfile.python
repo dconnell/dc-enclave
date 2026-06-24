@@ -1,4 +1,4 @@
-FROM dev-base:latest
+FROM dce-base:latest
 
 USER root
 
@@ -41,7 +41,7 @@ RUN set -eu; \
 
 # uv's project venv defaults to ./.venv (/workspace-relative, hideable). Point
 # its download cache under /workspace too so both can be hidden:
-#   dc new <project> python --hide .venv,.cache/uv [ports...]
+#   dce new <project> python --hide .venv,.cache/uv [ports...]
 ENV UV_CACHE_DIR="/workspace/.cache/uv"
 # Prefer the apt-installed interpreter rather than uv downloading its own.
 ENV UV_PYTHON="python3"
@@ -51,11 +51,11 @@ RUN uv --version
 
 WORKDIR /workspace
 
-# This overlay supports the dc hidden-volume feature and installs a
+# This overlay supports the dce hidden-volume feature and installs a
 # dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
 # scripts/compose-containerfile.sh). To use it:
 #
-#   dc new <project> python --hide .venv,.cache/uv [ports...]
+#   dce new <project> python --hide .venv,.cache/uv [ports...]
 #
 # The sync hook:
 # - skips install when pyproject.toml is absent,
@@ -69,7 +69,7 @@ WORKDIR /workspace
 # DC_PYTHON_IGNORE_SCRIPTS=1 to pass `--no-build` (wheel-only; packages without a
 # matching wheel will fail instead of executing build code).
 
-RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-python-entrypoint.sh <<'ENTRYPOINT_EOF'
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dce-python-entrypoint.sh <<'ENTRYPOINT_EOF'
 #!/bin/sh
 set -eu
 
@@ -77,7 +77,7 @@ APP_DIR="${APP_DIR:-/workspace}"
 STRICT="${DC_PYTHON_INSTALL_STRICT:-0}"
 IGNORE_SCRIPTS="${DC_PYTHON_IGNORE_SCRIPTS:-0}"
 VENV="${APP_DIR}/.venv"
-HASH_FILE="$VENV/.dc-install-hash"
+HASH_FILE="$VENV/.dce-install-hash"
 
 log() { printf '%s\n' "[python-hide] $*"; }
 
@@ -136,4 +136,4 @@ fi
 exit 0
 ENTRYPOINT_EOF
 
-RUN chmod +x /home/dev/.local/bin/dc-python-entrypoint.sh
+RUN chmod +x /home/dev/.local/bin/dce-python-entrypoint.sh

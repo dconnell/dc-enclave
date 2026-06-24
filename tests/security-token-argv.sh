@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # tests/security-token-argv.sh - M3 regression: GITHUB_TOKEN must not appear in
-# host process argv during `dc shell` (one-shot or interactive).
+# host process argv during `dce shell` (one-shot or interactive).
 #
 # Host process args are readable via `ps` and /proc/<pid>/cmdline while a shell
 # session is active, so the PAT must cross the host/container boundary through a
@@ -53,11 +53,11 @@ TOKEN_PATH="$WORK/github-token"
 printf '%s\n' "$SENTINEL" > "$TOKEN_PATH"
 chmod 600 "$TOKEN_PATH"
 
-PROJECT="dc-m3test"
+PROJECT="dce-m3test"
 
 # ---------------------------------------------------------------------------
 # Minimal fake docker: logs each invocation and answers the handful of
-# subcommands `dc shell` exercises (ps + exec). It captures stdin only when an
+# subcommands `dce shell` exercises (ps + exec). It captures stdin only when an
 # -i/--interactive flag is present, which is exactly the token-seeding path.
 # ---------------------------------------------------------------------------
 cat > "$STUB_DIR/docker" <<'STUB'
@@ -88,7 +88,7 @@ case "${1:-}" in
     for _a in "$@"; do
       case "$_a" in
         mktemp)
-          printf '%s\n' "/tmp/dc-gh-token.STUB01"
+          printf '%s\n' "/tmp/dce-gh-token.STUB01"
           exit 0
           ;;
       esac
@@ -107,13 +107,13 @@ chmod +x "$STUB_DIR/docker"
 # Minimal project config under a fake HOME (no real ~/.config pollution).
 # ---------------------------------------------------------------------------
 FAKE_HOME="$WORK/home"
-CFG_DIR="$FAKE_HOME/.config/dev-containers/$PROJECT"
+CFG_DIR="$FAKE_HOME/.config/dce-enclave/$PROJECT"
 mkdir -p "$CFG_DIR"
 chmod 700 "$CFG_DIR"
 cat > "$CFG_DIR/config" <<CFG
 CONTAINER_PROJECT="$PROJECT"
 CONTAINER_BACKEND="docker"
-CONTAINER_IMAGE="dev-base:latest"
+CONTAINER_IMAGE="dce-base:latest"
 REPOS_DIR="$WORK/repos"
 SECRET_DIR="$WORK/secret"
 SSH_KEY_PATH="$WORK/secret/ssh_key"
@@ -160,11 +160,11 @@ grep -Fq "$SENTINEL" "$STDIN_CAP" || fail "one-shot: token did not cross via std
 pass "one-shot: token delivered via stdin"
 
 grep -Fq "mktemp" "$LOG" || fail "one-shot: token file not created via mktemp"
-grep -Fq '/tmp/dc-gh-token.STUB01' "$LOG" || fail "one-shot: temp token file not referenced in argv"
+grep -Fq '/tmp/dce-gh-token.STUB01' "$LOG" || fail "one-shot: temp token file not referenced in argv"
 grep -Fq 'cat "$1"' "$LOG" || fail "one-shot: wrapper does not read+delete token file"
 pass "one-shot: token seeded via temp file and consumed"
 
-grep -Eq 'rm[[:space:]]+-f[[:space:]]+/tmp/dc-gh-token' "$LOG" \
+grep -Eq 'rm[[:space:]]+-f[[:space:]]+/tmp/dce-gh-token' "$LOG" \
   || fail "one-shot: cleanup trap did not remove token file"
 pass "one-shot: cleanup trap removes token file"
 
@@ -185,7 +185,7 @@ pass "interactive: token delivered via stdin"
 
 grep -Fq "mktemp" "$LOG" || fail "interactive: token file not created via mktemp"
 grep -Fq 'cat "$1"' "$LOG" || fail "interactive: wrapper does not read+delete token file"
-grep -Eq 'rm[[:space:]]+-f[[:space:]]+/tmp/dc-gh-token' "$LOG" \
+grep -Eq 'rm[[:space:]]+-f[[:space:]]+/tmp/dce-gh-token' "$LOG" \
   || fail "interactive: cleanup trap did not remove token file"
 grep -Fq 'PS1=[' "$LOG" || fail "interactive: PS1 not propagated"
 pass "interactive: token seeded, consumed, cleanup trap, PS1 ok"

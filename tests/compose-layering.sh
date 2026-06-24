@@ -9,10 +9,10 @@
 #   - Canonical overlay order: team/all, user/all, team/<s1>, user/<s1>,
 #     team/<s2> ... (one namespace pair per effective scope, all first).
 #   - Silent skip of a namespace file that does not exist (no user/golang).
-#   - Bookends: FROM dev-base:latest ... USER dev / CMD ["sleep", "infinity"].
+#   - Bookends: FROM dce-base:latest ... USER dev / CMD ["sleep", "infinity"].
 #   - FROM (first line) and CMD lines stripped from overlay fragments.
 #   - COPY/ADD rejected with a clear error.
-#   - Missing requested scope fails fast (delegates to dc_effective_scopes_csv).
+#   - Missing requested scope fails fast (delegates to dce_effective_scopes_csv).
 #   - `all` auto-prepended even when not requested, when Containerfile.all exists.
 # =============================================================================
 set -euo pipefail
@@ -27,9 +27,9 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 # Fake HOME + global config so compose resolves DC_TEAM_DIR/DC_USER_DIR via the
-# real dc_load_global_config path (no monkey-patching of the helper).
+# real dce_load_global_config path (no monkey-patching of the helper).
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dev-containers"
+DC_ROOT="$HOME/.config/dce-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -83,8 +83,8 @@ pass "canonical layer order + silent skip of missing namespace"
 # ---------------------------------------------------------------------------
 # Bookends
 # ---------------------------------------------------------------------------
-[[ "$(head -n1 "$WORK/out.Containerfile")" == "FROM dev-base:latest" ]] \
-  || fail "bookend: first line must be FROM dev-base:latest"
+[[ "$(head -n1 "$WORK/out.Containerfile")" == "FROM dce-base:latest" ]] \
+  || fail "bookend: first line must be FROM dce-base:latest"
 grep -Fxq 'USER dev' "$WORK/out.Containerfile" \
   || fail "bookend: USER dev must be present"
 grep -Fxq 'CMD ["sleep", "infinity"]' "$WORK/out.Containerfile" \
@@ -93,12 +93,12 @@ grep -Fxq 'CMD ["sleep", "infinity"]' "$WORK/out.Containerfile" \
 [[ "$(awk 'NF {last=$0} END {print last}' "$WORK/out.Containerfile")" == 'CMD ["sleep", "infinity"]' ]] \
   || fail "bookend: CMD must be the final non-blank line"
 
-pass "FROM dev-base / USER dev / CMD bookends"
+pass "FROM dce-base / USER dev / CMD bookends"
 
 # ---------------------------------------------------------------------------
 # FROM (leading) + CMD + ENTRYPOINT stripping from overlay fragments
 # ---------------------------------------------------------------------------
-printf 'FROM dev-base:latest\nRUN echo STRIPEME\ncmd ["echo", "cmdme"]\nENTRYPOINT ["/tmp/leakme"]\n' \
+printf 'FROM dce-base:latest\nRUN echo STRIPEME\ncmd ["echo", "cmdme"]\nENTRYPOINT ["/tmp/leakme"]\n' \
   > "$TEAM_DIR/overlays/Containerfile.nodejs"
 rm -f "$USER_DIR/overlays/Containerfile.nodejs" "$TEAM_DIR/overlays/Containerfile.golang" "$TEAM_DIR/overlays/Containerfile.all" "$USER_DIR/overlays/Containerfile.all"
 
@@ -109,14 +109,14 @@ grep -Fq 'STRIPEME' "$WORK/out.Containerfile" \
   || fail "strip: CMD line must be stripped from fragment"
 ! grep -Fqi 'leakme' "$WORK/out.Containerfile" \
   || fail "strip: ENTRYPOINT line must be stripped from fragment"
-# Exactly one FROM (the emitted dev-base); the fragment's leading FROM is gone.
+# Exactly one FROM (the emitted dce-base); the fragment's leading FROM is gone.
 from_count="$(grep -Eci '^FROM ' "$WORK/out.Containerfile")"
 [[ "$from_count" -eq 1 ]] || fail "strip: expected exactly one FROM (got $from_count)"
 # Exactly one ENTRYPOINT (the composed chained runner); the fragment's own
 # ENTRYPOINT is gone, so multi-overlay containers don't clobber each other.
 ep_count="$(grep -Eci '^ENTRYPOINT ' "$WORK/out.Containerfile")"
 [[ "$ep_count" -eq 1 ]] || fail "strip: expected exactly one ENTRYPOINT (got $ep_count)"
-grep -Eq 'ENTRYPOINT \["/home/dev/.local/bin/dc-entrypoint"\]' "$WORK/out.Containerfile" \
+grep -Eq 'ENTRYPOINT \["/home/dev/.local/bin/dce-entrypoint"\]' "$WORK/out.Containerfile" \
   || fail "strip: single ENTRYPOINT must be the composed runner"
 
 pass "FROM/CMD/ENTRYPOINT stripping from overlay fragments"

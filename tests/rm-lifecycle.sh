@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/rm-lifecycle.sh - End-to-end characterization of `dc rm` against a
+# tests/rm-lifecycle.sh - End-to-end characterization of `dce rm` against a
 # stubbed docker backend.
 #
-# `dc rm` is the only command that deletes a project outright, so this pins
+# `dce rm` is the only command that deletes a project outright, so this pins
 # its safety contract: stop-if-running -> delete -> remove hidden volumes ->
 # remove config+secrets, the confirmation gate, the --keep-* escape hatches,
 # invalid-name rejection, the already-absent path, and the invariant that the
@@ -27,7 +27,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dev-containers"
+DC_ROOT="$HOME/.config/dce-enclave"
 mkdir -p "$DC_ROOT"
 
 STUB_DIR="$WORK/bin"
@@ -91,7 +91,7 @@ setup_project() {
   {
     printf 'CONTAINER_PROJECT="%s"\n' "$PROJECT"
     printf 'CONTAINER_OVERLAY_SCOPES=""\n'
-    printf 'CONTAINER_IMAGE="dev-base:latest"\n'
+    printf 'CONTAINER_IMAGE="dce-base:latest"\n'
     printf 'CONTAINER_BACKEND="docker"\n'
     printf 'CONTAINER_CPUS=""\n'
     printf 'CONTAINER_MEMORY=""\n'
@@ -127,7 +127,7 @@ run_rm() {
   bash "$ROOT_DIR/scripts/rm.sh" "$@"
 }
 
-hidden_vol="$(dc_hidden_volume_name "$PROJECT" "node_modules")"
+hidden_vol="$(dce_hidden_volume_name "$PROJECT" "node_modules")"
 
 destructive_logged() {
   grep -E "stop $PROJECT|rm -f $PROJECT|volume rm" "$LOG"
@@ -139,23 +139,23 @@ destructive_logged() {
 # ===========================================================================
 setup_project
 printf 'yes\n' | run_rm "$PROJECT" >"$WORK/a.stdout" 2>"$WORK/a.stderr" \
-  || fail "dc rm (default) exited non-zero
+  || fail "dce rm (default) exited non-zero
 -- stderr:$(cat "$WORK/a.stderr")"
 
 stop_ln="$(grep -nE "^CALL docker stop $PROJECT" "$LOG" | head -n1 | cut -d: -f1)"
 rm_ln="$(grep -nE "^CALL docker rm -f $PROJECT" "$LOG" | head -n1 | cut -d: -f1)"
-[[ -n "$stop_ln" ]] || fail "dc rm: missing stop call
+[[ -n "$stop_ln" ]] || fail "dce rm: missing stop call
 $(grep '^CALL' "$LOG")"
-[[ -n "$rm_ln" ]] || fail "dc rm: missing rm -f call
+[[ -n "$rm_ln" ]] || fail "dce rm: missing rm -f call
 $(grep '^CALL' "$LOG")"
-[[ "$stop_ln" -lt "$rm_ln" ]] || fail "dc rm: stop must precede rm -f"
+[[ "$stop_ln" -lt "$rm_ln" ]] || fail "dce rm: stop must precede rm -f"
 grep -Fq "CALL docker volume rm $hidden_vol" "$LOG" \
-  || fail "dc rm: missing hidden volume removal [$hidden_vol]
+  || fail "dce rm: missing hidden volume removal [$hidden_vol]
 $(grep '^CALL' "$LOG")"
-[[ ! -d "$SECRET_DIR" ]] || fail "dc rm: config+secrets dir should be removed"
-[[ -d "$REPOS_DIR" ]] || fail "dc rm: REPOS_DIR must be preserved"
-[[ -f "$REPOS_DIR/source.txt" ]] || fail "dc rm: host code file must survive"
-pass "dc rm (default): stop<delete<volume-rm, config removed, code preserved"
+[[ ! -d "$SECRET_DIR" ]] || fail "dce rm: config+secrets dir should be removed"
+[[ -d "$REPOS_DIR" ]] || fail "dce rm: REPOS_DIR must be preserved"
+[[ -f "$REPOS_DIR/source.txt" ]] || fail "dce rm: host code file must survive"
+pass "dce rm (default): stop<delete<volume-rm, config removed, code preserved"
 
 # ===========================================================================
 # B. confirmation gate: a non-'yes' answer aborts with exit 0 and removes
@@ -163,50 +163,50 @@ pass "dc rm (default): stop<delete<volume-rm, config removed, code preserved"
 # ===========================================================================
 setup_project
 printf 'no\n' | run_rm "$PROJECT" >"$WORK/b.stdout" 2>"$WORK/b.stderr" \
-  || fail "dc rm: aborted run should exit 0"
-[[ -d "$SECRET_DIR" ]] || fail "dc rm: aborted run must keep config dir"
+  || fail "dce rm: aborted run should exit 0"
+[[ -d "$SECRET_DIR" ]] || fail "dce rm: aborted run must keep config dir"
 if destructive_logged >/dev/null; then
-  fail "dc rm: aborted run must not issue destructive calls
+  fail "dce rm: aborted run must not issue destructive calls
 $(destructive_logged)"
 fi
-pass "dc rm: confirmation gate aborts without side effects"
+pass "dce rm: confirmation gate aborts without side effects"
 
 # ===========================================================================
 # C. --yes skips the prompt and removes everything.
 # ===========================================================================
 setup_project
 run_rm "$PROJECT" --yes </dev/null >"$WORK/c.stdout" 2>"$WORK/c.stderr" \
-  || fail "dc rm --yes exited non-zero
+  || fail "dce rm --yes exited non-zero
 -- stderr:$(cat "$WORK/c.stderr")"
-grep -Fq "CALL docker rm -f $PROJECT" "$LOG" || fail "dc rm --yes: missing rm -f"
-[[ ! -d "$SECRET_DIR" ]] || fail "dc rm --yes: config should be removed"
-pass "dc rm --yes: skips prompt, full teardown"
+grep -Fq "CALL docker rm -f $PROJECT" "$LOG" || fail "dce rm --yes: missing rm -f"
+[[ ! -d "$SECRET_DIR" ]] || fail "dce rm --yes: config should be removed"
+pass "dce rm --yes: skips prompt, full teardown"
 
 # ===========================================================================
 # D. --keep-config: container + volumes removed; config+secrets preserved.
 # ===========================================================================
 setup_project
 run_rm "$PROJECT" --yes --keep-config </dev/null >"$WORK/d.stdout" 2>&1 \
-  || fail "dc rm --keep-config exited non-zero"
-grep -Fq "CALL docker rm -f $PROJECT" "$LOG" || fail "dc rm --keep-config: missing rm -f"
-grep -Fq "CALL docker volume rm $hidden_vol" "$LOG" || fail "dc rm --keep-config: missing volume rm"
-[[ -d "$SECRET_DIR" ]] || fail "dc rm --keep-config: config dir must be preserved"
-[[ -f "$SECRET_DIR/github-token" ]] || fail "dc rm --keep-config: secrets must be preserved"
-pass "dc rm --keep-config: preserves config+secrets, removes container+volumes"
+  || fail "dce rm --keep-config exited non-zero"
+grep -Fq "CALL docker rm -f $PROJECT" "$LOG" || fail "dce rm --keep-config: missing rm -f"
+grep -Fq "CALL docker volume rm $hidden_vol" "$LOG" || fail "dce rm --keep-config: missing volume rm"
+[[ -d "$SECRET_DIR" ]] || fail "dce rm --keep-config: config dir must be preserved"
+[[ -f "$SECRET_DIR/github-token" ]] || fail "dce rm --keep-config: secrets must be preserved"
+pass "dce rm --keep-config: preserves config+secrets, removes container+volumes"
 
 # ===========================================================================
 # E. --keep-volumes: container + config removed; hidden volumes preserved.
 # ===========================================================================
 setup_project
 run_rm "$PROJECT" --yes --keep-volumes </dev/null >"$WORK/e.stdout" 2>&1 \
-  || fail "dc rm --keep-volumes exited non-zero"
-grep -Fq "CALL docker rm -f $PROJECT" "$LOG" || fail "dc rm --keep-volumes: missing rm -f"
+  || fail "dce rm --keep-volumes exited non-zero"
+grep -Fq "CALL docker rm -f $PROJECT" "$LOG" || fail "dce rm --keep-volumes: missing rm -f"
 if grep -qE "volume rm" "$LOG"; then
-  fail "dc rm --keep-volumes: must not remove volumes
+  fail "dce rm --keep-volumes: must not remove volumes
 $(grep 'volume' "$LOG")"
 fi
-[[ ! -d "$SECRET_DIR" ]] || fail "dc rm --keep-volumes: config should be removed"
-pass "dc rm --keep-volumes: preserves volumes, removes container+config"
+[[ ! -d "$SECRET_DIR" ]] || fail "dce rm --keep-volumes: config should be removed"
+pass "dce rm --keep-volumes: preserves volumes, removes container+config"
 
 # ===========================================================================
 # F. invalid project name is rejected before any work (no destructive calls).
@@ -214,29 +214,29 @@ pass "dc rm --keep-volumes: preserves volumes, removes container+config"
 setup_project
 : > "$LOG"
 if run_rm "../evil" --yes </dev/null >"$WORK/f1.stdout" 2>"$WORK/f1.stderr"; then
-  fail "dc rm: invalid name '../evil' must be rejected"
+  fail "dce rm: invalid name '../evil' must be rejected"
 fi
-grep -Fqi 'invalid project name' "$WORK/f1.stderr" || fail "dc rm: invalid-name error message missing"
-if destructive_logged >/dev/null; then fail "dc rm: invalid name must not issue destructive calls"; fi
+grep -Fqi 'invalid project name' "$WORK/f1.stderr" || fail "dce rm: invalid-name error message missing"
+if destructive_logged >/dev/null; then fail "dce rm: invalid name must not issue destructive calls"; fi
 if run_rm "foo bar" --yes </dev/null >/dev/null 2>&1; then
-  fail "dc rm: invalid name with space must be rejected"
+  fail "dce rm: invalid name with space must be rejected"
 fi
-[[ -d "$SECRET_DIR" ]] || fail "dc rm: invalid-name run must leave existing config untouched"
-pass "dc rm: rejects invalid project names safely"
+[[ -d "$SECRET_DIR" ]] || fail "dce rm: invalid-name run must leave existing config untouched"
+pass "dce rm: rejects invalid project names safely"
 
 # ===========================================================================
 # G. container already absent: no stop/delete calls, but config still removed.
 # ===========================================================================
 setup_absent_container
 run_rm "$PROJECT" --yes </dev/null >"$WORK/g.stdout" 2>&1 \
-  || fail "dc rm (absent container) exited non-zero"
+  || fail "dce rm (absent container) exited non-zero"
 if grep -qE "stop $PROJECT|rm -f $PROJECT" "$LOG"; then
-  fail "dc rm: must not stop/delete an absent container
+  fail "dce rm: must not stop/delete an absent container
 $(grep -E 'stop|rm -f' "$LOG")"
 fi
-[[ ! -d "$SECRET_DIR" ]] || fail "dc rm (absent): config should still be removed"
-[[ -d "$REPOS_DIR" ]] || fail "dc rm (absent): REPOS_DIR must be preserved"
-pass "dc rm: already-absent container skips backend ops, still cleans config"
+[[ ! -d "$SECRET_DIR" ]] || fail "dce rm (absent): config should still be removed"
+[[ -d "$REPOS_DIR" ]] || fail "dce rm (absent): REPOS_DIR must be preserved"
+pass "dce rm: already-absent container skips backend ops, still cleans config"
 
 echo ""
-echo "All dc rm lifecycle checks passed."
+echo "All dce rm lifecycle checks passed."

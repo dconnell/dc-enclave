@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/list.sh - `dc list` / `dc ls`: compact one-line-per-container summary
+# scripts/list.sh - `dce list` / `dce ls`: compact one-line-per-container summary
 # (name, running/stopped/missing/unknown, backend, scopes, stale warning). A
-# lighter view than `dc status`. Requires a reachable backend to report live
+# lighter view than `dce status`. Requires a reachable backend to report live
 # state. A `STALE` warning in the rightmost column means the container is bound
 # to an older image than its configured CONTAINER_IMAGE tag resolves to today;
-# run `dc rebuild-container <name>` to bring it back in sync.
+# run `dce rebuild-container <name>` to bring it back in sync.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -27,7 +27,7 @@ source "$ROOT_DIR/lib/container-backend.sh"
 backend_use "${CONTAINER_BACKEND:-}"
 DEFAULT_BACKEND="$(backend_name)"
 
-PROJECTS=("$HOME"/.config/dev-containers/*/config)
+PROJECTS=("$HOME"/.config/dce-enclave/*/config)
 if [[ ${#PROJECTS[@]} -eq 0 ]]; then
   echo "No projects found."
   exit 0
@@ -36,7 +36,7 @@ fi
 printf "%-24s %-12s %-10s %-24s %s\n" "NAME" "STATUS" "BACKEND" "SCOPES" "WARN"
 
 for config_file in "${PROJECTS[@]}"; do
-  dc_load_project_config "$config_file"
+  dce_load_project_config "$config_file"
   project="${CONTAINER_PROJECT:-$(basename "$(dirname "$config_file")")}"
   project_backend="${CONTAINER_BACKEND:-$DEFAULT_BACKEND}"
 

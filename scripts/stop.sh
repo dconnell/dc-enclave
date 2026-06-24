@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/stop.sh - `dc stop`: stop one or all dev containers.
+# scripts/stop.sh - `dce stop`: stop one or all dev containers.
 #
 # Stopping preserves the container filesystem - it can be restarted with
-# `dc start` without data loss. Use `dc rebuild-container` to fully destroy.
+# `dce start` without data loss. Use `dce rebuild-container` to fully destroy.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -25,14 +25,14 @@ source "$ROOT_DIR/lib/container-backend.sh"
 # Stop a single project; already-stopped containers are reported, not errored.
 _stop_container() {
   local project="$1"
-  local config="$HOME/.config/dev-containers/$project/config"
+  local config="$HOME/.config/dce-enclave/$project/config"
 
   if [[ ! -f "$config" ]]; then
     echo "✗ No config found for '$project' at $config"
     return 1
   fi
 
-  dc_load_project_config "$config"
+  dce_load_project_config "$config"
   backend_use "${CONTAINER_BACKEND:-}" || return 1
 
   local active_backend=""
@@ -52,7 +52,7 @@ if [[ $# -gt 0 ]]; then
     _stop_container "$project"
   done
 else
-  PROJECTS=("$HOME"/.config/dev-containers/*/config)
+  PROJECTS=("$HOME"/.config/dce-enclave/*/config)
   if [[ ${#PROJECTS[@]} -eq 0 ]]; then
     echo "No containers configured."
     exit 0

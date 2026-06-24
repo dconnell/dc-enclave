@@ -50,7 +50,7 @@ Local path:
 ## Scope guidance
 
 - Put git/vim/zsh/editor/profile customization in dotfiles
-- Put preferred CLI/system tools in an overlay Containerfile used with `dc new`
+- Put preferred CLI/system tools in an overlay Containerfile used with `dce new`
 - Keep secrets out of dotfiles and out of overlay Containerfiles
 
 ## Adding more modules

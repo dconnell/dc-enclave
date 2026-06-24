@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # tests/new-container-lifecycle.sh - End-to-end characterization of the
-# `dc new` -> `dc rebuild-container` lifecycle against stubbed backends.
+# `dce new` -> `dce rebuild-container` lifecycle against stubbed backends.
 #
 # This is where the "actually-hard" regressions hide (image derivation,
 # config persistence, create-argv parity across new/rebuild, rebuild-never-
@@ -10,13 +10,13 @@
 # answer the read predicates (image ls / ps) from a controlled tag list.
 #
 # Coverage:
-#   dc new (docker):  image derivation, config persistence + inert round-trip,
+#   dce new (docker):  image derivation, config persistence + inert round-trip,
 #                     secret bootstrap (perms), generated Containerfile layer
 #                     order, create argv shape (volume/port/resource order,
 #                     image positional last), devcontainer.json.
-#   dc new (apple):   .vscode/settings.json terminal-profile branch.
+#   dce new (apple):   .vscode/settings.json terminal-profile branch.
 #   rebuild:          never builds; stop->delete->create->start order; create
-#                     argv parity with `dc new`; default removes hidden volumes.
+#                     argv parity with `dce new`; default removes hidden volumes.
 #   rebuild flags:    fail-fast on missing image (no destructive calls);
 #                     --keep-hidden-volumes (no volume rm); --rotate-keys
 #                     (backup + new key); --rotate-keys --keep-hidden-volumes
@@ -40,7 +40,7 @@ chmod 700 "$WORK"
 # hash is purely a function of (nodejs, golang).
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dev-containers"
+DC_ROOT="$HOME/.config/dce-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 TEAM_OD="$TEAM_DIR/overlays"
@@ -63,7 +63,7 @@ LOG="$WORK/calls.log"
 IMAGES="$WORK/images.lst"
 IMAGES_BAK="$WORK/images.bak"
 : > "$LOG"
-printf 'dev-base:latest\n' > "$IMAGES"
+printf 'dce-base:latest\n' > "$IMAGES"
 
 cat > "$STUB_DIR/_cli" <<'STUB'
 #!/usr/bin/env bash
@@ -119,25 +119,25 @@ first_call() { grep -En "$1" "$LOG" | head -n1 | cut -d: -f1; }
 
 PROJECT="myapp"
 REPOS_DIR="$WORK/home/repos/$PROJECT"
-SECRET_DIR="$WORK/home/.config/dev-containers/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dce-enclave/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 # ===========================================================================
-# dc new (docker backend) with scopes + ports + resources + hidden path
+# dce new (docker backend) with scopes + ports + resources + hidden path
 # ===========================================================================
 BACKEND=docker
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" \
   "$PROJECT" nodejs,golang --cpus 2 --memory 4g --hide node_modules 3000:3000 8080 \
   >"$WORK/new.stdout" 2>"$WORK/new.stderr"
-[[ $? -eq 0 ]] || fail "dc new exited non-zero
+[[ $? -eq 0 ]] || fail "dce new exited non-zero
 -- stdout:$(cat "$WORK/new.stdout")
 -- stderr:$(cat "$WORK/new.stderr")"
 
 # --- config persistence --------------------------------------------------
-[[ -f "$CONFIG" ]] || fail "dc new: config not written"
+[[ -f "$CONFIG" ]] || fail "dce new: config not written"
 chmod 600 "$CONFIG" 2>/dev/null || true
-dc_load_project_config "$CONFIG"
+dce_load_project_config "$CONFIG"
 [[ "${CONTAINER_PROJECT:-}" == "$PROJECT" ]] || fail "config: CONTAINER_PROJECT"
 [[ "${CONTAINER_OVERLAY_SCOPES:-}" == "nodejs,golang" ]] || fail "config: scopes (got [${CONTAINER_OVERLAY_SCOPES:-}])"
 [[ "${CONTAINER_BACKEND:-}" == "docker" ]] || fail "config: backend"
@@ -146,11 +146,11 @@ dc_load_project_config "$CONFIG"
 [[ "${PORTS[0]:-}" == "3000:3000" ]] || fail "config: PORTS[0]"
 [[ "${PORTS[1]:-}" == "8080" ]] || fail "config: PORTS[1]"
 [[ "${CONTAINER_HIDDEN_PATHS[0]:-}" == "node_modules" ]] || fail "config: hidden paths"
-[[ "${CONTAINER_IMAGE:-}" == dev-img-*:latest ]] || fail "config: derived image"
+[[ "${CONTAINER_IMAGE:-}" == dce-img-*:latest ]] || fail "config: derived image"
 
 # Persisted image is exactly what the helper derives from the scopes -> the
 # new/rebuild bridge is deterministic by construction.
-expected_img="$(dc_image_ref_from_scopes "$TEAM_OD" "$USER_OD" "nodejs,golang")"
+expected_img="$(dce_image_ref_from_scopes "$TEAM_OD" "$USER_OD" "nodejs,golang")"
 [[ "$CONTAINER_IMAGE" == "$expected_img" ]] \
   || fail "config: image [$CONTAINER_IMAGE] != derived [$expected_img]"
 
@@ -170,26 +170,26 @@ for f in ssh_key github-token .npmrc; do
 done
 
 # --- generated Containerfile layer order (canonical) ---------------------
-hash16="$(dc_image_hash_from_ref "$CONTAINER_IMAGE")"
+hash16="$(dce_image_hash_from_ref "$CONTAINER_IMAGE")"
 gen_cf="$ROOT_DIR/Containerfiles/generated/Containerfile.$hash16"
-[[ -f "$gen_cf" ]] || fail "dc new: generated Containerfile missing at $gen_cf"
+[[ -f "$gen_cf" ]] || fail "dce new: generated Containerfile missing at $gen_cf"
 gen_markers="$(awk '/^# --- begin overlay:auto:/ { sub(/^overlay:auto:/, "", $4); print $4 }' "$gen_cf")"
 [[ "$gen_markers" == "team/nodejs
 user/nodejs
-team/golang" ]] || fail "dc new: generated layer order wrong [$gen_markers]"
+team/golang" ]] || fail "dce new: generated layer order wrong [$gen_markers]"
 
 # --- image built once with the derived tag + generated file --------------
 grep -Fq "CALL docker build --tag $CONTAINER_IMAGE --file $gen_cf" "$LOG" \
-  || fail "dc new: build call missing/wrong
+  || fail "dce new: build call missing/wrong
 $(grep '^CALL' "$LOG")"
 
 # --- create argv shape: --name, volumes, publish, resources, image LAST ---
 NEW_CREATE="$(grep -E 'create --name myapp' "$LOG" | head -n1)"
-[[ -n "$NEW_CREATE" ]] || fail "dc new: no create call recorded"
+[[ -n "$NEW_CREATE" ]] || fail "dce new: no create call recorded"
 grep -Fq -- "--name myapp"                <<<"$NEW_CREATE" || fail "create: --name"
 grep -Fq -- "--volume $REPOS_DIR:/workspace" <<<"$NEW_CREATE" || fail "create: workspace mount"
 grep -Fq -- "--volume $SECRET_DIR/.npmrc:/home/dev/.npmrc:ro" <<<"$NEW_CREATE" || fail "create: npmrc mount"
-hidden_vol="$(dc_hidden_volume_name "$PROJECT" "node_modules")"
+hidden_vol="$(dce_hidden_volume_name "$PROJECT" "node_modules")"
 grep -Fq -- "--volume $hidden_vol:/workspace/node_modules" <<<"$NEW_CREATE" || fail "create: hidden mount"
 grep -Fq -- "--publish 3000:3000"         <<<"$NEW_CREATE" || fail "create: port 3000"
 grep -Fq -- "--publish 8080:8080"         <<<"$NEW_CREATE" || fail "create: port 8080"
@@ -214,17 +214,17 @@ first_vol2="$(grep -bo -- '--volume' <<<"$NEW_CREATE" | head -1 | cut -d: -f1)"
   || fail "create: --env TZ must precede the volume group (env is fundamental)"
 
 # --- devcontainer.json (docker-compatible branch) ------------------------
-dc_json="$REPOS_DIR/.devcontainer/devcontainer.json"
-[[ -f "$dc_json" ]] || fail "devcontainer.json missing"
-grep -Fq '"workspaceFolder": "/workspace"' "$dc_json" || fail "devcontainer.json: workspaceFolder"
-grep -Fq '"remoteUser": "dev"' "$dc_json" || fail "devcontainer.json: remoteUser"
-grep -Fq "source=$hidden_vol" "$dc_json" || fail "devcontainer.json: hidden volume mount entry"
+dce_json="$REPOS_DIR/.devcontainer/devcontainer.json"
+[[ -f "$dce_json" ]] || fail "devcontainer.json missing"
+grep -Fq '"workspaceFolder": "/workspace"' "$dce_json" || fail "devcontainer.json: workspaceFolder"
+grep -Fq '"remoteUser": "dev"' "$dce_json" || fail "devcontainer.json: remoteUser"
+grep -Fq "source=$hidden_vol" "$dce_json" || fail "devcontainer.json: hidden volume mount entry"
 # The VS Code "Reopen in Container" recipe must carry the same TZ so a rebuild
-# from VS Code matches a dc-created container.
-grep -Fq '"containerEnv"' "$dc_json" || fail "devcontainer.json: containerEnv block missing"
-grep -Fq '"TZ": "America/New_York"' "$dc_json" || fail "devcontainer.json: TZ not set in containerEnv"
+# from VS Code matches a dce-created container.
+grep -Fq '"containerEnv"' "$dce_json" || fail "devcontainer.json: containerEnv block missing"
+grep -Fq '"TZ": "America/New_York"' "$dce_json" || fail "devcontainer.json: TZ not set in containerEnv"
 
-pass "dc new (docker): config, secrets, layer order, create argv, devcontainer.json"
+pass "dce new (docker): config, secrets, layer order, create argv, devcontainer.json"
 
 # ===========================================================================
 # image reuse: a second project with the same scopes must NOT rebuild
@@ -234,17 +234,17 @@ printf '%s\n' "$CONTAINER_IMAGE" >> "$IMAGES"   # derived image now "present"
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" "$REUSE_PROJ" nodejs,golang 3000:3000 \
   >"$WORK/reuse.stdout" 2>"$WORK/reuse.stderr" \
-  || fail "dc new (reuse) exited non-zero"
-if grep -qE 'build --tag dev-img-' "$LOG"; then
-  fail "dc new: must not rebuild an existing derived image
+  || fail "dce new (reuse) exited non-zero"
+if grep -qE 'build --tag dce-img-' "$LOG"; then
+  fail "dce new: must not rebuild an existing derived image
 $(grep -E 'build' "$LOG")"
 fi
 grep -Fq "Reusing existing image: $CONTAINER_IMAGE" "$WORK/reuse.stdout" \
-  || fail "dc new: should report it is reusing the existing image"
+  || fail "dce new: should report it is reusing the existing image"
 # Reset the image list to base-only for the rebuild sections below.
-printf 'dev-base:latest\n' > "$IMAGES"
+printf 'dce-base:latest\n' > "$IMAGES"
 
-pass "dc new: reuses existing derived image (no rebuild)"
+pass "dce new: reuses existing derived image (no rebuild)"
 
 # ===========================================================================
 # rebuild: never builds; stop->delete->create->start; create-argv parity
@@ -257,7 +257,7 @@ printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" 
   >"$WORK/rb.stdout" 2>"$WORK/rb.stderr" || fail "rebuild (default) exited non-zero"
 
 # Never builds an image.
-if grep -qE 'build --tag (dev-base|dev-img-)' "$LOG"; then
+if grep -qE 'build --tag (dce-base|dce-img-)' "$LOG"; then
   fail "rebuild: must never build an image
 $(grep -E 'build' "$LOG")"
 fi
@@ -273,7 +273,7 @@ sta_ln="$(first_call 'start myapp')"
 [[ "$del_ln" -lt "$cre_ln" ]] || fail "rebuild: delete must precede create"
 [[ "$cre_ln" -lt "$sta_ln" ]] || fail "rebuild: create must precede start"
 
-# Create-argv parity with `dc new`: same volume/port/resource shape, same image.
+# Create-argv parity with `dce new`: same volume/port/resource shape, same image.
 RB_CREATE="$(grep -E 'create --name myapp' "$LOG" | head -n1)"
 [[ "$RB_CREATE" == "$NEW_CREATE" ]] \
   || fail "rebuild/new create-argv parity broken
@@ -297,9 +297,9 @@ if printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJEC
       >"$WORK/ff.stdout" 2>"$WORK/ff.stderr"; then
   fail "rebuild: must fail fast when derived image missing"
 fi
-# The "Run: dc rebuild-image all" guidance is echoed on stdout by rebuild.
+# The "Run: dce rebuild-image all" guidance is echoed on stdout by rebuild.
 grep -Fqi 'rebuild-image all' "$WORK/ff.stdout" \
-  || fail "rebuild: fail-fast error should instruct dc rebuild-image all"
+  || fail "rebuild: fail-fast error should instruct dce rebuild-image all"
 if grep -qE 'rm -f myapp|create --name myapp|stop myapp' "$LOG"; then
   fail "rebuild: fail-fast must NOT issue destructive calls
 $(grep -E 'rm -f|create|stop' "$LOG")"
@@ -353,21 +353,21 @@ pub_after="$(cat "$SECRET_DIR/ssh_key.pub")"
 pass "rebuild --rotate-keys: backs up old key, generates a new one"
 
 # ===========================================================================
-# dc new (apple backend): VS Code terminal-profile settings.json branch
+# dce new (apple backend): VS Code terminal-profile settings.json branch
 # ===========================================================================
 APROJ="appleproj"
 BACKEND=apple
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" "$APROJ" nodejs 3000:3000 \
   >"$WORK/apple.stdout" 2>"$WORK/apple.stderr" \
-  || fail "dc new (apple) exited non-zero"
+  || fail "dce new (apple) exited non-zero"
 
 vs_settings="$WORK/home/repos/$APROJ/.vscode/settings.json"
 [[ -f "$vs_settings" ]] || fail "apple: .vscode/settings.json missing"
-grep -Fq '"terminal.integrated.defaultProfile.osx": "dev-container"' "$vs_settings" \
-  || fail "apple: defaultProfile.dev-container missing"
+grep -Fq '"terminal.integrated.defaultProfile.osx": "dce-container"' "$vs_settings" \
+  || fail "apple: defaultProfile.dce-container missing"
 grep -Fq "scripts/shell.sh $APROJ" "$vs_settings" \
-  || fail "apple: terminal profile must reference dc shell.sh $APROJ"
+  || fail "apple: terminal profile must reference dce shell.sh $APROJ"
 # apple branch must NOT write a Dev Containers devcontainer.json.
 [[ ! -f "$WORK/home/repos/$APROJ/.devcontainer/devcontainer.json" ]] \
   || fail "apple: must not write devcontainer.json"
@@ -377,7 +377,7 @@ grep -Fq -- "--env TZ=America/New_York" <<<"$APPLE_CREATE" \
   || fail "apple create: --env TZ missing
 $APPLE_CREATE"
 
-pass "dc new (apple): VS Code terminal-profile settings.json branch"
+pass "dce new (apple): VS Code terminal-profile settings.json branch"
 
 echo ""
 echo "All new/rebuild lifecycle checks passed."

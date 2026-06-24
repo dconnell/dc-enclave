@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 # =============================================================================
-# lib/common.sh - Shared helpers for host-side dc scripts.
+# lib/common.sh - Shared helpers for host-side dce scripts.
 #
 # Sourced (never executed directly) by every script under scripts/. Enforces the
-# Bash 4+ requirement, guards against double-sourcing, and exposes the dc_*
+# Bash 4+ requirement, guards against double-sourcing, and exposes the dce_*
 # helper API used across the codebase: global config loading, scope/hidden-path
 # normalization, deterministic image-tag derivation, and hidden-volume handling.
 #
 # Key concepts this file encodes:
-#   - Overlay scopes  -> see dc_effective_scopes_csv / dc_image_ref_from_scopes
-#   - Hidden volumes  -> see dc_hidden_volume_name and friends
-#   - Per-project cfg -> ~/.config/dev-containers/<name>/config (key=value)
+#   - Overlay scopes  -> see dce_effective_scopes_csv / dce_image_ref_from_scopes
+#   - Hidden volumes  -> see dce_hidden_volume_name and friends
+#   - Per-project cfg -> ~/.config/dce-enclave/<name>/config (key=value)
 # =============================================================================
 
 if [[ -z "${BASH_VERSION:-}" ]]; then
-  echo "ERROR: dev-containers requires Bash 4+ (scripts must run under bash)." >&2
+  echo "ERROR: DC Enclave requires Bash 4+ (scripts must run under bash)." >&2
   exit 1
 fi
 
 if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
-  echo "ERROR: dev-containers requires Bash 4+ (current: $BASH_VERSION)" >&2
+  echo "ERROR: DC Enclave requires Bash 4+ (current: $BASH_VERSION)" >&2
   echo "  macOS: brew install bash" >&2
   exit 1
 fi
@@ -31,26 +31,26 @@ if [[ -n "${_DC_COMMON_SH_LOADED:-}" ]]; then
 fi
 declare -gr _DC_COMMON_SH_LOADED=1
 
-# Single source of truth for the dev-containers version. Sourced by every host
-# script (via the dc dispatcher and each subcommand), so both `dc --version` and
+# Single source of truth for the DC Enclave version. Sourced by every host
+# script (via the dce dispatcher and each subcommand), so both `dce --version` and
 # any subcommand can read $DC_VERSION. Bump this in the same commit that tags a
-# release (e.g. `git tag v0.1.0`) so the embedded string tracks the git tag.
-declare -gr DC_VERSION="0.1.0"
+# release (e.g. `git tag v0.2.0`) so the embedded string tracks the git tag.
+declare -gr DC_VERSION="0.2.0"
 
 # Print an error message to stderr and exit non-zero. Standard failure path.
-dc_die() {
+dce_die() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1
 }
 
 # Print a non-fatal warning to stderr.
-dc_warn() {
+dce_warn() {
   printf 'WARN: %s\n' "$*" >&2
 }
 
 # Join positional arguments with the given separator (first arg). Echoes the
 # result without a trailing newline; empty args are preserved as empty fields.
-dc_join_by() {
+dce_join_by() {
   local separator="$1"
   shift
 
@@ -68,7 +68,7 @@ dc_join_by() {
 
 # Canonicalize a path to an absolute, symlink-resolved form. Works for both
 # existing directories and not-yet-existing file paths (resolving the parent).
-dc_resolve_path() {
+dce_resolve_path() {
   local input="$1"
 
   if [[ -d "$input" ]]; then
@@ -85,7 +85,7 @@ dc_resolve_path() {
 # zone names (letters, digits, '_', '/', '+', '-'). Rejects whitespace, colons,
 # and every shell metacharacter unconditionally -- the value is embedded in a
 # backend `--env TZ=` flag, so it can never be allowed to escape the assignment.
-dc_timezone_name_is_valid() {
+dce_timezone_name_is_valid() {
   local name="$1"
   [[ -n "$name" ]] || return 1
   [[ "$name" =~ ^[A-Za-z0-9_+./-]+$ ]]
@@ -97,7 +97,7 @@ dc_timezone_name_is_valid() {
 #   macOS: /var/db/timezone/zoneinfo/<Area>/<Location>
 # Returns 0 with the zone on stdout when a clean segment is found; returns 1 for
 # regular-file copies, missing paths, non-zoneinfo links, or invalid names.
-dc_timezone_from_localtime_file() {
+dce_timezone_from_localtime_file() {
   local path="$1"
   local target=""
   local zone=""
@@ -109,7 +109,7 @@ dc_timezone_from_localtime_file() {
   if [[ "$target" == *zoneinfo/* ]]; then
     zone="${target##*zoneinfo/}"
     zone="${zone%%/}"
-    if dc_timezone_name_is_valid "$zone"; then
+    if dce_timezone_name_is_valid "$zone"; then
       printf '%s\n' "$zone"
       return 0
     fi
@@ -126,119 +126,119 @@ dc_timezone_from_localtime_file() {
 # so the caller simply omits `--env TZ` and leaves the container on the image
 # default. An explicitly-set but invalid $TZ is warned about and rejected rather
 # than silently substituted from /etc/localtime (an explicit value is intentional).
-dc_host_timezone() {
+dce_host_timezone() {
   local tz="${TZ:-}"
 
   if [[ -n "$tz" ]]; then
-    if dc_timezone_name_is_valid "$tz"; then
+    if dce_timezone_name_is_valid "$tz"; then
       printf '%s\n' "$tz"
       return 0
     fi
-    dc_warn "Ignoring invalid TZ value: $tz"
+    dce_warn "Ignoring invalid TZ value: $tz"
     return 1
   fi
 
-  dc_timezone_from_localtime_file "/etc/localtime"
+  dce_timezone_from_localtime_file "/etc/localtime"
 }
 
-# Path to the global dev-containers config file (DC_TEAM_DIR/DC_USER_DIR live here).
-dc_global_config_path() {
-  printf '%s/.config/dev-containers/config\n' "$HOME"
+# Path to the global DC Enclave config file (DC_TEAM_DIR/DC_USER_DIR live here).
+dce_global_config_path() {
+  printf '%s/.config/dce-enclave/config\n' "$HOME"
 }
 
 # Default team/user roots used by setup.sh when bootstrapping global config. Each
 # is an independent root that may be its own git repo, containing both overlays/
 # (image layers) and container-recipes/ (per-container-name recipe files).
-dc_team_default_root() {
-  printf '%s/.config/dev-containers/team\n' "$HOME"
+dce_team_default_root() {
+  printf '%s/.config/dce-enclave/team\n' "$HOME"
 }
 
-dc_user_default_root() {
-  printf '%s/.config/dev-containers/user\n' "$HOME"
+dce_user_default_root() {
+  printf '%s/.config/dce-enclave/user\n' "$HOME"
 }
 
 # Single source of truth for the four leaf directories under the two roots. The
-# root variables must be set (dc_load_global_config guarantees this for runtime;
+# root variables must be set (dce_load_global_config guarantees this for runtime;
 # callers that bypass the loader must set them first).
-dc_team_overlays_dir() {
+dce_team_overlays_dir() {
   printf '%s/overlays\n' "$DC_TEAM_DIR"
 }
 
-dc_user_overlays_dir() {
+dce_user_overlays_dir() {
   printf '%s/overlays\n' "$DC_USER_DIR"
 }
 
-dc_team_recipes_dir() {
+dce_team_recipes_dir() {
   printf '%s/container-recipes\n' "$DC_TEAM_DIR"
 }
 
-dc_user_recipes_dir() {
+dce_user_recipes_dir() {
   printf '%s/container-recipes\n' "$DC_USER_DIR"
 }
 
 # Normalize a global-config root path in place by variable name: expand a leading
 # ~ and resolve a relative path against the config dir. Shared by the two-root
 # loader so the exact rule lives in one place (previously it was triplicated).
-_dc_normalize_config_root() {
+_dce_normalize_config_root() {
   local varname="$1"
   local val="${!varname}"
   if [[ "$val" == "~" || "$val" == "~/"* ]]; then
     val="$HOME${val#\~}"
   elif [[ "$val" != /* ]]; then
-    val="$HOME/.config/dev-containers/$val"
+    val="$HOME/.config/dce-enclave/$val"
   fi
   printf -v "$varname" '%s' "$val"
 }
 
 # Load and validate the global config, exporting DC_TEAM_DIR and DC_USER_DIR.
 #
-# The global config is parsed with dc_config_extract_scalar (no `source`), so a
+# The global config is parsed with dce_config_extract_scalar (no `source`), so a
 # malicious or corrupted file cannot execute code. Both roots are deliberately
 # unset first so a stale/environment value can't leak in; each is then normalized
 # (~ and relative paths resolved against the config dir) and required to exist.
 # Each root may be its own git repo holding both overlays/ and container-recipes/.
-dc_load_global_config() {
+dce_load_global_config() {
   local cfg=""
-  cfg="$(dc_global_config_path)"
+  cfg="$(dce_global_config_path)"
 
   if [[ ! -f "$cfg" ]]; then
-    dc_die "Global config not found: ~/.config/dev-containers/config
+    dce_die "Global config not found: ~/.config/dce-enclave/config
 Run: scripts/setup.sh"
   fi
 
   if [[ -L "$cfg" ]]; then
-    dc_die "Refusing to load global config via symlink: $cfg"
+    dce_die "Refusing to load global config via symlink: $cfg"
   fi
 
   unset DC_TEAM_DIR DC_USER_DIR
 
-  if ! DC_TEAM_DIR="$(dc_config_extract_scalar "$cfg" DC_TEAM_DIR)"; then
-    dc_die "DC_TEAM_DIR is not set (or is not a clean quoted value) in ~/.config/dev-containers/config
+  if ! DC_TEAM_DIR="$(dce_config_extract_scalar "$cfg" DC_TEAM_DIR)"; then
+    dce_die "DC_TEAM_DIR is not set (or is not a clean quoted value) in ~/.config/dce-enclave/config
 Set DC_TEAM_DIR and rerun scripts/setup.sh"
   fi
-  if ! DC_USER_DIR="$(dc_config_extract_scalar "$cfg" DC_USER_DIR)"; then
-    dc_die "DC_USER_DIR is not set (or is not a clean quoted value) in ~/.config/dev-containers/config
+  if ! DC_USER_DIR="$(dce_config_extract_scalar "$cfg" DC_USER_DIR)"; then
+    dce_die "DC_USER_DIR is not set (or is not a clean quoted value) in ~/.config/dce-enclave/config
 Set DC_USER_DIR and rerun scripts/setup.sh"
   fi
 
   if [[ -z "${DC_TEAM_DIR:-}" ]]; then
-    dc_die "DC_TEAM_DIR is not set in ~/.config/dev-containers/config
+    dce_die "DC_TEAM_DIR is not set in ~/.config/dce-enclave/config
 Set DC_TEAM_DIR and rerun scripts/setup.sh"
   fi
   if [[ -z "${DC_USER_DIR:-}" ]]; then
-    dc_die "DC_USER_DIR is not set in ~/.config/dev-containers/config
+    dce_die "DC_USER_DIR is not set in ~/.config/dce-enclave/config
 Set DC_USER_DIR and rerun scripts/setup.sh"
   fi
 
-  _dc_normalize_config_root DC_TEAM_DIR
-  _dc_normalize_config_root DC_USER_DIR
+  _dce_normalize_config_root DC_TEAM_DIR
+  _dce_normalize_config_root DC_USER_DIR
 
   if [[ ! -d "$DC_TEAM_DIR" ]]; then
-    dc_die "Team root does not exist: $DC_TEAM_DIR
+    dce_die "Team root does not exist: $DC_TEAM_DIR
 Run: scripts/setup.sh"
   fi
   if [[ ! -d "$DC_USER_DIR" ]]; then
-    dc_die "User root does not exist: $DC_USER_DIR
+    dce_die "User root does not exist: $DC_USER_DIR
 Run: scripts/setup.sh"
   fi
 }
@@ -247,7 +247,7 @@ Run: scripts/setup.sh"
 #
 # Tries sha256sum (Linux), shasum (macOS default), then openssl, so the same
 # code works across all supported host platforms without extra dependencies.
-dc_sha256_hex() {
+dce_sha256_hex() {
   local input="$1"
 
   if command -v sha256sum >/dev/null 2>&1; then
@@ -268,15 +268,15 @@ dc_sha256_hex() {
     return 0
   fi
 
-  dc_die "No SHA-256 tool available (sha256sum, shasum, or openssl required)."
+  dce_die "No SHA-256 tool available (sha256sum, shasum, or openssl required)."
 }
 
 # Echo the SHA-256 hex digest of a file's raw bytes.
 #
-# Companion to dc_sha256_hex for the cases (provenance fingerprints) where the
+# Companion to dce_sha256_hex for the cases (provenance fingerprints) where the
 # input is a file and every byte -- including trailing newlines -- must count.
-# Same tool fallback chain as dc_sha256_hex so it works on every supported host.
-dc_sha256_file() {
+# Same tool fallback chain as dce_sha256_hex so it works on every supported host.
+dce_sha256_file() {
   local file="$1"
 
   if command -v sha256sum >/dev/null 2>&1; then
@@ -297,18 +297,18 @@ dc_sha256_file() {
     return 0
   fi
 
-  dc_die "No SHA-256 tool available (sha256sum, shasum, or openssl required)."
+  dce_die "No SHA-256 tool available (sha256sum, shasum, or openssl required)."
 }
 
 # Validate a single overlay scope name against the allowed identifier pattern.
-dc_validate_scope_name() {
+dce_validate_scope_name() {
   local scope="$1"
   [[ "$scope" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
 }
 
 # Normalize a comma-separated scope list: trim/lowercase each token, drop
 # empties, reject invalid names, and de-duplicate while preserving order.
-dc_normalize_scopes_csv() {
+dce_normalize_scopes_csv() {
   local input="$1"
 
   local -a normalized=()
@@ -323,7 +323,7 @@ dc_normalize_scopes_csv() {
     scope="${scope,,}"
     [[ -z "$scope" ]] && continue
 
-    if ! dc_validate_scope_name "$scope"; then
+    if ! dce_validate_scope_name "$scope"; then
       printf 'ERROR: Invalid scope name: %s\n' "$scope" >&2
       printf '  Allowed pattern: ^[a-z0-9][a-z0-9._-]*$\n' >&2
       return 1
@@ -337,14 +337,14 @@ dc_normalize_scopes_csv() {
     normalized+=("$scope")
   done
 
-  dc_join_by ',' "${normalized[@]}"
+  dce_join_by ',' "${normalized[@]}"
 }
 
 # Validate one hidden path. Hidden paths are mounted as named volumes under
 # /workspace and embedded in backend mount flags, so they must be relative,
 # traversal-free, contain no whitespace or ':' (which would break flag parsing),
 # and use only filename-safe characters.
-dc_validate_hidden_path() {
+dce_validate_hidden_path() {
   local path="$1"
 
   [[ -n "$path" ]] || return 1
@@ -367,7 +367,7 @@ dc_validate_hidden_path() {
 # Normalize a single comma-separated hidden-path value: trim whitespace, strip
 # leading "./", collapse duplicate slashes, strip trailing "/", de-dupe, and
 # validate each path. Returns the canonical CSV or fails with a message.
-dc_normalize_hidden_paths_csv() {
+dce_normalize_hidden_paths_csv() {
   local input="$1"
 
   if [[ -z "$input" ]]; then
@@ -402,7 +402,7 @@ dc_normalize_hidden_paths_csv() {
       path="${path//\/\//\/}"
     done
 
-    if ! dc_validate_hidden_path "$path"; then
+    if ! dce_validate_hidden_path "$path"; then
       printf 'ERROR: Invalid hidden path: %s\n' "$path" >&2
       printf '  Rules: relative path under /workspace; no whitespace, no :, no traversal (., ..)\n' >&2
       return 1
@@ -421,13 +421,13 @@ dc_normalize_hidden_paths_csv() {
     return 1
   fi
 
-  dc_join_by ',' "${normalized[@]}"
+  dce_join_by ',' "${normalized[@]}"
 }
 
 # Normalize hidden paths across multiple --hide values (which may repeat).
 # Merges and de-duplicates all values into one canonical CSV, echoing empty
 # when no values are supplied.
-dc_normalize_hidden_paths_values() {
+dce_normalize_hidden_paths_values() {
   if [[ $# -eq 0 ]]; then
     printf ''
     return 0
@@ -442,7 +442,7 @@ dc_normalize_hidden_paths_values() {
 
   for raw_value in "$@"; do
     [[ -z "$raw_value" ]] && continue
-    if ! normalized_csv="$(dc_normalize_hidden_paths_csv "$raw_value")"; then
+    if ! normalized_csv="$(dce_normalize_hidden_paths_csv "$raw_value")"; then
       return 1
     fi
 
@@ -457,32 +457,32 @@ dc_normalize_hidden_paths_values() {
     done
   done
 
-  dc_join_by ',' "${normalized_all[@]}"
+  dce_join_by ',' "${normalized_all[@]}"
 }
 
 # Build the deterministic managed-volume name for a project hidden path.
 #
-# Format: dc-hide-<project-slug>-<12hex>. The name is derived purely from the
+# Format: dce-hide-<project-slug>-<12hex>. The name is derived purely from the
 # project and path (not random) so the same hidden path reliably maps to the
 # same volume across creates, starts, and rebuilds, letting us find/remove it.
-dc_hidden_volume_name() {
+dce_hidden_volume_name() {
   local project="$1"
   local hidden_path="$2"
 
   local project_slug=""
-  project_slug="$(dc_project_slug "$project")"
+  project_slug="$(dce_project_slug "$project")"
 
   local key="hide-v1|$project|$hidden_path"
   local hash=""
-  hash="$(dc_sha256_hex "$key")"
+  hash="$(dce_sha256_hex "$key")"
   hash="${hash:0:12}"
 
-  printf 'dc-hide-%s-%s\n' "$project_slug" "$hash"
+  printf 'dce-hide-%s-%s\n' "$project_slug" "$hash"
 }
 
 # Check whether a named volume exists in the backend's volume store.
 # Returns 0 (exists), 1 (absent), or 2 (the backend list call itself failed).
-dc_hidden_volume_exists() {
+dce_hidden_volume_exists() {
   local volume_name="$1"
   local volume_list=""
   local listed_volume=""
@@ -506,7 +506,7 @@ dc_hidden_volume_exists() {
 # Default rebuild drops hidden volumes for a clean slate (fresh dependency
 # install, no stale/compromised caches). If removal fails but the volume is
 # still present, the rebuild aborts rather than risk reusing suspect state.
-dc_rebuild_handle_hidden_volumes() {
+dce_rebuild_handle_hidden_volumes() {
   local project="$1"
   local keep_hidden_volumes="$2"
   shift 2
@@ -525,7 +525,7 @@ dc_rebuild_handle_hidden_volumes() {
     echo "  -> Preserving hidden volumes (--keep-hidden-volumes):"
     for hidden_path in "${hidden_paths[@]}"; do
       [[ -z "$hidden_path" ]] && continue
-      hidden_volume="$(dc_hidden_volume_name "$project" "$hidden_path")"
+      hidden_volume="$(dce_hidden_volume_name "$project" "$hidden_path")"
       echo "     ~ Kept: $hidden_volume ($hidden_path)"
     done
     return 0
@@ -534,14 +534,14 @@ dc_rebuild_handle_hidden_volumes() {
   echo "  -> Removing hidden volumes for clean rebuild..."
   for hidden_path in "${hidden_paths[@]}"; do
     [[ -z "$hidden_path" ]] && continue
-    hidden_volume="$(dc_hidden_volume_name "$project" "$hidden_path")"
+    hidden_volume="$(dce_hidden_volume_name "$project" "$hidden_path")"
 
     if backend_remove_volume "$hidden_volume" 2>/dev/null; then
       echo "     ✓ Removed: $hidden_volume ($hidden_path)"
       continue
     fi
 
-    if dc_hidden_volume_exists "$hidden_volume"; then
+    if dce_hidden_volume_exists "$hidden_volume"; then
       echo "ERROR: Failed to remove hidden volume still present: $hidden_volume ($hidden_path)"
       echo "       Aborting rebuild to avoid reusing possibly compromised hidden state."
       return 1
@@ -562,7 +562,7 @@ dc_rebuild_handle_hidden_volumes() {
 # Verify each hidden path is actually backed by a separate volume (different
 # device than /workspace). Catches the case where a named volume was requested
 # but the backend silently bind-mounted the host path instead.
-dc_hidden_mounts_verified() {
+dce_hidden_mounts_verified() {
   local project="$1"
   shift
 
@@ -587,7 +587,7 @@ dc_hidden_mounts_verified() {
 # Some backends (e.g. OrbStack) occasionally apply named-volume mounts only
 # after a restart, so we verify, then stop/start once and re-verify before
 # giving up. Called after both create and start.
-dc_ensure_hidden_mounts() {
+dce_ensure_hidden_mounts() {
   local project="$1"
   shift
 
@@ -599,7 +599,7 @@ dc_ensure_hidden_mounts() {
   local max_attempts=2
 
   while true; do
-    if dc_hidden_mounts_verified "$project" "$@"; then
+    if dce_hidden_mounts_verified "$project" "$@"; then
       return 0
     fi
 
@@ -608,7 +608,7 @@ dc_ensure_hidden_mounts() {
       echo "ERROR: Hidden volume mounts not active after restart." >&2
       echo "       Named volumes are configured but not applied to the container." >&2
       echo "       This is a known issue with some container backends (e.g. OrbStack)." >&2
-      echo "       Try: dc stop $project && dc start $project" >&2
+      echo "       Try: dce stop $project && dce start $project" >&2
       return 1
     fi
 
@@ -622,7 +622,7 @@ dc_ensure_hidden_mounts() {
 
 # Derive a filesystem-safe slug from a project name (lowercased, non-alnum
 # collapsed to '-', trimmed, capped at 24 chars). Used to build volume names.
-dc_project_slug() {
+dce_project_slug() {
   local project="$1"
   local project_slug="${project,,}"
 
@@ -640,8 +640,8 @@ dc_project_slug() {
 
 # Return whether an overlay scope exists in either team or user overlays dir.
 # Each dir is the resolved leaf overlays/ directory of a root (see
-# dc_team_overlays_dir / dc_user_overlays_dir).
-dc_scope_exists() {
+# dce_team_overlays_dir / dce_user_overlays_dir).
+dce_scope_exists() {
   local team_od="$1"
   local user_od="$2"
   local scope="$3"
@@ -655,13 +655,13 @@ dc_scope_exists() {
 # team or user overlays dir (missing ones fail fast), "all" is never taken from
 # the request but auto-prepended when a Containerfile.all exists. The resulting
 # order drives overlay composition and image-tag derivation.
-dc_effective_scopes_csv() {
+dce_effective_scopes_csv() {
   local team_od="$1"
   local user_od="$2"
   local requested_scopes_csv="$3"
 
   local normalized_csv=""
-  if ! normalized_csv="$(dc_normalize_scopes_csv "$requested_scopes_csv")"; then
+  if ! normalized_csv="$(dce_normalize_scopes_csv "$requested_scopes_csv")"; then
     return 1
   fi
 
@@ -676,7 +676,7 @@ dc_effective_scopes_csv() {
     [[ -z "$scope" ]] && continue
     [[ "$scope" == "all" ]] && continue
 
-    if dc_scope_exists "$team_od" "$user_od" "$scope"; then
+    if dce_scope_exists "$team_od" "$user_od" "$scope"; then
       selected+=("$scope")
     else
       missing+=("$scope")
@@ -684,37 +684,37 @@ dc_effective_scopes_csv() {
   done
 
   if [[ ${#missing[@]} -gt 0 ]]; then
-    printf 'ERROR: Missing overlay scope(s): %s\n' "$(dc_join_by ', ' "${missing[@]}")" >&2
+    printf 'ERROR: Missing overlay scope(s): %s\n' "$(dce_join_by ', ' "${missing[@]}")" >&2
     printf '  Add Containerfile.<scope> under %s or %s\n' "$team_od" "$user_od" >&2
     return 1
   fi
 
-  if dc_scope_exists "$team_od" "$user_od" "all"; then
+  if dce_scope_exists "$team_od" "$user_od" "all"; then
     effective+=("all")
   fi
 
   effective+=("${selected[@]}")
 
-  dc_join_by ',' "${effective[@]}"
+  dce_join_by ',' "${effective[@]}"
 }
 
 # Derive the deterministic image tag for a scope set.
 #
-# No overlays -> dev-base:latest (the shared base). Otherwise the effective
-# scopes are hashed into dev-img-<16hex>:latest so identical scope sets always
+# No overlays -> dce-base:latest (the shared base). Otherwise the effective
+# scopes are hashed into dce-img-<16hex>:latest so identical scope sets always
 # resolve to one reusable, shareable derived image across projects/machines.
-dc_image_ref_from_scopes() {
+dce_image_ref_from_scopes() {
   local team_od="$1"
   local user_od="$2"
   local requested_scopes_csv="$3"
 
   local effective_scopes_csv=""
-  if ! effective_scopes_csv="$(dc_effective_scopes_csv "$team_od" "$user_od" "$requested_scopes_csv")"; then
+  if ! effective_scopes_csv="$(dce_effective_scopes_csv "$team_od" "$user_od" "$requested_scopes_csv")"; then
     return 1
   fi
 
   if [[ -z "$effective_scopes_csv" ]]; then
-    printf 'dev-base:latest\n'
+    printf 'dce-base:latest\n'
     return 0
   fi
 
@@ -729,18 +729,18 @@ dc_image_ref_from_scopes() {
   done
 
   local hash=""
-  hash="$(dc_sha256_hex "$scope_key")"
+  hash="$(dce_sha256_hex "$scope_key")"
   hash="${hash:0:16}"
 
-  printf 'dev-img-%s:latest\n' "$hash"
+  printf 'dce-img-%s:latest\n' "$hash"
 }
 
-# Extract the 16-hex hash from a dev-img-* reference, or fail for other refs.
-dc_image_hash_from_ref() {
+# Extract the 16-hex hash from a dce-img-* reference, or fail for other refs.
+dce_image_hash_from_ref() {
   local image_ref="$1"
   local repo="${image_ref%%:*}"
 
-  if [[ "$repo" =~ ^dev-img-([0-9a-f]{16})$ ]]; then
+  if [[ "$repo" =~ ^dce-img-([0-9a-f]{16})$ ]]; then
     printf '%s\n' "${BASH_REMATCH[1]}"
     return 0
   fi
@@ -750,7 +750,7 @@ dc_image_hash_from_ref() {
 
 # =============================================================================
 # Image provenance (plans/versioning.md). Best-effort provenance capture so a
-# built dev-img-* image can be traced back to the overlay state (team/user git
+# built dce-img-* image can be traced back to the overlay state (team/user git
 # commits + file content fingerprints) that produced it. Detection is per-root
 # and independent for team and user: each side always yields a content_hash,
 # and additionally yields git commit/dirty/source when its root (DC_TEAM_DIR /
@@ -765,7 +765,7 @@ dc_image_hash_from_ref() {
 # SHAs, hex hashes, scope names, ISO timestamps, git remote URLs) are normally
 # already clean, so this is defensive -- it keeps provenance.jsonl valid even
 # if a future field carries an unusual byte.
-dc_json_escape() {
+dce_json_escape() {
   local s="$1"
   local out=""
   local i ch ord code
@@ -801,7 +801,7 @@ dc_json_escape() {
 # Control chars are removed. Our values are inherently safe, so this is a guard
 # against surprises (e.g. an exotic git remote URL). Stripping (not escaping)
 # keeps the label inert without depending on Dockerfile escape quirks.
-dc_label_scrub() {
+dce_label_scrub() {
   local s="$1"
   local out=""
   local i ch ord
@@ -827,7 +827,7 @@ dc_label_scrub() {
 # (e.g. that side has no Containerfile.<scope>). The 12-hex truncation matches
 # the label contract; the per-fragment "v1" prefix leaves room to evolve the
 # scheme.
-dc_provenance_content_hash() {
+dce_provenance_content_hash() {
   local overlays_dir="$1"
   local effective_scopes_csv="$2"
 
@@ -840,30 +840,30 @@ dc_provenance_content_hash() {
     [[ -n "$scope" ]] || continue
     file="$overlays_dir/Containerfile.$scope"
     [[ -f "$file" ]] || continue
-    acc+="v1|$scope|$(dc_sha256_file "$file")|"
+    acc+="v1|$scope|$(dce_sha256_file "$file")|"
   done
 
   [[ -n "$acc" ]] || return 0
   local hash=""
-  hash="$(dc_sha256_hex "$acc")"
+  hash="$(dce_sha256_hex "$acc")"
   printf '%s\n' "${hash:0:12}"
 }
 
 # Fold both namespaces' per-side fingerprints into one full (64-hex) hash. Used
 # as the stable, always-present combined identifier (label content.hash and the
 # JSONL dedup key). Order is fixed (team then user) so the result is stable.
-dc_provenance_combined_hash() {
+dce_provenance_combined_hash() {
   local team_hash="$1"
   local user_hash="$2"
 
-  dc_sha256_hex "v1|${team_hash}|${user_hash}"
+  dce_sha256_hex "v1|${team_hash}|${user_hash}"
 }
 
 # Git HEAD full SHA of $dir, or empty when $dir is not a git checkout. Always
 # exits 0 (best-effort: provenance never fails a build). The FULL sha (not the
 # abbreviated form) is stored so the log/labels hold the canonical identifier --
 # short shas are a display concern, handled at read time.
-dc_provenance_git_commit() {
+dce_provenance_git_commit() {
   local dir="$1"
 
   [[ -d "$dir" ]] || { printf ''; return 0; }
@@ -881,7 +881,7 @@ dc_provenance_git_commit() {
 # subtree. Each root now holds both overlays/ and container-recipes/, so image
 # provenance passes "overlays" so a recipe-only edit does not mark overlay
 # provenance dirty. Empty/omitted pathspec checks the whole work tree.
-dc_provenance_git_dirty() {
+dce_provenance_git_dirty() {
   local dir="$1"
   local pathspec="${2:-}"
 
@@ -901,7 +901,7 @@ dc_provenance_git_dirty() {
 }
 
 # configured remote.origin.url for $dir, or empty when not under git / no remote.
-dc_provenance_git_source() {
+dce_provenance_git_source() {
   local dir="$1"
 
   [[ -d "$dir" ]] || { printf ''; return 0; }
@@ -912,7 +912,7 @@ dc_provenance_git_source() {
 # Render a scopes CSV as a JSON array string, e.g. ["nodejs","golang"] / [].
 # Each element is JSON-escaped (scope names are charset-restricted, but escape
 # anyway so the output is always valid JSON).
-dc_provenance_scopes_json() {
+dce_provenance_scopes_json() {
   local csv="$1"
   local out="[" first=1 scope=""
   local -a scopes=()
@@ -921,7 +921,7 @@ dc_provenance_scopes_json() {
   for scope in "${scopes[@]}"; do
     [[ -n "$scope" ]] || continue
     if [[ $first -eq 1 ]]; then first=0; else out+=","; fi
-    out+="\"$(dc_json_escape "$scope")\""
+    out+="\"$(dce_json_escape "$scope")\""
   done
 
   out+="]"
@@ -929,8 +929,8 @@ dc_provenance_scopes_json() {
 }
 
 # Path to a project's provenance log.
-dc_provenance_log_path() {
-  printf '%s/.config/dev-containers/%s/provenance.jsonl\n' "$HOME" "$1"
+dce_provenance_log_path() {
+  printf '%s/.config/dce-enclave/%s/provenance.jsonl\n' "$HOME" "$1"
 }
 
 # Append one provenance entry to the project's JSONL log, deduping on change.
@@ -938,7 +938,7 @@ dc_provenance_log_path() {
 # Recomputes the overlay-derived values from the team/user roots ($team_root,
 # $user_root -- DC_TEAM_DIR/DC_USER_DIR) + $scopes_csv (the same source of truth
 # compose-containerfile.sh uses for the image labels) and merges in $base_id
-# (the caller-supplied local dev-base image Id) plus the build timestamp. Dedup
+# (the caller-supplied local dce-base image Id) plus the build timestamp. Dedup
 # key is (combined content_hash, base id): every overlay byte and scope is
 # already encoded in content_hash, and base id covers a base rebuild, so the two
 # together uniquely identify an image state. If the last logged line matches,
@@ -950,7 +950,7 @@ dc_provenance_log_path() {
 # container-recipes/: the content hash is computed from overlays/ fragments
 # only, git_commit is the repo HEAD, and git_dirty uses an "overlays" pathspec
 # so a recipe-only edit does not contaminate overlay provenance.
-dc_log_provenance() {
+dce_log_provenance() {
   local project="$1"
   local image_ref="$2"
   local action="$3"
@@ -964,21 +964,21 @@ dc_log_provenance() {
   user_od="$user_root/overlays"
 
   local eff=""
-  eff="$(dc_effective_scopes_csv "$team_od" "$user_od" "$scopes_csv" 2>/dev/null || true)"
+  eff="$(dce_effective_scopes_csv "$team_od" "$user_od" "$scopes_csv" 2>/dev/null || true)"
 
   local team_ch="" user_ch="" combined=""
-  team_ch="$(dc_provenance_content_hash "$team_od" "$eff")"
-  user_ch="$(dc_provenance_content_hash "$user_od" "$eff")"
-  combined="$(dc_provenance_combined_hash "$team_ch" "$user_ch")"
+  team_ch="$(dce_provenance_content_hash "$team_od" "$eff")"
+  user_ch="$(dce_provenance_content_hash "$user_od" "$eff")"
+  combined="$(dce_provenance_combined_hash "$team_ch" "$user_ch")"
 
   local team_commit="" team_dirty="" team_source=""
   local user_commit="" user_dirty="" user_source=""
-  team_commit="$(dc_provenance_git_commit "$team_root")"
-  team_dirty="$(dc_provenance_git_dirty "$team_root" overlays)"
-  team_source="$(dc_provenance_git_source "$team_root")"
-  user_commit="$(dc_provenance_git_commit "$user_root")"
-  user_dirty="$(dc_provenance_git_dirty "$user_root" overlays)"
-  user_source="$(dc_provenance_git_source "$user_root")"
+  team_commit="$(dce_provenance_git_commit "$team_root")"
+  team_dirty="$(dce_provenance_git_dirty "$team_root" overlays)"
+  team_source="$(dce_provenance_git_source "$team_root")"
+  user_commit="$(dce_provenance_git_commit "$user_root")"
+  user_dirty="$(dce_provenance_git_dirty "$user_root" overlays)"
+  user_source="$(dce_provenance_git_source "$user_root")"
 
   # dirty is a bare JSON boolean when under git, else an empty JSON string.
   local tdj="" udj=""
@@ -989,17 +989,17 @@ dc_log_provenance() {
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   local team_obj="" user_obj="" base_obj="" scopes_json=""
-  team_obj="{\"content_hash\":\"$(dc_json_escape "$team_ch")\",\"git_commit\":\"$(dc_json_escape "$team_commit")\",\"git_dirty\":$tdj,\"source\":\"$(dc_json_escape "$team_source")\"}"
-  user_obj="{\"content_hash\":\"$(dc_json_escape "$user_ch")\",\"git_commit\":\"$(dc_json_escape "$user_commit")\",\"git_dirty\":$udj,\"source\":\"$(dc_json_escape "$user_source")\"}"
-  base_obj="{\"image\":\"dev-base:latest\",\"id\":\"$(dc_json_escape "$base_id")\"}"
-  scopes_json="$(dc_provenance_scopes_json "$eff")"
+  team_obj="{\"content_hash\":\"$(dce_json_escape "$team_ch")\",\"git_commit\":\"$(dce_json_escape "$team_commit")\",\"git_dirty\":$tdj,\"source\":\"$(dce_json_escape "$team_source")\"}"
+  user_obj="{\"content_hash\":\"$(dce_json_escape "$user_ch")\",\"git_commit\":\"$(dce_json_escape "$user_commit")\",\"git_dirty\":$udj,\"source\":\"$(dce_json_escape "$user_source")\"}"
+  base_obj="{\"image\":\"dce-base:latest\",\"id\":\"$(dce_json_escape "$base_id")\"}"
+  scopes_json="$(dce_provenance_scopes_json "$eff")"
 
   # Compact JSONL; content_hash is emitted last so dedup can find it via tail.
   local line=""
-  line="{\"ts\":\"$(dc_json_escape "$now")\",\"action\":\"$(dc_json_escape "$action")\",\"image_ref\":\"$(dc_json_escape "$image_ref")\",\"scopes\":$scopes_json,\"dc_version\":\"$(dc_json_escape "$DC_VERSION")\",\"base\":$base_obj,\"team\":$team_obj,\"user\":$user_obj,\"content_hash\":\"$(dc_json_escape "$combined")\"}"
+  line="{\"ts\":\"$(dce_json_escape "$now")\",\"action\":\"$(dce_json_escape "$action")\",\"image_ref\":\"$(dce_json_escape "$image_ref")\",\"scopes\":$scopes_json,\"dc_version\":\"$(dce_json_escape "$DC_VERSION")\",\"base\":$base_obj,\"team\":$team_obj,\"user\":$user_obj,\"content_hash\":\"$(dce_json_escape "$combined")\"}"
 
   local log_path=""
-  log_path="$(dc_provenance_log_path "$project")"
+  log_path="$(dce_provenance_log_path "$project")"
 
   # Dedup against the last logged line on (content_hash, base id).
   local last=""
@@ -1008,8 +1008,8 @@ dc_log_provenance() {
     local last_ch="" last_base="" cur_ch="" cur_base=""
     last_ch="$(printf '%s' "$last" | grep -oE '"content_hash":"[^"]*"' | tail -n1 || true)"
     last_base="$(printf '%s' "$last" | grep -oE '"id":"[^"]*"' | head -n1 || true)"
-    cur_ch="\"content_hash\":\"$(dc_json_escape "$combined")\""
-    cur_base="\"id\":\"$(dc_json_escape "$base_id")\""
+    cur_ch="\"content_hash\":\"$(dce_json_escape "$combined")\""
+    cur_base="\"id\":\"$(dce_json_escape "$base_id")\""
     if [[ -n "$last_ch" && "$last_ch" == "$cur_ch" && "$last_base" == "$cur_base" ]]; then
       return 0
     fi
@@ -1036,7 +1036,7 @@ declare -ga _DC_KNOWN_BACKENDS=(apple docker orbstack colima podman)
 # Validate a CONTAINER_CPUS value: empty (default) or a positive decimal such as
 # 1, 2, 1.5, 0.25. Rejects zero/negative, exponent notation, whitespace, and any
 # shell metacharacter. Prints a diagnostic and returns 1 on rejection.
-dc_validate_cpus_value() {
+dce_validate_cpus_value() {
   local value="$1"
 
   [[ -n "$value" ]] || return 0
@@ -1058,7 +1058,7 @@ dc_validate_cpus_value() {
 # Validate a CONTAINER_MEMORY value: empty (default) or a positive integer with an
 # optional single unit suffix (k, m, g; case-insensitive), e.g. 512m, 4g, 1024.
 # Rejects zero/negative, unsupported suffixes, whitespace, and shell metacharacters.
-dc_validate_memory_value() {
+dce_validate_memory_value() {
   local value="$1"
 
   [[ -n "$value" ]] || return 0
@@ -1081,7 +1081,7 @@ dc_validate_memory_value() {
 # containers and embedded in backend `network create/connect` flags, so they use
 # the same conservative identifier pattern as overlay scopes (no shell
 # metacharacters, no whitespace, no leading dash). Returns 0 (valid) / 1 silent.
-dc_validate_network_name() {
+dce_validate_network_name() {
   local name="$1"
   [[ -n "$name" ]] || return 1
   [[ "$name" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
@@ -1090,8 +1090,8 @@ dc_validate_network_name() {
 # Validate an IPv4 address value: empty (means "auto-allocate") or a dotted-quad
 # with each octet in 0-255. Rejects zero-octet padding beyond leading-zero rules,
 # whitespace, exponents, and any shell metacharacter. Prints a diagnostic and
-# returns 1 on rejection. (Mirrors dc_validate_cpus_value / dc_validate_memory_value.)
-dc_validate_ip_value() {
+# returns 1 on rejection. (Mirrors dce_validate_cpus_value / dce_validate_memory_value.)
+dce_validate_ip_value() {
   local value="$1"
 
   [[ -n "$value" ]] || return 0
@@ -1125,7 +1125,7 @@ dc_validate_ip_value() {
 # Validate an IPv4 CIDR subnet value: empty (means "auto-allocate by backend") or
 # dotted-quad / prefix with octets 0-255 and prefix 0-32. Prints a diagnostic and
 # returns 1 on rejection.
-dc_validate_subnet_value() {
+dce_validate_subnet_value() {
   local value="$1"
 
   [[ -n "$value" ]] || return 0
@@ -1143,7 +1143,7 @@ dc_validate_subnet_value() {
     return 1
   fi
 
-  if ! dc_validate_ip_value "$addr" 2>/dev/null; then
+  if ! dce_validate_ip_value "$addr" 2>/dev/null; then
     printf 'ERROR: Invalid subnet address in %s\n' "$value" >&2
     return 1
   fi
@@ -1156,7 +1156,7 @@ dc_validate_subnet_value() {
 # reproduces the exact bytes without executing command substitution. Rejects
 # control characters (newline, tab, NUL, ...) outright; they never belong in a
 # config value. Echoes the escaped string on success; returns 1 on rejection.
-dc_escape_config_value() {
+dce_escape_config_value() {
   local value="$1"
 
   if [[ "$value" =~ [[:cntrl:]] ]]; then
@@ -1174,7 +1174,7 @@ dc_escape_config_value() {
 }
 
 # Return 0 if KEY is an allowed scalar project-config key.
-dc_config_is_scalar_key() {
+dce_config_is_scalar_key() {
   local key="$1"
   local k=""
   for k in "${_DC_CONFIG_SCALAR_KEYS[@]}"; do
@@ -1184,7 +1184,7 @@ dc_config_is_scalar_key() {
 }
 
 # Return 0 if KEY is an allowed array project-config key.
-dc_config_is_array_key() {
+dce_config_is_array_key() {
   local key="$1"
   local k=""
   for k in "${_DC_CONFIG_ARRAY_KEYS[@]}"; do
@@ -1194,7 +1194,7 @@ dc_config_is_array_key() {
 }
 
 # Return 0 if NAME is a supported container backend identifier.
-dc_config_is_known_backend() {
+dce_config_is_known_backend() {
   local name="$1"
   local b=""
   for b in "${_DC_KNOWN_BACKENDS[@]}"; do
@@ -1205,7 +1205,7 @@ dc_config_is_known_backend() {
 
 # Return 0 (true) if PATH is group- or other-writable. Uses single-bit -perm
 # checks (portable across GNU and BSD find) combined with -o so either bit trips.
-dc_path_is_group_or_other_writable() {
+dce_path_is_group_or_other_writable() {
   local path="$1"
   [[ -e "$path" ]] || return 1
   [[ -n "$(find "$path" -maxdepth 0 \( -perm -020 -o -perm -002 \) -print 2>/dev/null)" ]]
@@ -1215,7 +1215,7 @@ dc_path_is_group_or_other_writable() {
 # substitution token ($ or backtick) is present. Escaped forms (\$, \`) are
 # treated as literal data and ignored, since the serializer emits those for any
 # real $/backtick in a value. This is the guard that lets us source safely.
-dc_quoted_has_unescaped_subst() {
+dce_quoted_has_unescaped_subst() {
   local content="$1"
   local i=0
   local len=${#content}
@@ -1244,7 +1244,7 @@ dc_quoted_has_unescaped_subst() {
 # Returns 0 if the line is blank, a (non-continuing) comment, or a known
 # KEY="value" / KEY=(array) assignment with no unescaped command substitution.
 # Returns 1 (reject) for unknown keys, bare shell syntax, or dangerous tokens.
-dc_config_line_is_safe() {
+dce_config_line_is_safe() {
   local line="$1"
 
   # Blank / whitespace-only line.
@@ -1265,7 +1265,7 @@ dc_config_line_is_safe() {
   local key="${BASH_REMATCH[1]}"
   local rest="${BASH_REMATCH[2]}"
 
-  if dc_config_is_array_key "$key"; then
+  if dce_config_is_array_key "$key"; then
     # Array assignment must be wrapped in (...).
     [[ "${rest:0:1}" == "(" ]] || return 1
     [[ "${rest: -1}" == ")" ]] || return 1
@@ -1277,7 +1277,7 @@ dc_config_line_is_safe() {
     return 0
   fi
 
-  if dc_config_is_scalar_key "$key"; then
+  if dce_config_is_scalar_key "$key"; then
     # Scalar must be a single, well-formed double-quoted string (handles escaped
     # quotes/backslashes). This also rejects trailing content after the closing
     # quote, e.g. KEY="x"; rm -rf /.
@@ -1286,7 +1286,7 @@ dc_config_line_is_safe() {
     fi
     local content="${rest#\"}"
     content="${content%\"}"
-    if dc_quoted_has_unescaped_subst "$content"; then
+    if dce_quoted_has_unescaped_subst "$content"; then
       return 1
     fi
     return 0
@@ -1299,24 +1299,24 @@ dc_config_line_is_safe() {
 # Validate the values loaded from a project config (called after sourcing, while
 # the variables are in scope). Prints a diagnostic and returns 1 (does NOT exit)
 # on any out-of-contract value: security-critical file/line checks are handled
-# earlier by dc_load_project_config via dc_die, but value problems are left to
-# the caller so maintenance commands (e.g. `dc clean`) can skip a bad project
+# earlier by dce_load_project_config via dce_die, but value problems are left to
+# the caller so maintenance commands (e.g. `dce clean`) can skip a bad project
 # without aborting the whole run.
-dc_validate_config_values() {
+dce_validate_config_values() {
   local config_file="$1"
 
-  if ! dc_validate_cpus_value "${CONTAINER_CPUS:-}" >&2; then
+  if ! dce_validate_cpus_value "${CONTAINER_CPUS:-}" >&2; then
     printf '  in %s\n' "$config_file" >&2
     return 1
   fi
 
-  if ! dc_validate_memory_value "${CONTAINER_MEMORY:-}" >&2; then
+  if ! dce_validate_memory_value "${CONTAINER_MEMORY:-}" >&2; then
     printf '  in %s\n' "$config_file" >&2
     return 1
   fi
 
   if [[ -n "${CONTAINER_BACKEND:-}" ]]; then
-    if ! dc_config_is_known_backend "${CONTAINER_BACKEND}"; then
+    if ! dce_config_is_known_backend "${CONTAINER_BACKEND}"; then
       printf 'ERROR: Unsupported CONTAINER_BACKEND in %s: %s\n' "$config_file" "${CONTAINER_BACKEND}" >&2
       return 1
     fi
@@ -1337,7 +1337,7 @@ dc_validate_config_values() {
   fi
 
   if [[ -n "${CONTAINER_OVERLAY_SCOPES:-}" ]]; then
-    if ! dc_normalize_scopes_csv "${CONTAINER_OVERLAY_SCOPES}" >/dev/null 2>&1; then
+    if ! dce_normalize_scopes_csv "${CONTAINER_OVERLAY_SCOPES}" >/dev/null 2>&1; then
       printf 'ERROR: Invalid CONTAINER_OVERLAY_SCOPES in %s: %s\n' "$config_file" "${CONTAINER_OVERLAY_SCOPES}" >&2
       return 1
     fi
@@ -1355,7 +1355,7 @@ dc_validate_config_values() {
   fi
 
   if declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1 && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
-    if ! dc_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]}" >/dev/null 2>&1; then
+    if ! dce_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]}" >/dev/null 2>&1; then
       printf 'ERROR: Invalid CONTAINER_HIDDEN_PATHS in %s.\n' "$config_file" >&2
       return 1
     fi
@@ -1377,12 +1377,12 @@ dc_validate_config_values() {
         nname="$nentry"
         nip=""
       fi
-      if ! dc_validate_network_name "$nname"; then
+      if ! dce_validate_network_name "$nname"; then
         printf 'ERROR: Invalid network name in CONTAINER_NETWORKS entry %q in %s\n' "$nentry" "$config_file" >&2
         return 1
       fi
       if [[ -n "$nip" ]]; then
-        if ! dc_validate_ip_value "$nip" >&2; then
+        if ! dce_validate_ip_value "$nip" >&2; then
           printf '  in CONTAINER_NETWORKS entry %q in %s\n' "$nentry" "$config_file" >&2
           return 1
         fi
@@ -1414,35 +1414,35 @@ dc_validate_config_values() {
 # (known keys, no shell syntax or unescaped command substitution) BEFORE sourcing,
 # then validates the loaded values. On success the config keys are set as globals
 # in the caller's scope and it returns 0. Security violations (file/line shape)
-# exit via dc_die; value violations return 1 so callers under `set -e` exit while
+# exit via dce_die; value violations return 1 so callers under `set -e` exit while
 # maintenance commands can choose to skip a bad project.
-dc_load_project_config() {
+dce_load_project_config() {
   local config_file="$1"
 
-  [[ -n "$config_file" ]] || dc_die "dc_load_project_config: config file path required"
+  [[ -n "$config_file" ]] || dce_die "dce_load_project_config: config file path required"
 
   if [[ -L "$config_file" ]]; then
-    dc_die "Refusing to load config via symlink: $config_file"
+    dce_die "Refusing to load config via symlink: $config_file"
   fi
   if [[ ! -f "$config_file" ]]; then
-    dc_die "Config file not found: $config_file"
+    dce_die "Config file not found: $config_file"
   fi
 
   local parent=""
   parent="$(dirname "$config_file")"
-  if dc_path_is_group_or_other_writable "$config_file"; then
-    dc_die "Refusing to load group/other-writable config: $config_file
+  if dce_path_is_group_or_other_writable "$config_file"; then
+    dce_die "Refusing to load group/other-writable config: $config_file
   Fix with: chmod 600 \"$config_file\""
   fi
-  if dc_path_is_group_or_other_writable "$parent"; then
-    dc_die "Refusing to load config from group/other-writable directory: $parent
+  if dce_path_is_group_or_other_writable "$parent"; then
+    dce_die "Refusing to load config from group/other-writable directory: $parent
   Fix with: chmod 700 \"$parent\""
   fi
 
   local line=""
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if ! dc_config_line_is_safe "$line"; then
-      dc_die "Unsafe or invalid line in config $config_file:
+    if ! dce_config_line_is_safe "$line"; then
+      dce_die "Unsafe or invalid line in config $config_file:
   $line
 Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
     fi
@@ -1457,7 +1457,7 @@ Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
   # shellcheck disable=SC1090
   source "$config_file"
 
-  dc_validate_config_values "$config_file" || return 1
+  dce_validate_config_values "$config_file" || return 1
 }
 
 # Extract a single double-quoted scalar value for KEY from a config file WITHOUT
@@ -1465,7 +1465,7 @@ Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
 # (DC_TEAM_DIR / DC_USER_DIR) and anywhere only one key is needed, so call sites
 # never have to `source`. Echoes the literal (unescaped) value; returns 1 if not
 # found or not a clean quoted assignment.
-dc_config_extract_scalar() {
+dce_config_extract_scalar() {
   local file="$1"
   local key="$2"
   local line=""
@@ -1491,7 +1491,7 @@ dc_config_extract_scalar() {
     content="${raw#\"}"
     content="${content%\"}"
 
-    # Inverse of dc_escape_config_value: interpret backslash escapes literally.
+    # Inverse of dce_escape_config_value: interpret backslash escapes literally.
     out=""
     escaped=0
     for ((i = 0; i < ${#content}; i++)); do
@@ -1517,16 +1517,16 @@ dc_config_extract_scalar() {
 
 # Set or replace a single KEY="value" line in a project config file safely.
 # Rewrites via a temp file and atomic mv, serializing the value through the shared
-# dc_escape_config_value helper (escapes backslash/quote/$/backtick, rejects
-# control characters) so the value round-trips inertly through dc_load_project_config.
+# dce_escape_config_value helper (escapes backslash/quote/$/backtick, rejects
+# control characters) so the value round-trips inertly through dce_load_project_config.
 # Appends the key if absent.
-dc_set_config_key() {
+dce_set_config_key() {
   local config_file="$1"
   local key="$2"
   local value="$3"
 
   local escaped=""
-  escaped="$(dc_escape_config_value "$value")" || return 1
+  escaped="$(dce_escape_config_value "$value")" || return 1
 
   local tmp_file="${config_file}.tmp.$$"
   local updated=0
@@ -1552,10 +1552,10 @@ dc_set_config_key() {
 
 # Replace (or append) an array assignment line `KEY=(...)` in a project config.
 # Elements are serialized with `printf '%q'` exactly as new-container.sh emits
-# them, so the result round-trips inertly through dc_load_project_config. An empty
+# them, so the result round-trips inertly through dce_load_project_config. An empty
 # element list writes `KEY=()`. Uses mktemp (not a PID-based name) for the atomic
 # rewrite. Returns non-zero if the temp file cannot be created.
-dc_set_config_array() {
+dce_set_config_array() {
   local config_file="$1"
   local key="$2"
   shift 2

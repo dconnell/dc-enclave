@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/status.sh - `dc status`: detailed status across all dev containers.
+# scripts/status.sh - `dce status`: detailed status across all dev containers.
 #
 # Shows backend/system info, all containers, then per-project detail (running
 # state, image, scopes, repos dir, resource limits, hidden paths, token/SSH-key
 # presence, ports). Each project may use a different backend, so the backend is
 # resolved per project. A trailing "Stale containers" section names any project
 # whose container is bound to an older image than its configured image tag
-# resolves to today; run `dc rebuild-container <name>` to bring it back in sync.
+# resolves to today; run `dce rebuild-container <name>` to bring it back in sync.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -30,7 +30,7 @@ backend_use "${CONTAINER_BACKEND:-}"
 DEFAULT_BACKEND="$(backend_name)"
 
 echo "======================================================================"
-echo "dev-containers status"
+echo "DC Enclave status"
 echo "======================================================================"
 echo ""
 echo "Active backend: $DEFAULT_BACKEND"
@@ -44,14 +44,14 @@ echo "Containers (active backend):"
 backend_list_all 2>/dev/null || echo "  (none)"
 echo ""
 
-PROJECTS=("$HOME"/.config/dev-containers/*/config)
+PROJECTS=("$HOME"/.config/dce-enclave/*/config)
 STALE_PROJECTS=()
 if [[ ${#PROJECTS[@]} -gt 0 ]]; then
   echo "Project details:"
   for config_file in "${PROJECTS[@]}"; do
     PORTS=()
     CONTAINER_HIDDEN_PATHS=()
-    dc_load_project_config "$config_file"
+    dce_load_project_config "$config_file"
 
     project="${CONTAINER_PROJECT:-$(basename "$(dirname "$config_file")")}"
     project_backend="${CONTAINER_BACKEND:-$DEFAULT_BACKEND}"
@@ -111,7 +111,7 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
 
     # One-line image provenance from the project log (team/user commit + built
     # time), when present. Skipped silently for projects with no log yet.
-    prov_log="$HOME/.config/dev-containers/$project/provenance.jsonl"
+    prov_log="$HOME/.config/dce-enclave/$project/provenance.jsonl"
     if [[ -s "$prov_log" ]]; then
       prov_last="$(tail -n1 "$prov_log" 2>/dev/null || true)"
       if [[ -n "$prov_last" ]] && command -v jq >/dev/null 2>&1; then
@@ -120,7 +120,7 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
         p_user="$(printf '%s' "$prov_last" | jq -r 'if .user.git_commit == "" then "content:\(.user.content_hash[0:8])" else "git:\(.user.git_commit[0:12])" end' 2>/dev/null || printf '?')"
         echo "    Provenance:   team=$p_team user=$p_user built=$p_ts"
       else
-        echo "    Provenance:   (see dc provenance $project)"
+        echo "    Provenance:   (see dce provenance $project)"
       fi
     fi
 
@@ -137,16 +137,16 @@ if [[ ${#STALE_PROJECTS[@]} -eq 0 ]]; then
   echo "  none"
 else
   for sp in "${STALE_PROJECTS[@]}"; do
-    echo "  - $sp (run: dc rebuild-container $sp)"
+    echo "  - $sp (run: dce rebuild-container $sp)"
   done
 fi
 
 echo ""
 echo "Quick commands:"
-echo "  dc start <name>       - start a container"
-echo "  dc shell <name>       - open a shell"
-echo "  dc stop <name>        - stop a container"
-echo "  dc rebuild-container <name>  - destroy and rebuild container"
-echo "  dc rebuild-image [all|base]  - rebuild managed images"
-echo "  dc provenance <name>         - show image provenance / overlay commits"
-echo "  dc clean                     - remove old and orphan managed image tags"
+echo "  dce start <name>       - start a container"
+echo "  dce shell <name>       - open a shell"
+echo "  dce stop <name>        - stop a container"
+echo "  dce rebuild-container <name>  - destroy and rebuild container"
+echo "  dce rebuild-image [all|base]  - rebuild managed images"
+echo "  dce provenance <name>         - show image provenance / overlay commits"
+echo "  dce clean                     - remove old and orphan managed image tags"

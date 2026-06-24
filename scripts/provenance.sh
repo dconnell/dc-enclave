@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/provenance.sh - `dc provenance <project>`: show image provenance.
+# scripts/provenance.sh - `dce provenance <project>`: show image provenance.
 #
 # Prints the overlay state (team/user git commits + content fingerprints, base
 # image id, scope list, build time) that produced a project's current image, so
 # a build can be traced back to the overlay repos for debugging. Source of truth
-# is the project's append-only provenance.jsonl written by dc new / dc rebuild-
+# is the project's append-only provenance.jsonl written by dce new / dce rebuild-
 # image (plans/versioning.md). The same data is also stamped on the image as OCI
 # labels (docker/podman inspect).
 #
@@ -27,8 +27,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 
 usage() {
-  echo "Usage: dc provenance <project> [--history|--all]"
-  echo "       dc provenance <project> --help|-h"
+  echo "Usage: dce provenance <project> [--history|--all]"
+  echo "       dce provenance <project> --help|-h"
 }
 
 HISTORY=false
@@ -67,24 +67,24 @@ if [[ -z "$PROJECT" ]]; then
   exit 1
 fi
 
-CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
+CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
   echo "ERROR: No project '$PROJECT' (config not found)." >&2
   exit 1
 fi
 
-LOG="$(dc_provenance_log_path "$PROJECT")"
+LOG="$(dce_provenance_log_path "$PROJECT")"
 
 if [[ ! -s "$LOG" ]]; then
   echo "No provenance log for '$PROJECT'."
-  echo "Run 'dc rebuild-image all' (or 'dc new <name> <scope>') to build and record one."
+  echo "Run 'dce rebuild-image all' (or 'dce new <name> <scope>') to build and record one."
   exit 0
 fi
 
 # Render a side identifier as "git:<commit>" when under git, else
 # "content:<hash>" (the always-available fingerprint). The commit is truncated
 # for the dense table view; the full sha is kept in the log and shown by the
-# detail view (`dc provenance <name>`).
+# detail view (`dce provenance <name>`).
 _side_summary() {
   local line="$1" side="$2"
   if command -v jq >/dev/null 2>&1; then

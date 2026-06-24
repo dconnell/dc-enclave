@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/network.sh - `dc network`: manage private networks between containers.
+# scripts/network.sh - `dce network`: manage private networks between containers.
 #
 # Networks are first-class daemon objects (created via `docker network create` /
-# `container network create`). dc stores no subnet state: both backend families
+# `container network create`). dce stores no subnet state: both backend families
 # auto-allocate and validate overlap. Per-container membership lives in each
 # project's config as CONTAINER_NETWORKS=( <name>[:<ip>] ... ); `add`/`remove`
 # keep that config in sync so rebuilds re-attach deterministically.
@@ -28,16 +28,16 @@ source "$ROOT_DIR/lib/network.sh"
 
 USAGE() {
   cat <<'EOF'
-Usage: dc network <subcommand> [args]
+Usage: dce network <subcommand> [args]
 
-Private networks that let dc containers talk to each other without publishing
+Private networks that let dce containers talk to each other without publishing
 ports to the host. Membership is explicit: containers are only linked when
 placed on the same network on purpose.
 
 Subcommands:
   create <name> [--subnet <cidr>] [--subnet-v6 <cidr>]
                               Create a private network (auto-allocates a subnet).
-  ls | list                   List networks and their dc members.
+  ls | list                   List networks and their dce members.
   members <name>              Show which projects are on a network.
   rm <name> [--force]         Remove a network (refuses while members exist
                               unless --force).
@@ -68,7 +68,7 @@ do_create() {
     case "$1" in
       --subnet)
         [[ $# -ge 2 ]] || { echo "ERROR: --subnet requires a CIDR argument" >&2; exit 1; }
-        dc_validate_subnet_value "$2" || exit 1
+        dce_validate_subnet_value "$2" || exit 1
         subnet_args+=(--subnet "$2")
         shift 2
         ;;
@@ -88,7 +88,7 @@ do_create() {
   done
 
   [[ -n "$name" ]] || { echo "ERROR: network create requires a <name>" >&2; USAGE >&2; exit 1; }
-  if ! dc_validate_network_name "$name"; then
+  if ! dce_validate_network_name "$name"; then
     echo "ERROR: Invalid network name '$name'." >&2
     echo "  Allowed pattern: ^[a-z0-9][a-z0-9._-]*$" >&2
     exit 1
@@ -138,11 +138,11 @@ do_list() {
 
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
-    members="$(dc_network_referencing_projects "$name")"
+    members="$(dce_network_referencing_projects "$name")"
     if [[ -n "$members" ]]; then
       printf '  %-20s members: %s\n' "$name" "$members"
     else
-      printf '  %-20s (no dc members)\n' "$name"
+      printf '  %-20s (no dce members)\n' "$name"
     fi
   done <<< "$listed"
 }
@@ -151,7 +151,7 @@ do_list() {
 do_members() {
   local name="${1:-}"
   [[ -n "$name" ]] || { echo "ERROR: network members requires a <name>" >&2; exit 1; }
-  dc_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
+  dce_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
 
   local p ip any=0
   echo "Members of network '$name':"
@@ -159,8 +159,8 @@ do_members() {
     [[ -n "$p" ]] || continue
     any=1
     printf '  %-20s %s\n' "$p" "${ip:--}"
-  done < <(dc_network_members_of "$name")
-  [[ "$any" -eq 1 ]] || echo "  (no dc projects reference this network)"
+  done < <(dce_network_members_of "$name")
+  [[ "$any" -eq 1 ]] || echo "  (no dce projects reference this network)"
 }
 
 # --- rm ----------------------------------------------------------------------
@@ -178,18 +178,18 @@ do_rm() {
   done
 
   [[ -n "$name" ]] || { echo "ERROR: network rm requires a <name>" >&2; exit 1; }
-  dc_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
+  dce_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
 
   backend_use "${CONTAINER_BACKEND:-}"
   local backend; backend="$(backend_name)"
 
-  local refs; refs="$(dc_network_referencing_projects "$name")"
+  local refs; refs="$(dce_network_referencing_projects "$name")"
 
   if [[ -n "$refs" ]]; then
     if ! $force; then
-      echo "ERROR: Network '$name' still has dc members: $refs" >&2
-      echo "       Detach them first: dc network remove $name <project>" >&2
-      echo "       Or force removal with: dc network rm $name --force" >&2
+      echo "ERROR: Network '$name' still has dce members: $refs" >&2
+      echo "       Detach them first: dce network remove $name <project>" >&2
+      echo "       Or force removal with: dce network rm $name --force" >&2
       exit 1
     fi
     echo "WARNING: --force disconnecting live containers: $refs" >&2
@@ -203,7 +203,7 @@ do_rm() {
       backend_network_disconnect "$name" "$p" || true
     done
     echo "  NOTE: project configs still reference '$name'; they will fail to start" >&2
-    echo "        until you remove it (dc network remove $name <project>)." >&2
+    echo "        until you remove it (dce network remove $name <project>)." >&2
   fi
 
   echo "==> Removing network '$name'..."
@@ -232,28 +232,28 @@ do_add() {
   done
 
   [[ -n "$name" && -n "$project" ]] || { echo "ERROR: network add requires <name> <project>" >&2; exit 1; }
-  dc_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
-  [[ -z "$ip" ]] || dc_validate_ip_value "$ip" || exit 1
+  dce_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
+  [[ -z "$ip" ]] || dce_validate_ip_value "$ip" || exit 1
 
-  local config="$HOME/.config/dev-containers/$project/config"
+  local config="$HOME/.config/dce-enclave/$project/config"
   [[ -f "$config" ]] || { echo "ERROR: No config for project '$project'." >&2; exit 1; }
 
   PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
-  dc_load_project_config "$config"
+  dce_load_project_config "$config"
   backend_use "${CONTAINER_BACKEND:-}"
   local backend; backend="$(backend_name)"
 
   if ! backend_is_docker_compatible "$backend"; then
-    echo "ERROR: 'dc network add' is unsupported on backend '$backend'." >&2
+    echo "ERROR: 'dce network add' is unsupported on backend '$backend'." >&2
     echo "       apple/container sets networks only at create time." >&2
-    echo "       Add the network at creation: dc new $project --network $name" >&2
-    echo "       Or rebuild with it: edit config, then dc rebuild-container $project" >&2
+    echo "       Add the network at creation: dce new $project --network $name" >&2
+    echo "       Or rebuild with it: edit config, then dce rebuild-container $project" >&2
     exit 1
   fi
 
   if ! backend_network_exists "$name"; then
     echo "ERROR: Network '$name' does not exist on backend '$backend'." >&2
-    echo "       Create it first: dc network create $name" >&2
+    echo "       Create it first: dce network create $name" >&2
     exit 1
   fi
 
@@ -266,7 +266,7 @@ do_add() {
   local entry="$name"; [[ -n "$ip" ]] && entry="$name:$ip"
   local already=false e
   for e in "${CONTAINER_NETWORKS[@]:-}"; do
-    if [[ "$(dc_network_entry_name "$e")" == "$name" ]]; then already=true; break; fi
+    if [[ "$(dce_network_entry_name "$e")" == "$name" ]]; then already=true; break; fi
   done
 
   echo "==> Attaching '$project' to network '$name'..."
@@ -280,14 +280,14 @@ do_add() {
   local -a newnets=() nname
   for e in "${CONTAINER_NETWORKS[@]:-}"; do
     [[ -z "$e" ]] && continue
-    [[ "$(dc_network_entry_name "$e")" == "$name" ]] && continue
+    [[ "$(dce_network_entry_name "$e")" == "$name" ]] && continue
     newnets+=("$e")
   done
   newnets+=("$entry")
   if [[ ${#newnets[@]} -gt 0 ]]; then
-    dc_set_config_array "$config" CONTAINER_NETWORKS "${newnets[@]}"
+    dce_set_config_array "$config" CONTAINER_NETWORKS "${newnets[@]}"
   else
-    dc_set_config_array "$config" CONTAINER_NETWORKS
+    dce_set_config_array "$config" CONTAINER_NETWORKS
   fi
   echo "  ✓ Attached (recorded in $project config)"
   [[ "$already" == true ]] && echo "  (was already a member; IP updated)" || true
@@ -298,18 +298,18 @@ do_remove() {
   local name="${1:-}"
   local project="${2:-}"
   [[ -n "$name" && -n "$project" ]] || { echo "ERROR: network remove requires <name> <project>" >&2; exit 1; }
-  dc_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
+  dce_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
 
-  local config="$HOME/.config/dev-containers/$project/config"
+  local config="$HOME/.config/dce-enclave/$project/config"
   [[ -f "$config" ]] || { echo "ERROR: No config for project '$project'." >&2; exit 1; }
 
   PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
-  dc_load_project_config "$config"
+  dce_load_project_config "$config"
   backend_use "${CONTAINER_BACKEND:-}"
   local backend; backend="$(backend_name)"
 
   if ! backend_is_docker_compatible "$backend"; then
-    echo "ERROR: 'dc network remove' is unsupported on backend '$backend'." >&2
+    echo "ERROR: 'dce network remove' is unsupported on backend '$backend'." >&2
     echo "       Rebuild the container without this network instead." >&2
     exit 1
   fi
@@ -320,7 +320,7 @@ do_remove() {
   local -a newnets=() e found=false
   for e in "${CONTAINER_NETWORKS[@]:-}"; do
     [[ -z "$e" ]] && continue
-    if [[ "$(dc_network_entry_name "$e")" == "$name" ]]; then found=true; continue; fi
+    if [[ "$(dce_network_entry_name "$e")" == "$name" ]]; then found=true; continue; fi
     newnets+=("$e")
   done
 
@@ -330,9 +330,9 @@ do_remove() {
   fi
 
   if [[ ${#newnets[@]} -gt 0 ]]; then
-    dc_set_config_array "$config" CONTAINER_NETWORKS "${newnets[@]}"
+    dce_set_config_array "$config" CONTAINER_NETWORKS "${newnets[@]}"
   else
-    dc_set_config_array "$config" CONTAINER_NETWORKS
+    dce_set_config_array "$config" CONTAINER_NETWORKS
   fi
   echo "  ✓ Detached '$project' from network '$name' (updated $project config)"
 }

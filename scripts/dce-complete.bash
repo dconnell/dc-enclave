@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/dc-complete.bash - Bash tab completion for the `dc` command.
+# scripts/dce-complete.bash - Bash tab completion for the `dce` command.
 #
 # Sourced into the interactive bash shell by setup.sh (not executed). Provides
 # subcommand, project-name, scope, and flag completion. Project/scope lists are
 # derived live via lib/complete-data.sh, which is shared with the native zsh
-# completion (scripts/_dc) so discovery logic -- including the hardened
+# completion (scripts/_dce) so discovery logic -- including the hardened
 # global-config parser -- lives in exactly one place.
 # =============================================================================
 
 # Resolve this file's directory so we can source the shared discovery library.
 # (The file is sourced from an absolute path in the shell profile, so
 # ${BASH_SOURCE[0]} is reliable here.)
-_dc_complete_self_dir() {
+_dce_complete_self_dir() {
   local src="${BASH_SOURCE[0]}"
   local dir
   while [[ -L "$src" ]]; do
@@ -22,13 +22,13 @@ _dc_complete_self_dir() {
   done
   cd -P "$(dirname "$src")" && pwd
 }
-_dc_scripts_dir="$(_dc_complete_self_dir)"
+_dce_scripts_dir="$(_dce_complete_self_dir)"
 # shellcheck source=../lib/complete-data.sh
-source "$_dc_scripts_dir/../lib/complete-data.sh"
-unset -f _dc_complete_self_dir
-unset _dc_scripts_dir
+source "$_dce_scripts_dir/../lib/complete-data.sh"
+unset -f _dce_complete_self_dir
+unset _dce_scripts_dir
 
-# Main completion entry point bound to `dc` via `complete -F`.
+# Main completion entry point bound to `dce` via `complete -F`.
 #
 # Per-subcommand grammar mirrors the real argument parsing in scripts/*.sh:
 #   start|stop              : variadic project names (0 args == all)
@@ -41,7 +41,7 @@ unset _dc_scripts_dir
 #   new                     : <name> [scope] [--config <file>] [--save-team]
 #                             [--save-user] [--repo-path <d>] [--cpus N]
 #                             [--memory V] [--hide <path>] [port:port ...]
-_dc_complete() {
+_dce_complete() {
   local cur prev cmd
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
@@ -49,7 +49,7 @@ _dc_complete() {
 
   # First word is always a subcommand.
   if [[ $COMP_CWORD -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "$(dc_complete_subcommands)" -- "$cur") )
+    COMPREPLY=( $(compgen -W "$(dce_complete_subcommands)" -- "$cur") )
     return 0
   fi
 
@@ -58,26 +58,26 @@ _dc_complete() {
   case "$cmd" in
     start|stop|restart)
       # Variadic: complete a project at any position >= 2, excluding projects
-      # already typed on this line so `dc start a b <TAB>` offers the rest.
+      # already typed on this line so `dce start a b <TAB>` offers the rest.
       local -a used=()
       local w
       for w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
         [[ -n "$w" ]] && used+=("$w")
       done
-      _dc_reply_projects_excluding "$cur" "${used[@]}"
+      _dce_reply_projects_excluding "$cur" "${used[@]}"
       return 0
       ;;
     shell)
       # One project only; beyond it the user runs a free-form command.
       if [[ $COMP_CWORD -eq 2 ]]; then
-        _dc_reply_projects "$cur"
+        _dce_reply_projects "$cur"
       fi
       return 0
       ;;
     logs)
       # One project, then log flags (--tail takes a value, not completed).
       if [[ $COMP_CWORD -eq 2 ]]; then
-        _dc_reply_projects "$cur"
+        _dce_reply_projects "$cur"
         return 0
       fi
       [[ "$prev" == "--tail" ]] && return 0
@@ -87,19 +87,19 @@ _dc_complete() {
     exec)
       # Optional leading --root, then one project, then a free-form command.
       if [[ $COMP_CWORD -eq 2 ]]; then
-        _dc_reply_projects "$cur"
+        _dce_reply_projects "$cur"
         [[ -z "$cur" || "--root" == "$cur"* ]] && COMPREPLY+=("--root")
         return 0
       fi
       if [[ "$prev" == "--root" ]]; then
-        _dc_reply_projects "$cur"
+        _dce_reply_projects "$cur"
       fi
       return 0
       ;;
     rm)
       # One project, then removal flags.
       if [[ $COMP_CWORD -eq 2 ]]; then
-        _dc_reply_projects "$cur"
+        _dce_reply_projects "$cur"
         return 0
       fi
       COMPREPLY=( $(compgen -W "--yes -y --keep-config --keep-volumes" -- "$cur") )
@@ -107,7 +107,7 @@ _dc_complete() {
       ;;
     rebuild-container)
       if [[ $COMP_CWORD -eq 2 ]]; then
-        _dc_reply_projects "$cur"
+        _dce_reply_projects "$cur"
         return 0
       fi
       # >= 3: optional flags (order-independent).
@@ -116,7 +116,7 @@ _dc_complete() {
       ;;
     install)
       if [[ $COMP_CWORD -eq 2 ]]; then
-        _dc_reply_projects "$cur"
+        _dce_reply_projects "$cur"
       elif [[ $COMP_CWORD -eq 3 ]]; then
         COMPREPLY=( $(compgen -d -- "$cur") )
       fi
@@ -124,32 +124,32 @@ _dc_complete() {
       ;;
     rebuild-image)
       if [[ $COMP_CWORD -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "$(dc_complete_rebuild_image_targets)" -- "$cur") )
+        COMPREPLY=( $(compgen -W "$(dce_complete_rebuild_image_targets)" -- "$cur") )
       fi
       return 0
       ;;
     provenance)
       if [[ $COMP_CWORD -eq 2 ]]; then
-        _dc_reply_projects "$cur"
+        _dce_reply_projects "$cur"
         return 0
       fi
       COMPREPLY=( $(compgen -W "--history --all" -- "$cur") )
       return 0
       ;;
     clean)
-      _dc_complete_clean "$cur" "$prev"
+      _dce_complete_clean "$cur" "$prev"
       return 0
       ;;
     doctor)
-      COMPREPLY=( $(compgen -W "$(dc_complete_doctor_targets "$cur")" -- "$cur") )
+      COMPREPLY=( $(compgen -W "$(dce_complete_doctor_targets "$cur")" -- "$cur") )
       return 0
       ;;
     network|net)
-      _dc_complete_network "$cur" "$prev"
+      _dce_complete_network "$cur" "$prev"
       return 0
       ;;
     new)
-      _dc_complete_new "$cur" "$prev"
+      _dce_complete_new "$cur" "$prev"
       return 0
       ;;
   esac
@@ -157,13 +157,13 @@ _dc_complete() {
 
 # Fill COMPREPLY with project names matching $1, optionally excluding the
 # project names passed in $2.. (already present on the command line).
-_dc_reply_projects() {
+_dce_reply_projects() {
   local cur="$1"
   shift
-  _dc_reply_projects_excluding "$cur" "$@"
+  _dce_reply_projects_excluding "$cur" "$@"
 }
 
-_dc_reply_projects_excluding() {
+_dce_reply_projects_excluding() {
   local cur="$1"
   shift
   local -A exclude=()
@@ -178,15 +178,15 @@ _dc_reply_projects_excluding() {
     [[ -z "$name" ]] && continue
     [[ -n "${exclude[$name]:-}" ]] && continue
     out+=("$name")
-  done < <(dc_complete_projects "$cur")
+  done < <(dce_complete_projects "$cur")
 
   COMPREPLY=("${out[@]}")
 }
 
-# `dc clean [--dry-run] [--hidden-volumes [name]]`: flags are always offered;
+# `dce clean [--dry-run] [--hidden-volumes [name]]`: flags are always offered;
 # a single optional project is offered only after --hidden-volumes (and only if
 # one hasn't already been typed).
-_dc_complete_clean() {
+_dce_complete_clean() {
   local cur="$1" prev="$2"
   local -a reply=()
 
@@ -221,14 +221,14 @@ _dc_complete_clean() {
     while IFS= read -r name; do
       [[ -z "$name" ]] && continue
       reply+=("$name")
-    done < <(dc_complete_projects "$cur")
+    done < <(dce_complete_projects "$cur")
   fi
 
   COMPREPLY=("${reply[@]}")
 }
 
-# `dc new <name> [scope] [flags] [port:port ...]`.
-_dc_complete_new() {
+# `dce new <name> [scope] [flags] [port:port ...]`.
+_dce_complete_new() {
   local cur="$1" prev="$2"
 
   # name (position 2) is free text -- no completion offered.
@@ -252,20 +252,20 @@ _dc_complete_new() {
   local flags="--config --save-team --save-user --repo-path --cpus --memory --hide --network --ip"
   if [[ $COMP_CWORD -eq 3 ]]; then
     # Second positional: a scope (with flags also accepted).
-    COMPREPLY=( $(compgen -W "$(dc_complete_scopes) $flags" -- "$cur") )
+    COMPREPLY=( $(compgen -W "$(dce_complete_scopes) $flags" -- "$cur") )
   else
     COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
   fi
 }
 
-# `dc network <subaction> ...`: subactions at position 2; afterwards a network
+# `dce network <subaction> ...`: subactions at position 2; afterwards a network
 # name or project (free text) is not completed, so only the subaction slot and
 # the --force/--ip flags are offered.
-_dc_complete_network() {
+_dce_complete_network() {
   local cur="$1" prev="$2"
 
   if [[ $COMP_CWORD -eq 2 ]]; then
-    COMPREPLY=( $(compgen -W "$(dc_complete_network_subactions)" -- "$cur") )
+    COMPREPLY=( $(compgen -W "$(dce_complete_network_subactions)" -- "$cur") )
     return 0
   fi
 
@@ -279,4 +279,4 @@ _dc_complete_network() {
   return 0
 }
 
-complete -F _dc_complete dc
+complete -F _dce_complete dce

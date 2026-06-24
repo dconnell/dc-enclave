@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/new-container.sh - `dc new`: create a new isolated dev container.
+# scripts/new-container.sh - `dce new`: create a new isolated dev container.
 #
 # High-level flow:
 #   1. Parse project name, optional scope(s), flags (--repo-path/--cpus/
 #      --memory/--hide), and host:container port mappings.
 #   2. Resolve the derived image from scopes; compose+build it if missing,
-#      reuse it if present (dev-base:latest when no scopes).
+#      reuse it if present (dce-base:latest when no scopes).
 #   3. Fail fast if the base image, project config, or container already exists.
 #   4. Create the per-project secret dir: SSH deploy key, GitHub token
 #      placeholder, .npmrc template (all tight permissions).
@@ -165,27 +165,27 @@ source "$ROOT_DIR/lib/network.sh"
 source "$ROOT_DIR/lib/recipe.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 
-dc_load_global_config
+dce_load_global_config
 
 SAVE_RECIPE_LINES=()
 if $SAVE_TEAM_RECIPE || $SAVE_USER_RECIPE; then
   if $CLI_SET_SCOPE; then
-    SAVE_SCOPE_CSV="$(dc_normalize_scopes_csv "$CLI_SCOPE_INPUT")" || exit 1
+    SAVE_SCOPE_CSV="$(dce_normalize_scopes_csv "$CLI_SCOPE_INPUT")" || exit 1
     [[ -n "$SAVE_SCOPE_CSV" ]] && SAVE_RECIPE_LINES+=("scopes=$SAVE_SCOPE_CSV")
   fi
 
   if $CLI_SET_CPUS; then
-    dc_validate_cpus_value "$CLI_CONTAINER_CPUS" || exit 1
+    dce_validate_cpus_value "$CLI_CONTAINER_CPUS" || exit 1
     SAVE_RECIPE_LINES+=("cpus=$CLI_CONTAINER_CPUS")
   fi
 
   if $CLI_SET_MEMORY; then
-    dc_validate_memory_value "$CLI_CONTAINER_MEMORY" || exit 1
+    dce_validate_memory_value "$CLI_CONTAINER_MEMORY" || exit 1
     SAVE_RECIPE_LINES+=("memory=$CLI_CONTAINER_MEMORY")
   fi
 
   if $CLI_SET_HIDE; then
-    SAVE_HIDE_CSV="$(dc_normalize_hidden_paths_values "${CLI_HIDDEN_PATH_INPUTS[@]:-}")" || exit 1
+    SAVE_HIDE_CSV="$(dce_normalize_hidden_paths_values "${CLI_HIDDEN_PATH_INPUTS[@]:-}")" || exit 1
     if [[ -n "$SAVE_HIDE_CSV" ]]; then
       IFS=',' read -r -a SAVE_HIDE_VALUES <<< "$SAVE_HIDE_CSV"
       for SAVE_HIDE_PATH in "${SAVE_HIDE_VALUES[@]}"; do
@@ -196,12 +196,12 @@ if $SAVE_TEAM_RECIPE || $SAVE_USER_RECIPE; then
   fi
 
   if $CLI_SET_NETWORK; then
-    SAVE_NETWORK_CSV="$(dc_normalize_network_arg "$CLI_NETWORK_INPUT")" || exit 1
+    SAVE_NETWORK_CSV="$(dce_normalize_network_arg "$CLI_NETWORK_INPUT")" || exit 1
     [[ -n "$SAVE_NETWORK_CSV" ]] && SAVE_RECIPE_LINES+=("network=$SAVE_NETWORK_CSV")
   fi
 
   if $CLI_SET_IP; then
-    dc_validate_ip_value "$CLI_NETWORK_IP" || exit 1
+    dce_validate_ip_value "$CLI_NETWORK_IP" || exit 1
     SAVE_RECIPE_LINES+=("ip=$CLI_NETWORK_IP")
   fi
 
@@ -225,7 +225,7 @@ fi
 # Load an explicit recipe (--config) or magic-resolved team/user recipes by
 # project name, then merge with CLI precedence (CLI values override recipe
 # values; list keys replace as a whole when supplied on the CLI).
-if ! dc_recipe_resolve_inputs "$PROJECT" "$RECIPE_CONFIG_PATH"; then
+if ! dce_recipe_resolve_inputs "$PROJECT" "$RECIPE_CONFIG_PATH"; then
   exit 1
 fi
 
@@ -256,10 +256,10 @@ fi
 
 # Fail fast on merged resource values before any backend work.
 if [[ -n "${CONTAINER_CPUS:-}" ]]; then
-  dc_validate_cpus_value "$CONTAINER_CPUS" || exit 1
+  dce_validate_cpus_value "$CONTAINER_CPUS" || exit 1
 fi
 if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
-  dc_validate_memory_value "$CONTAINER_MEMORY" || exit 1
+  dce_validate_memory_value "$CONTAINER_MEMORY" || exit 1
 fi
 
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
@@ -268,11 +268,11 @@ if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   exit 1
 fi
 
-# 2. Resolve the derived image for these scopes (dev-base:latest when none).
-SCOPE_CSV="$(dc_normalize_scopes_csv "$SCOPE_INPUT")" || exit 1
-IMAGE="$(dc_image_ref_from_scopes "$(dc_team_overlays_dir)" "$(dc_user_overlays_dir)" "$SCOPE_CSV")" || exit 1
+# 2. Resolve the derived image for these scopes (dce-base:latest when none).
+SCOPE_CSV="$(dce_normalize_scopes_csv "$SCOPE_INPUT")" || exit 1
+IMAGE="$(dce_image_ref_from_scopes "$(dce_team_overlays_dir)" "$(dce_user_overlays_dir)" "$SCOPE_CSV")" || exit 1
 
-HIDDEN_PATHS_CSV="$(dc_normalize_hidden_paths_values "${HIDDEN_PATH_INPUTS[@]:-}")" || exit 1
+HIDDEN_PATHS_CSV="$(dce_normalize_hidden_paths_values "${HIDDEN_PATH_INPUTS[@]:-}")" || exit 1
 CONTAINER_HIDDEN_PATHS=()
 if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
   IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
@@ -283,13 +283,13 @@ fi
 # backend-existence and limit checks run later, once the backend is selected.
 CONTAINER_NETWORKS=()
 if [[ -n "$NETWORK_INPUT" ]]; then
-  NETWORKS_CSV="$(dc_normalize_network_arg "$NETWORK_INPUT")" || exit 1
+  NETWORKS_CSV="$(dce_normalize_network_arg "$NETWORK_INPUT")" || exit 1
   if [[ -n "$NETWORKS_CSV" ]]; then
     IFS=',' read -r -a CONTAINER_NETWORKS <<< "$NETWORKS_CSV"
   fi
 fi
 if [[ -n "$NETWORK_IP" ]]; then
-  dc_validate_ip_value "$NETWORK_IP" || exit 1
+  dce_validate_ip_value "$NETWORK_IP" || exit 1
   if [[ ${#CONTAINER_NETWORKS[@]} -eq 0 ]]; then
     echo "ERROR: --ip requires --network (no networks requested)."
     exit 1
@@ -322,9 +322,9 @@ for port_mapping in "${PORTS[@]}"; do
   fi
 done
 
-SECRET_DIR="$HOME/.config/dev-containers/$PROJECT"
-CONFIG_FILE="$HOME/.config/dev-containers/$PROJECT/config"
-CONFIG_FILE_DISPLAY="~/.config/dev-containers/$PROJECT/config"
+SECRET_DIR="$HOME/.config/dce-enclave/$PROJECT"
+CONFIG_FILE="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG_FILE_DISPLAY="~/.config/dce-enclave/$PROJECT/config"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   echo "ERROR: Project '$PROJECT' already exists (config: $CONFIG_FILE_DISPLAY)"
@@ -339,33 +339,33 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   DOCKER_COMPATIBLE=true
 fi
 
-if ! backend_image_exists "dev-base:latest"; then
-  echo "ERROR: Base image 'dev-base:latest' not found on backend '$ACTIVE_BACKEND'."
+if ! backend_image_exists "dce-base:latest"; then
+  echo "ERROR: Base image 'dce-base:latest' not found on backend '$ACTIVE_BACKEND'."
   echo "  Run setup first: CONTAINER_BACKEND=$ACTIVE_BACKEND scripts/setup.sh"
   exit 1
 fi
 
 if backend_exists "$PROJECT"; then
   echo "ERROR: Container '$PROJECT' already exists."
-  echo "To rebuild: dc rebuild-container $PROJECT"
+  echo "To rebuild: dce rebuild-container $PROJECT"
   exit 1
 fi
 
 # Validate the requested network membership against the selected backend: enforce
 # apple's single-network/no-static-IP limits, and require every network to exist
-# (networks are created explicitly via `dc network create`). Then derive the
+# (networks are created explicitly via `dce network create`). Then derive the
 # create-time args; extras are attached after the container exists.
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
-  if ! dc_network_check_backend_limits "$ACTIVE_BACKEND" "${CONTAINER_NETWORKS[@]}"; then
+  if ! dce_network_check_backend_limits "$ACTIVE_BACKEND" "${CONTAINER_NETWORKS[@]}"; then
     exit 1
   fi
-  if ! dc_networks_ensure_exist "${CONTAINER_NETWORKS[@]}"; then
+  if ! dce_networks_ensure_exist "${CONTAINER_NETWORKS[@]}"; then
     exit 1
   fi
 fi
 NETWORK_ARGS=()
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
-  mapfile -t NETWORK_ARGS < <(dc_networks_create_args "${CONTAINER_NETWORKS[@]}")
+  mapfile -t NETWORK_ARGS < <(dce_networks_create_args "${CONTAINER_NETWORKS[@]}")
 fi
 
 if [[ -n "$REPO_PATH_OVERRIDE" ]]; then
@@ -381,7 +381,7 @@ elif [[ "$repo_target" != /* ]]; then
 fi
 
 mkdir -p "$repo_target"
-REPOS_DIR="$(dc_resolve_path "$repo_target")" || {
+REPOS_DIR="$(dce_resolve_path "$repo_target")" || {
   if [[ -n "$REPO_PATH_OVERRIDE" ]]; then
     echo "ERROR: --repo-path could not be resolved: $REPO_PATH_OVERRIDE"
   else
@@ -394,8 +394,8 @@ COMPOSED_CONTAINERFILE=""
 DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.base"
 
 # If scopes select a derived image, compose+build it once (reuse if present).
-if [[ "$IMAGE" != "dev-base:latest" ]]; then
-  IMAGE_HASH="$(dc_image_hash_from_ref "$IMAGE")" || {
+if [[ "$IMAGE" != "dce-base:latest" ]]; then
+  IMAGE_HASH="$(dce_image_hash_from_ref "$IMAGE")" || {
     echo "ERROR: Could not derive image hash from image ref: $IMAGE"
     exit 1
   }
@@ -403,9 +403,9 @@ if [[ "$IMAGE" != "dev-base:latest" ]]; then
   COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${IMAGE_HASH}"
   DEVCONTAINER_BUILD_FILE="$COMPOSED_CONTAINERFILE"
 
-  # dev-base image Id feeds the provenance base.id label (best-effort, may be
+  # dce-base image Id feeds the provenance base.id label (best-effort, may be
   # empty if the backend cannot resolve it).
-  PROV_BASE_ID="$(backend_image_id "dev-base:latest")"
+  PROV_BASE_ID="$(backend_image_id "dce-base:latest")"
 
   if backend_image_exists "$IMAGE"; then
     if [[ ! -f "$COMPOSED_CONTAINERFILE" ]]; then
@@ -424,15 +424,15 @@ if [[ "$IMAGE" != "dev-base:latest" ]]; then
   fi
 
   # Record this image's provenance in the project log (deduped). A reused image
-  # still gets an entry so `dc provenance <project>` is populated.
-  dc_log_provenance "$PROJECT" "$IMAGE" "new" "$DC_TEAM_DIR" "$DC_USER_DIR" "$SCOPE_CSV" "$PROV_BASE_ID"
+  # still gets an entry so `dce provenance <project>` is populated.
+  dce_log_provenance "$PROJECT" "$IMAGE" "new" "$DC_TEAM_DIR" "$DC_USER_DIR" "$SCOPE_CSV" "$PROV_BASE_ID"
 fi
 
 # Detect the host timezone once so the container mirrors the developer's local
 # time (per-developer at create time, never baked into the shared image). Empty
 # means no clean zone was found; we then omit --env TZ and leave the image
 # default untouched. The result feeds both the create flag and devcontainer.json.
-HOST_TZ="$(dc_host_timezone)" || HOST_TZ=""
+HOST_TZ="$(dce_host_timezone)" || HOST_TZ=""
 TZ_ARGS=()
 if [[ -n "$HOST_TZ" ]]; then
   TZ_ARGS+=(--env "TZ=$HOST_TZ")
@@ -467,7 +467,7 @@ echo "  Secrets:     $SECRET_DIR (chmod 700)"
 # Bootstrap per-project secrets (only created if missing, never overwritten).
 SSH_KEY="$SECRET_DIR/ssh_key"
 if [[ ! -f "$SSH_KEY" ]]; then
-  ssh-keygen -t ed25519 -f "$SSH_KEY" -C "dev-container-${PROJECT}" -N "" -q
+  ssh-keygen -t ed25519 -f "$SSH_KEY" -C "dce-container-${PROJECT}" -N "" -q
   chmod 600 "$SSH_KEY"
 fi
 echo ""
@@ -506,21 +506,21 @@ echo "✓ .npmrc template: $NPMRC"
 
 # Serialize every scalar value through the shared escaper so the persisted config
 # is inert data: any $/backtick/quote/backslash is escaped and round-trips safely
-# through dc_load_project_config without executing command substitution.
-esc_project="$(dc_escape_config_value "$PROJECT")" || exit 1
-esc_scopes="$(dc_escape_config_value "$SCOPE_CSV")" || exit 1
-esc_image="$(dc_escape_config_value "$IMAGE")" || exit 1
-esc_backend="$(dc_escape_config_value "$ACTIVE_BACKEND")" || exit 1
-esc_cpus="$(dc_escape_config_value "${CONTAINER_CPUS:-}")" || exit 1
-esc_memory="$(dc_escape_config_value "${CONTAINER_MEMORY:-}")" || exit 1
-esc_repos="$(dc_escape_config_value "$REPOS_DIR")" || exit 1
-esc_secret="$(dc_escape_config_value "$SECRET_DIR")" || exit 1
-esc_ssh="$(dc_escape_config_value "$SECRET_DIR/ssh_key")" || exit 1
-esc_token="$(dc_escape_config_value "$SECRET_DIR/github-token")" || exit 1
-esc_npmrc="$(dc_escape_config_value "$SECRET_DIR/.npmrc")" || exit 1
+# through dce_load_project_config without executing command substitution.
+esc_project="$(dce_escape_config_value "$PROJECT")" || exit 1
+esc_scopes="$(dce_escape_config_value "$SCOPE_CSV")" || exit 1
+esc_image="$(dce_escape_config_value "$IMAGE")" || exit 1
+esc_backend="$(dce_escape_config_value "$ACTIVE_BACKEND")" || exit 1
+esc_cpus="$(dce_escape_config_value "${CONTAINER_CPUS:-}")" || exit 1
+esc_memory="$(dce_escape_config_value "${CONTAINER_MEMORY:-}")" || exit 1
+esc_repos="$(dce_escape_config_value "$REPOS_DIR")" || exit 1
+esc_secret="$(dce_escape_config_value "$SECRET_DIR")" || exit 1
+esc_ssh="$(dce_escape_config_value "$SECRET_DIR/ssh_key")" || exit 1
+esc_token="$(dce_escape_config_value "$SECRET_DIR/github-token")" || exit 1
+esc_npmrc="$(dce_escape_config_value "$SECRET_DIR/.npmrc")" || exit 1
 
 cat > "$CONFIG_FILE" <<EOF
-# dev-container config for: $PROJECT
+# DC Enclave config for: $PROJECT
 # Generated: $(date)
 CONTAINER_PROJECT="$esc_project"
 CONTAINER_OVERLAY_SCOPES="$esc_scopes"
@@ -566,16 +566,16 @@ chmod 600 "$CONFIG_FILE"
 echo "✓ Config saved: $CONFIG_FILE"
 
 if $SAVE_TEAM_RECIPE; then
-  TEAM_RECIPE_FILE="$(dc_team_recipes_dir)/$PROJECT"
-  if ! dc_recipe_write_file "$TEAM_RECIPE_FILE" "${SAVE_RECIPE_LINES[@]}"; then
+  TEAM_RECIPE_FILE="$(dce_team_recipes_dir)/$PROJECT"
+  if ! dce_recipe_write_file "$TEAM_RECIPE_FILE" "${SAVE_RECIPE_LINES[@]}"; then
     exit 1
   fi
   echo "✓ Team recipe saved: $TEAM_RECIPE_FILE"
 fi
 
 if $SAVE_USER_RECIPE; then
-  USER_RECIPE_FILE="$(dc_user_recipes_dir)/$PROJECT"
-  if ! dc_recipe_write_file "$USER_RECIPE_FILE" "${SAVE_RECIPE_LINES[@]}"; then
+  USER_RECIPE_FILE="$(dce_user_recipes_dir)/$PROJECT"
+  if ! dce_recipe_write_file "$USER_RECIPE_FILE" "${SAVE_RECIPE_LINES[@]}"; then
     exit 1
   fi
   echo "✓ User recipe saved: $USER_RECIPE_FILE"
@@ -593,7 +593,7 @@ fi
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
 VOLUME_ARGS+=(--volume "$SECRET_DIR/.npmrc:/home/dev/.npmrc:ro")
 for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
-  hidden_volume="$(dc_hidden_volume_name "$PROJECT" "$hidden_path")"
+  hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
   VOLUME_ARGS+=(--volume "$hidden_volume:/workspace/$hidden_path")
 done
 
@@ -605,7 +605,7 @@ backend_create "$PROJECT" "$IMAGE" "${TZ_ARGS[@]}" "${VOLUME_ARGS[@]}" "${PORT_A
 # the limits check already restricted membership to a single primary network.
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 1 ]]; then
   echo "==> Attaching additional networks..."
-  if ! dc_networks_attach_extras "$PROJECT" "${CONTAINER_NETWORKS[@]}"; then
+  if ! dce_networks_attach_extras "$PROJECT" "${CONTAINER_NETWORKS[@]}"; then
     exit 1
   fi
 fi
@@ -617,7 +617,7 @@ sleep 2
 
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   echo "==> Verifying hidden volume mounts..."
-  if ! dc_ensure_hidden_mounts "$PROJECT" "${CONTAINER_HIDDEN_PATHS[@]}"; then
+  if ! dce_ensure_hidden_mounts "$PROJECT" "${CONTAINER_HIDDEN_PATHS[@]}"; then
     exit 1
   fi
   echo "  ✓ Hidden volume mounts active"
@@ -671,7 +671,7 @@ if $DOCKER_COMPATIBLE; then
     MOUNTS_ENTRIES=()
     MOUNTS_ENTRIES+=("source=$SECRET_DIR/.npmrc,target=/home/dev/.npmrc,type=bind,readonly")
     for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
-      hidden_volume="$(dc_hidden_volume_name "$PROJECT" "$hidden_path")"
+      hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
       MOUNTS_ENTRIES+=("source=$hidden_volume,target=/workspace/$hidden_path,type=volume")
     done
 
@@ -689,17 +689,17 @@ if $DOCKER_COMPATIBLE; then
     fi
 
     # runArgs carries the network membership so a VS Code "Reopen in Container"
-    # build attaches to the same private network(s) as `dc new` did. The primary
+    # build attaches to the same private network(s) as `dce new` did. The primary
     # network is listed first (with its optional static IP), extras after.
     RUNARGS_BLOCK=""
     if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
       _ra_primary="${CONTAINER_NETWORKS[0]}"
-      _ra_name="$(dc_network_entry_name "$_ra_primary")"
-      _ra_ip="$(dc_network_entry_ip "$_ra_primary")"
+      _ra_name="$(dce_network_entry_name "$_ra_primary")"
+      _ra_ip="$(dce_network_entry_ip "$_ra_primary")"
       RUNARGS_ENTRIES=("--network" "$_ra_name")
       [[ -n "$_ra_ip" ]] && RUNARGS_ENTRIES+=("--ip" "$_ra_ip")
       for ((_ra_i = 1; _ra_i < ${#CONTAINER_NETWORKS[@]}; _ra_i++)); do
-        RUNARGS_ENTRIES+=("--network" "$(dc_network_entry_name "${CONTAINER_NETWORKS[$_ra_i]}")")
+        RUNARGS_ENTRIES+=("--network" "$(dce_network_entry_name "${CONTAINER_NETWORKS[$_ra_i]}")")
       done
       RUNARGS_BLOCK=$',\n  "runArgs": ['
       _ra_first=true
@@ -712,7 +712,7 @@ if $DOCKER_COMPATIBLE; then
     fi
 
     # containerEnv carries the detected host TZ so a VS Code "Reopen in
-    # Container" build lands on the same timezone as the dc-created container.
+    # Container" build lands on the same timezone as the dce-created container.
     # HOST_TZ is charset-validated (no quotes/backslashes), so it is JSON-safe.
     CONTAINERENV_BLOCK=""
     if [[ -n "$HOST_TZ" ]]; then
@@ -721,7 +721,7 @@ if $DOCKER_COMPATIBLE; then
 
     cat > "$DEVCONTAINER_FILE" <<EOF
 {
-  "name": "dev-$PROJECT",
+  "name": "dce-$PROJECT",
   "build": {
     "dockerfile": "$DEVCONTAINER_BUILD_FILE",
     "context": "$ROOT_DIR"
@@ -744,7 +744,7 @@ EOF
     [[ -z "$attach_config_file" ]] && continue
     ATTACH_CONFIG_COUNT=$((ATTACH_CONFIG_COUNT + 1))
     echo "  ✓ $attach_config_file"
-  done < <(dc_vscode_seed_named_attach_config "$PROJECT" "/workspace")
+  done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace")
 
   if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
     echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
@@ -752,7 +752,7 @@ EOF
 else
   echo "==> Generating VS Code workspace settings for apple/container backend..."
   # apple/container has no Dev Containers extension; route VS Code terminals
-  # through `dc shell` via a terminal profile instead.
+  # through `dce shell` via a terminal profile instead.
   VSCODE_DIR="$REPOS_DIR/.vscode"
   VSCODE_SETTINGS="$VSCODE_DIR/settings.json"
   mkdir -p "$VSCODE_DIR"
@@ -760,9 +760,9 @@ else
   if [[ ! -f "$VSCODE_SETTINGS" ]]; then
     cat > "$VSCODE_SETTINGS" <<EOF
 {
-  "terminal.integrated.defaultProfile.osx": "dev-container",
+  "terminal.integrated.defaultProfile.osx": "dce-container",
   "terminal.integrated.profiles.osx": {
-    "dev-container": {
+    "dce-container": {
       "path": "/bin/zsh",
       "args": ["-c", "$ROOT_DIR/scripts/shell.sh $PROJECT"]
     }
@@ -774,8 +774,8 @@ EOF
   else
     echo "  ✓ $VSCODE_SETTINGS already exists - not overwritten."
     echo "  Add this manually if needed:"
-    echo '    "terminal.integrated.defaultProfile.osx": "dev-container"'
-    echo "    \"terminal.integrated.profiles.osx\": { \"dev-container\": { \"path\": \"/bin/zsh\", \"args\": [\"-c\", \"$ROOT_DIR/scripts/shell.sh $PROJECT\"] } }"
+    echo '    "terminal.integrated.defaultProfile.osx": "dce-container"'
+    echo "    \"terminal.integrated.profiles.osx\": { \"dce-container\": { \"path\": \"/bin/zsh\", \"args\": [\"-c\", \"$ROOT_DIR/scripts/shell.sh $PROJECT\"] } }"
   fi
 fi
 
@@ -784,7 +784,7 @@ echo "======================================================================"
 echo "Container '$PROJECT' created and started."
 echo "======================================================================"
 echo ""
-echo "Config: ~/.config/dev-containers/$PROJECT/"
+echo "Config: ~/.config/dce-enclave/$PROJECT/"
 echo "  [ ] github-token   Replace ghp_REPLACE_ME with your GitHub PAT"
 echo "  [ ] ssh_key.pub    Add as GitHub Deploy Key for your repos"
 echo ""
@@ -797,7 +797,7 @@ echo "  [ ] Set up dotfiles in VS Code settings for personal config"
 echo "      (see README: Personal configuration / dotfiles)"
 echo ""
 echo "Commands:"
-echo "  dc shell $PROJECT"
-echo "  dc stop $PROJECT"
-echo "  dc start $PROJECT"
-echo "  dc status"
+echo "  dce shell $PROJECT"
+echo "  dce stop $PROJECT"
+echo "  dce start $PROJECT"
+echo "  dce status"

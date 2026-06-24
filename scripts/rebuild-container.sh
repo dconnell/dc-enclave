@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/rebuild-container.sh - `dc rebuild-container`: destroy and recreate a
+# scripts/rebuild-container.sh - `dce rebuild-container`: destroy and recreate a
 # container from its selected image.
 #
 # Used for drift recovery and incident response. The host workspace (repos dir)
 # is always preserved - only the container filesystem is wiped. It re-derives
 # the image from current overlay state (it never builds images; run
-# `dc rebuild-image all` first if the image is missing), then:
+# `dce rebuild-image all` first if the image is missing), then:
 #   stop -> delete -> handle hidden volumes -> (optionally rotate SSH key) ->
 #   recreate -> start -> re-inject credentials -> reseed VS Code config.
 #
@@ -73,13 +73,13 @@ source "$ROOT_DIR/lib/container-backend.sh"
 source "$ROOT_DIR/lib/network.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 
-CONFIG="$HOME/.config/dev-containers/$PROJECT/config"
+CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
   echo "ERROR: No config for '$PROJECT'."
   exit 1
 fi
 
-dc_load_project_config "$CONFIG"
+dce_load_project_config "$CONFIG"
 
 if [[ -z "${CONTAINER_PROJECT:-}" ]]; then
   CONTAINER_PROJECT="$PROJECT"
@@ -93,20 +93,20 @@ if ! declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1; then
   CONTAINER_HIDDEN_PATHS=()
 fi
 
-HIDDEN_PATHS_CSV="$(dc_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]:-}")" || exit 1
+HIDDEN_PATHS_CSV="$(dce_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]:-}")" || exit 1
 CONTAINER_HIDDEN_PATHS=()
 if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
   IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
 fi
 
-dc_load_global_config
-NORMALIZED_SCOPES="$(dc_normalize_scopes_csv "$OVERLAY_SCOPES_CSV")" || exit 1
+dce_load_global_config
+NORMALIZED_SCOPES="$(dce_normalize_scopes_csv "$OVERLAY_SCOPES_CSV")" || exit 1
 if [[ "$NORMALIZED_SCOPES" != "$OVERLAY_SCOPES_CSV" ]]; then
   OVERLAY_SCOPES_CSV="$NORMALIZED_SCOPES"
-  dc_set_config_key "$CONFIG" "CONTAINER_OVERLAY_SCOPES" "$OVERLAY_SCOPES_CSV"
+  dce_set_config_key "$CONFIG" "CONTAINER_OVERLAY_SCOPES" "$OVERLAY_SCOPES_CSV"
 fi
 
-DERIVED_IMAGE="$(dc_image_ref_from_scopes "$(dc_team_overlays_dir)" "$(dc_user_overlays_dir)" "$OVERLAY_SCOPES_CSV")" || exit 1
+DERIVED_IMAGE="$(dce_image_ref_from_scopes "$(dce_team_overlays_dir)" "$(dce_user_overlays_dir)" "$OVERLAY_SCOPES_CSV")" || exit 1
 
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
@@ -117,13 +117,13 @@ fi
 
 if ! backend_image_exists "$DERIVED_IMAGE"; then
   echo "ERROR: Required image '$DERIVED_IMAGE' is not present on backend '$ACTIVE_BACKEND'."
-  echo "Run: dc rebuild-image all"
+  echo "Run: dce rebuild-image all"
   exit 1
 fi
 
 if [[ "${CONTAINER_IMAGE:-}" != "$DERIVED_IMAGE" ]]; then
   CONTAINER_IMAGE="$DERIVED_IMAGE"
-  dc_set_config_key "$CONFIG" "CONTAINER_IMAGE" "$CONTAINER_IMAGE"
+  dce_set_config_key "$CONFIG" "CONTAINER_IMAGE" "$CONTAINER_IMAGE"
 fi
 
 # Re-validate the persisted network membership before destroying anything: a
@@ -135,18 +135,18 @@ if ! declare -p CONTAINER_NETWORKS >/dev/null 2>&1; then
   CONTAINER_NETWORKS=()
 fi
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
-  if ! dc_network_check_backend_limits "$ACTIVE_BACKEND" "${CONTAINER_NETWORKS[@]}"; then
+  if ! dce_network_check_backend_limits "$ACTIVE_BACKEND" "${CONTAINER_NETWORKS[@]}"; then
     exit 1
   fi
-  if ! dc_networks_ensure_exist "${CONTAINER_NETWORKS[@]}"; then
+  if ! dce_networks_ensure_exist "${CONTAINER_NETWORKS[@]}"; then
     exit 1
   fi
-  mapfile -t NETWORK_ARGS < <(dc_networks_create_args "${CONTAINER_NETWORKS[@]}")
+  mapfile -t NETWORK_ARGS < <(dce_networks_create_args "${CONTAINER_NETWORKS[@]}")
 fi
 
 # Detect the host timezone once so the rebuilt container mirrors the developer's
-# local time, identical to `dc new` (keeps new/rebuild create-argv in parity).
-HOST_TZ="$(dc_host_timezone)" || HOST_TZ=""
+# local time, identical to `dce new` (keeps new/rebuild create-argv in parity).
+HOST_TZ="$(dce_host_timezone)" || HOST_TZ=""
 TZ_ARGS=()
 if [[ -n "$HOST_TZ" ]]; then
   TZ_ARGS+=(--env "TZ=$HOST_TZ")
@@ -228,7 +228,7 @@ else
 fi
 
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
-  if ! dc_rebuild_handle_hidden_volumes "$PROJECT" "$KEEP_HIDDEN_VOLUMES" "${CONTAINER_HIDDEN_PATHS[@]}"; then
+  if ! dce_rebuild_handle_hidden_volumes "$PROJECT" "$KEEP_HIDDEN_VOLUMES" "${CONTAINER_HIDDEN_PATHS[@]}"; then
     exit 1
   fi
 fi
@@ -246,7 +246,7 @@ if $ROTATE_KEYS; then
     mv "${SSH_KEY_PATH}.pub" "${OLD_KEY_BACKUP}.pub"
   fi
 
-  ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -C "dev-container-${PROJECT}-rotated-$(date +%Y%m%d)" -N "" -q
+  ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -C "dce-container-${PROJECT}-rotated-$(date +%Y%m%d)" -N "" -q
   chmod 600 "$SSH_KEY_PATH"
   echo ""
   echo "  New SSH public key - add to GitHub and remove the old one:"
@@ -270,7 +270,7 @@ if [[ -n "${NPMRC_PATH:-}" ]]; then
 fi
 for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]:-}"; do
   [[ -z "$hidden_path" ]] && continue
-  hidden_volume="$(dc_hidden_volume_name "$PROJECT" "$hidden_path")"
+  hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
   VOLUME_ARGS+=(--volume "$hidden_volume:/workspace/$hidden_path")
 done
 
@@ -306,7 +306,7 @@ echo "  ✓ Container created"
 # the same private networks (with the same static IPs) as before.
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 1 ]]; then
   echo "  -> Re-attaching additional networks..."
-  if ! dc_networks_attach_extras "$PROJECT" "${CONTAINER_NETWORKS[@]}"; then
+  if ! dce_networks_attach_extras "$PROJECT" "${CONTAINER_NETWORKS[@]}"; then
     exit 1
   fi
 fi
@@ -318,7 +318,7 @@ sleep 2
 
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   echo "  -> Verifying hidden volume mounts..."
-  if ! dc_ensure_hidden_mounts "$PROJECT" "${CONTAINER_HIDDEN_PATHS[@]}"; then
+  if ! dce_ensure_hidden_mounts "$PROJECT" "${CONTAINER_HIDDEN_PATHS[@]}"; then
     exit 1
   fi
   echo "     ✓ Hidden volume mounts active"
@@ -350,7 +350,7 @@ if $DOCKER_COMPATIBLE; then
     [[ -z "$attach_config_file" ]] && continue
     ATTACH_CONFIG_COUNT=$((ATTACH_CONFIG_COUNT + 1))
     echo "  ✓ $attach_config_file"
-  done < <(dc_vscode_seed_named_attach_config "$PROJECT" "/workspace")
+  done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace")
 
   if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
     echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
@@ -378,8 +378,8 @@ if $ROTATE_KEYS; then
 fi
 echo ""
 echo "Next steps:"
-echo "  [ ] dc install $PROJECT <path-to-dotfiles>   # reapply personal config"
-echo "  [ ] dc shell $PROJECT                        # re-enter container"
+echo "  [ ] dce install $PROJECT <path-to-dotfiles>   # reapply personal config"
+echo "  [ ] dce shell $PROJECT                        # re-enter container"
 echo ""
 echo "Good habits after any rebuild:"
 echo "  [ ] Quick sanity check: git log and git diff in $REPOS_DIR look right"

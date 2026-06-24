@@ -1,4 +1,4 @@
-FROM dev-base:latest
+FROM dce-base:latest
 
 USER root
 
@@ -52,11 +52,11 @@ RUN cargo --version && rustc --version
 
 WORKDIR /workspace
 
-# This overlay supports the dc hidden-volume feature and installs a
+# This overlay supports the dce hidden-volume feature and installs a
 # dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
 # scripts/compose-containerfile.sh). To use it:
 #
-#   dc new <project> rust --hide target [ports...]
+#   dce new <project> rust --hide target [ports...]
 #
 # `target/` is the node_modules-equivalent for Rust: large, native, and lives on
 # the /workspace bind mount, so hiding it restores native filesystem speed and
@@ -72,14 +72,14 @@ WORKDIR /workspace
 # `cargo fetch` downloads crates but does not build them, so unlike npm/uv there
 # is no lifecycle-script risk at install time.
 
-RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dc-rust-entrypoint.sh <<'ENTRYPOINT_EOF'
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dce-rust-entrypoint.sh <<'ENTRYPOINT_EOF'
 #!/bin/sh
 set -eu
 
 APP_DIR="${APP_DIR:-/workspace}"
 STRICT="${DC_RUST_INSTALL_STRICT:-0}"
 CARGO_REGISTRY="${CARGO_HOME:-/home/dev/.cargo}/registry"
-HASH_FILE="$CARGO_REGISTRY/.dc-install-hash"
+HASH_FILE="$CARGO_REGISTRY/.dce-install-hash"
 
 log() { printf '%s\n' "[rust-hide] $*"; }
 
@@ -136,4 +136,4 @@ fi
 exit 0
 ENTRYPOINT_EOF
 
-RUN chmod +x /home/dev/.local/bin/dc-rust-entrypoint.sh
+RUN chmod +x /home/dev/.local/bin/dce-rust-entrypoint.sh

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Smoke test harness for dev-containers command surface.
+# Smoke test harness for DC Enclave command surface.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DC_BIN="$ROOT_DIR/scripts/dc"
+DC_BIN="$ROOT_DIR/scripts/dce"
 
 if [[ ! -x "$DC_BIN" ]]; then
-  echo "ERROR: dc entrypoint is not executable: $DC_BIN"
+  echo "ERROR: dce entrypoint is not executable: $DC_BIN"
   exit 1
 fi
 
@@ -45,17 +45,17 @@ run_check_output() {
   fi
 }
 
-run_check "dc help" "$DC_BIN" help
+run_check "dce help" "$DC_BIN" help
 
 echo ""
-echo "==> dc version"
-run_check "dc version" "$DC_BIN" version
-run_check "dc --version" "$DC_BIN" --version
-run_check "dc -v" "$DC_BIN" -v
-run_check_output "dc --version prints 'dc <semver>'" '^dc [0-9]+\.[0-9]+\.[0-9]+$' "$DC_BIN" --version
-run_check_output "dc help summary shows a version number" '[0-9]+\.[0-9]+\.[0-9]+' "$DC_BIN" help
-run_check_output "dc help documents the version command" 'version' "$DC_BIN" help
-run_check "dc help version" "$DC_BIN" help version
+echo "==> dce version"
+run_check "dce version" "$DC_BIN" version
+run_check "dce --version" "$DC_BIN" --version
+run_check "dce -v" "$DC_BIN" -v
+run_check_output "dce --version prints 'dce <semver>'" '^dce [0-9]+\.[0-9]+\.[0-9]+$' "$DC_BIN" --version
+run_check_output "dce help summary shows a version number" '[0-9]+\.[0-9]+\.[0-9]+' "$DC_BIN" help
+run_check_output "dce help documents the version command" 'version' "$DC_BIN" help
+run_check "dce help version" "$DC_BIN" help version
 
 run_check "hidden path helper checks" "$ROOT_DIR/tests/hidden-paths.sh"
 run_check "rebuild hidden-volume checks" "$ROOT_DIR/tests/rebuild-hidden-volumes.sh"
@@ -72,37 +72,37 @@ run_check "new/rebuild lifecycle checks" "$ROOT_DIR/tests/new-container-lifecycl
 run_check "internal-networking checks" "$ROOT_DIR/tests/networks.sh"
 
 echo ""
-echo "==> dc doctor --help (usage, no backend required)"
-run_check_output "dc doctor --help shows usage" 'doctor \[backend\|project\]' "$DC_BIN" doctor --help
+echo "==> dce doctor --help (usage, no backend required)"
+run_check_output "dce doctor --help shows usage" 'doctor \[backend\|project\]' "$DC_BIN" doctor --help
 
 echo ""
-echo "==> dc help <command> (detailed help)"
-run_check "dc help new" "$DC_BIN" help new
-run_check "dc help start" "$DC_BIN" help start
-run_check "dc help stop" "$DC_BIN" help stop
-run_check "dc help status" "$DC_BIN" help status
-run_check "dc help list" "$DC_BIN" help list
-run_check "dc help shell" "$DC_BIN" help shell
-run_check "dc help logs" "$DC_BIN" help logs
-run_check "dc help exec" "$DC_BIN" help exec
-run_check "dc help restart" "$DC_BIN" help restart
-run_check "dc help rm" "$DC_BIN" help rm
-run_check "dc help rebuild-container" "$DC_BIN" help rebuild-container
-run_check "dc help rebuild-image" "$DC_BIN" help rebuild-image
-run_check "dc help provenance" "$DC_BIN" help provenance
-run_check "dc help clean" "$DC_BIN" help clean
-run_check "dc help doctor" "$DC_BIN" help doctor
-run_check "dc help network" "$DC_BIN" help network
-run_check "dc help install" "$DC_BIN" help install
-run_check "dc help help" "$DC_BIN" help help
+echo "==> dce help <command> (detailed help)"
+run_check "dce help new" "$DC_BIN" help new
+run_check "dce help start" "$DC_BIN" help start
+run_check "dce help stop" "$DC_BIN" help stop
+run_check "dce help status" "$DC_BIN" help status
+run_check "dce help list" "$DC_BIN" help list
+run_check "dce help shell" "$DC_BIN" help shell
+run_check "dce help logs" "$DC_BIN" help logs
+run_check "dce help exec" "$DC_BIN" help exec
+run_check "dce help restart" "$DC_BIN" help restart
+run_check "dce help rm" "$DC_BIN" help rm
+run_check "dce help rebuild-container" "$DC_BIN" help rebuild-container
+run_check "dce help rebuild-image" "$DC_BIN" help rebuild-image
+run_check "dce help provenance" "$DC_BIN" help provenance
+run_check "dce help clean" "$DC_BIN" help clean
+run_check "dce help doctor" "$DC_BIN" help doctor
+run_check "dce help network" "$DC_BIN" help network
+run_check "dce help install" "$DC_BIN" help install
+run_check "dce help help" "$DC_BIN" help help
 
 echo ""
-echo "==> dc help <alias>"
-run_check "dc help s (status alias)" "$DC_BIN" help s
-run_check "dc help ls (list alias)" "$DC_BIN" help ls
+echo "==> dce help <alias>"
+run_check "dce help s (status alias)" "$DC_BIN" help s
+run_check "dce help ls (list alias)" "$DC_BIN" help ls
 
 echo ""
-echo "==> dc help <unknown> (should fail)"
+echo "==> dce help <unknown> (should fail)"
 if "$DC_BIN" help nonexistent >/dev/null 2>&1; then
   echo "  ✗ fail (expected non-zero exit)"
   exit 1
@@ -113,17 +113,17 @@ fi
 if [[ -n "${CONTAINER_BACKEND:-}" ]]; then
   echo "==> backend-dependent checks"
   echo "  backend override: $CONTAINER_BACKEND"
-  run_check "dc list" "$DC_BIN" list
-  run_check "dc status" "$DC_BIN" status
-  run_check "dc clean --dry-run" "$DC_BIN" clean --dry-run
-  run_check "dc clean --hidden-volumes --dry-run" "$DC_BIN" clean --hidden-volumes --dry-run
+  run_check "dce list" "$DC_BIN" list
+  run_check "dce status" "$DC_BIN" status
+  run_check "dce clean --dry-run" "$DC_BIN" clean --dry-run
+  run_check "dce clean --hidden-volumes --dry-run" "$DC_BIN" clean --hidden-volumes --dry-run
 else
   if "$DC_BIN" list >/dev/null 2>&1; then
     echo "==> backend-dependent checks"
     echo "  ✓ backend reachable"
-    run_check "dc status" "$DC_BIN" status
-    run_check "dc clean --dry-run" "$DC_BIN" clean --dry-run
-    run_check "dc clean --hidden-volumes --dry-run" "$DC_BIN" clean --hidden-volumes --dry-run
+    run_check "dce status" "$DC_BIN" status
+    run_check "dce clean --dry-run" "$DC_BIN" clean --dry-run
+    run_check "dce clean --hidden-volumes --dry-run" "$DC_BIN" clean --hidden-volumes --dry-run
   else
     echo "==> backend-dependent checks"
     echo "  - skipped (no supported backend detected or runtime unavailable)"

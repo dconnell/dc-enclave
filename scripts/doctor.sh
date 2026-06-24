@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/doctor.sh - `dc doctor`: preflight diagnostics for dev-containers.
+# scripts/doctor.sh - `dce doctor`: preflight diagnostics for DC Enclave.
 #
 # Runs read-only probes and prints pass/fail per subsystem, so the user gets a
-# single diagnosis instead of assembling one from `dc status` + tribal knowledge.
+# single diagnosis instead of assembling one from `dce status` + tribal knowledge.
 # Catches the common drift classes: wrong bash, missing/broken global config,
-# stale dev-base, Colima context drift / non-docker runtime, Podman machine
+# stale dce-base, Colima context drift / non-docker runtime, Podman machine
 # stopped, missing backend CLI. Never starts or mutates anything.
 #
 # Scope:
-#   dc doctor              every detected backend CLI (+ host checks once)
-#   dc doctor <backend>    one backend (apple|docker|orbstack|colima|podman)
-#   dc doctor <project>    that project's backend + project-specific checks
+#   dce doctor              every detected backend CLI (+ host checks once)
+#   dce doctor <backend>    one backend (apple|docker|orbstack|colima|podman)
+#   dce doctor <project>    that project's backend + project-specific checks
 #
 # Exit code is nonzero if any check fails, so doctor is CI/preflight-friendly.
 # =============================================================================
@@ -38,7 +38,7 @@ PASS_COUNT=0
 FAIL_COUNT=0
 SKIP_COUNT=0
 
-# --- output helpers (no ANSI color: matches the rest of the dc toolset) -------
+# --- output helpers (no ANSI color: matches the rest of the dce toolset) -------
 _ok() {  # <label>
   printf '  \xe2\x9c\x93 %s\n' "$1"
   PASS_COUNT=$((PASS_COUNT + 1))
@@ -142,7 +142,7 @@ _chk_bash() {
 
 _chk_global_config() {
   local cfg
-  cfg="$(dc_global_config_path)" || return 1
+  cfg="$(dce_global_config_path)" || return 1
   if [[ -L "$cfg" ]]; then
     echo "global config is a symlink: $cfg" >&2
     return 1
@@ -155,8 +155,8 @@ _chk_global_config() {
 
 _chk_root() {  # <varname>
   local varname="$1" cfg val
-  cfg="$(dc_global_config_path)" || return 1
-  val="$(dc_config_extract_scalar "$cfg" "$varname" 2>/dev/null)" || {
+  cfg="$(dce_global_config_path)" || return 1
+  val="$(dce_config_extract_scalar "$cfg" "$varname" 2>/dev/null)" || {
     echo "$varname missing or not a clean quoted value in $cfg" >&2
     return 1
   }
@@ -165,7 +165,7 @@ _chk_root() {  # <varname>
     "~")   val="$HOME" ;;
     "~/"*) val="$HOME${val#\~}" ;;
     /*)    : ;;
-    *)     val="$HOME/.config/dev-containers/$val" ;;
+    *)     val="$HOME/.config/dce-enclave/$val" ;;
   esac
   [[ -d "$val" ]] || { echo "$varname root does not exist: $val" >&2; return 1; }
 }
@@ -174,7 +174,7 @@ doctor_host() {
   echo ""
   echo "Environment"
   _check "Bash 4+ (current: ${BASH_VERSION%%,*})" _chk_bash
-  _check "Global config ($(dc_global_config_path))" _chk_global_config
+  _check "Global config ($(dce_global_config_path))" _chk_global_config
   _check "DC_TEAM_DIR resolvable + root exists" _chk_root DC_TEAM_DIR
   _check "DC_USER_DIR resolvable + root exists" _chk_root DC_USER_DIR
 }
@@ -206,7 +206,7 @@ _probe_reachable() {  # <backend>
 }
 
 _probe_devbase() {  # <backend>
-  ( backend_use "$1" >/dev/null 2>&1 && backend_image_exists "dev-base:latest" )
+  ( backend_use "$1" >/dev/null 2>&1 && backend_image_exists "dce-base:latest" )
 }
 
 # Colima-specific gates (read-only): is the active Docker context Colima, and is
@@ -249,7 +249,7 @@ doctor_backend() {  # <backend>
       _skip "Colima runtime is docker" "$dep"
     fi
     _skip "Runtime reachable" "$dep"
-    _skip "Base image present (dev-base:latest)" "$dep"
+    _skip "Base image present (dce-base:latest)" "$dep"
     return
   fi
   _ok "CLI installed"
@@ -265,7 +265,7 @@ doctor_backend() {  # <backend>
         "active Docker context is not Colima (run: colima start && docker context use colima)"
       _skip "Colima runtime is docker" "context not active"
       _skip "Runtime reachable" "context not active"
-      _skip "Base image present (dev-base:latest)" "context not active"
+      _skip "Base image present (dce-base:latest)" "context not active"
       return
     fi
     if _probe_colima_runtime; then
@@ -274,7 +274,7 @@ doctor_backend() {  # <backend>
       _bad "Colima runtime is docker" \
         "Colima is using a non-docker runtime (recreate: colima stop && colima start --runtime docker)"
       _skip "Runtime reachable" "runtime not docker"
-      _skip "Base image present (dev-base:latest)" "runtime not docker"
+      _skip "Base image present (dce-base:latest)" "runtime not docker"
       return
     fi
   fi
@@ -291,15 +291,15 @@ doctor_backend() {  # <backend>
       podman)   hint="$(_hint_podman_unreachable)" ;;
     esac
     _bad "Runtime reachable" "$hint"
-    _skip "Base image present (dev-base:latest)" "runtime unreachable"
+    _skip "Base image present (dce-base:latest)" "runtime unreachable"
     return
   fi
 
   if _probe_devbase "$b"; then
-    _ok "Base image present (dev-base:latest)"
+    _ok "Base image present (dce-base:latest)"
   else
-    _bad "Base image present (dev-base:latest)" \
-      "dev-base:latest missing from this backend's image store (run: CONTAINER_BACKEND=$b scripts/setup.sh)"
+    _bad "Base image present (dce-base:latest)" \
+      "dce-base:latest missing from this backend's image store (run: CONTAINER_BACKEND=$b scripts/setup.sh)"
   fi
 }
 
@@ -335,14 +335,14 @@ _probe_project_image() {  # <backend> <image>
   ( backend_use "$1" >/dev/null 2>&1 && backend_image_exists "$2" )
 }
 
-_chk_project_config() {  # <config-file>  (loads in a subshell so a dc_die only
+_chk_project_config() {  # <config-file>  (loads in a subshell so a dce_die only
                          # kills the subshell, not doctor)
-  ( dc_load_project_config "$1" >/dev/null 2>&1 )
+  ( dce_load_project_config "$1" >/dev/null 2>&1 )
 }
 
 doctor_project() {  # <name>
   local name="$1"
-  local cfg="$HOME/.config/dev-containers/$name/config"
+  local cfg="$HOME/.config/dce-enclave/$name/config"
   echo ""
   printf 'Project: %s\n' "$name"
 
@@ -353,13 +353,13 @@ doctor_project() {  # <name>
   _ok "Config present"
 
   if ! _chk_project_config "$cfg"; then
-    _bad "Config loads" "rejected by dc_load_project_config (unsafe/invalid); see dc status"
+    _bad "Config loads" "rejected by dce_load_project_config (unsafe/invalid); see dce status"
     return
   fi
   _ok "Config loads"
 
   # Safe to load in this shell now (it passed all safety checks in the subshell).
-  dc_load_project_config "$cfg" >/dev/null 2>&1
+  dce_load_project_config "$cfg" >/dev/null 2>&1
 
   local pb
   pb="$(_resolve_project_backend)"
@@ -391,11 +391,11 @@ doctor_project() {  # <name>
       _ok "Project image present ($img)"
     else
       _bad "Project image present ($img)" \
-        "image missing from $pb store (run: CONTAINER_BACKEND=$pb scripts/setup.sh or dc rebuild-image all)"
+        "image missing from $pb store (run: CONTAINER_BACKEND=$pb scripts/setup.sh or dce rebuild-image all)"
     fi
   fi
 
-  # Secrets presence (mirrors dc status logic). Missing token/key is actionable.
+  # Secrets presence (mirrors dce status logic). Missing token/key is actionable.
   local token_state="missing"
   if [[ -n "${TOKEN_FILE:-}" && -f "$TOKEN_FILE" ]]; then
     if grep -v '^#' "$TOKEN_FILE" 2>/dev/null | grep -v '^ghp_REPLACE_ME' | grep -q .; then
@@ -424,7 +424,7 @@ doctor_project() {  # <name>
     elif backend_exists "$name" 2>/dev/null; then
       _info "Container state: stopped"
     else
-      _info "Container state: not present (run: dc start $name)"
+      _info "Container state: not present (run: dce start $name)"
     fi
   fi
 }
@@ -438,7 +438,7 @@ if [[ $# -gt 0 ]]; then
   case "$1" in
     -h|--help)
       cat <<'EOF'
-Usage: dc doctor [backend|project]
+Usage: dce doctor [backend|project]
 
 Runs read-only preflight checks and prints pass/fail per subsystem.
 
@@ -453,16 +453,16 @@ doctor never starts or mutates anything; it only inspects. Exit code is nonzero
 if any check fails.
 
 Examples:
-  dc doctor              check all detected backends
-  dc doctor colima       check only the Colima backend
-  dc doctor myapp        check the myapp project and its backend
+  dce doctor              check all detected backends
+  dce doctor colima       check only the Colima backend
+  dce doctor myapp        check the myapp project and its backend
 EOF
       exit 0
       ;;
     apple|docker|orbstack|colima|podman)
       DOCTOR_MODE="backend"; DOCTOR_TARGET="$1" ;;
     *)
-      if [[ -f "$HOME/.config/dev-containers/$1/config" ]]; then
+      if [[ -f "$HOME/.config/dce-enclave/$1/config" ]]; then
         DOCTOR_MODE="project"; DOCTOR_TARGET="$1"
       else
         printf 'Unknown backend or project: %s\n' "$1" >&2
@@ -475,7 +475,7 @@ EOF
 fi
 
 printf '======================================================================\n'
-printf 'dev-containers doctor\n'
+printf 'DC Enclave doctor\n'
 printf '======================================================================\n'
 
 doctor_host
@@ -508,5 +508,5 @@ if [[ $FAIL_COUNT -eq 0 ]]; then
   exit 0
 fi
 printf 'Result: %d passed, %d failed, %d skipped.\n' "$PASS_COUNT" "$FAIL_COUNT" "$SKIP_COUNT"
-printf 'Fix the failing checks above, then rerun: dc doctor\n'
+printf 'Fix the failing checks above, then rerun: dce doctor\n'
 exit 1

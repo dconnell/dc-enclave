@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/start.sh - `dc start`: start one or all dev containers.
+# scripts/start.sh - `dce start`: start one or all dev containers.
 #
 # Starts named projects, or all configured projects when none are given. Brings
 # up the runtime if needed, verifies hidden-volume mounts, and re-injects the
@@ -27,14 +27,14 @@ source "$ROOT_DIR/lib/container-backend.sh"
 # re-inject the SSH key if the container lost it (e.g. after a host reboot).
 _start_container() {
   local project="$1"
-  local config="$HOME/.config/dev-containers/$project/config"
+  local config="$HOME/.config/dce-enclave/$project/config"
 
   if [[ ! -f "$config" ]]; then
     echo "✗ No config found for '$project' at $config"
     return 1
   fi
 
-  dc_load_project_config "$config"
+  dce_load_project_config "$config"
   backend_use "${CONTAINER_BACKEND:-}" || return 1
 
   local active_backend=""
@@ -74,7 +74,7 @@ _start_container() {
 
   if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
     sleep 2
-    if ! dc_ensure_hidden_mounts "$project" "${CONTAINER_HIDDEN_PATHS[@]}"; then
+    if ! dce_ensure_hidden_mounts "$project" "${CONTAINER_HIDDEN_PATHS[@]}"; then
       echo "  ✗ $project - hidden volume mounts not active"
       return 1
     fi
@@ -97,9 +97,9 @@ if [[ $# -gt 0 ]]; then
     _start_container "$project"
   done
 else
-  PROJECTS=("$HOME"/.config/dev-containers/*/config)
+  PROJECTS=("$HOME"/.config/dce-enclave/*/config)
   if [[ ${#PROJECTS[@]} -eq 0 ]]; then
-    echo "No containers configured yet. Run: dc new <name> [scope]"
+    echo "No containers configured yet. Run: dce new <name> [scope]"
     exit 0
   fi
 
@@ -111,4 +111,4 @@ else
 fi
 
 echo ""
-echo "Run 'dc status' to see running containers."
+echo "Run 'dce status' to see running containers."

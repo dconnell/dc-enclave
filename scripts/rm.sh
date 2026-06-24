@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/rm.sh - `dc rm`: fully remove a dev container project.
+# scripts/rm.sh - `dce rm`: fully remove a dev container project.
 #
 # Default (full teardown) removes, for the named project:
 #   - the container (stopped first if running)
-#   - every managed hidden volume (dc-hide-<project>-<hash>)
-#   - the per-project config + secrets dir (~/.config/dev-containers/<name>)
+#   - every managed hidden volume (dce-hide-<project>-<hash>)
+#   - the per-project config + secrets dir (~/.config/dce-enclave/<name>)
 # Escape hatches: --keep-config preserves config+secrets; --keep-volumes
 # preserves hidden volumes. --yes/-y skips the confirmation prompt.
 #
 # Safety:
 #   - The host code directory ($REPOS_DIR) is NEVER touched by this command.
 #   - The project name is validated and the secrets dir's real path is checked
-#     to be under the dev-containers config root before any rm -rf, so a
+#     to be under the DC Enclave config root before any rm -rf, so a
 #     symlinked project dir cannot redirect deletion elsewhere.
 #   - Destructive: requires typing 'yes' to confirm (unless --yes).
 # =============================================================================
@@ -43,7 +43,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "ERROR: Unknown option: $1" >&2
-      echo "Usage: dc rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
+      echo "Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
       exit 1
       ;;
     *)
@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
         PROJECT="$1"
       else
         echo "ERROR: Unexpected argument: $1" >&2
-        echo "Usage: dc rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
+        echo "Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
         exit 1
       fi
       shift
@@ -61,7 +61,7 @@ done
 
 if [[ -z "$PROJECT" ]]; then
   echo "ERROR: Project name is required." >&2
-  echo "Usage: dc rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
+  echo "Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
   exit 1
 fi
 
@@ -85,7 +85,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
-SECRET_DIR="$HOME/.config/dev-containers/$PROJECT"
+SECRET_DIR="$HOME/.config/dce-enclave/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 HIDDEN_PATHS=()
@@ -94,7 +94,7 @@ BACKEND_OK=false
 ACTIVE_BACKEND=""
 
 if [[ -f "$CONFIG" ]]; then
-  dc_load_project_config "$CONFIG"
+  dce_load_project_config "$CONFIG"
   if ! declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1; then
     CONTAINER_HIDDEN_PATHS=()
   fi
@@ -135,7 +135,7 @@ if [[ ${#HIDDEN_PATHS[@]} -gt 0 ]]; then
     echo "                 -> volumes REMOVED"
   fi
 fi
-echo "  Host code dir:  ${REPOS_DIR_VAL:-(unknown)}  (NEVER touched by dc rm)"
+echo "  Host code dir:  ${REPOS_DIR_VAL:-(unknown)}  (NEVER touched by dce rm)"
 echo ""
 echo "This will remove the container, hidden volumes, and config+secrets for '$PROJECT'."
 if ! $ASSUME_YES; then
@@ -170,7 +170,7 @@ if $BACKEND_OK; then
     echo "==> Removing hidden volumes..."
     for hidden_path in "${HIDDEN_PATHS[@]}"; do
       [[ -z "$hidden_path" ]] && continue
-      hidden_volume="$(dc_hidden_volume_name "$PROJECT" "$hidden_path")"
+      hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
       if backend_remove_volume "$hidden_volume" 2>/dev/null; then
         echo "  ✓ Removed: $hidden_volume ($hidden_path)"
       else
@@ -184,12 +184,12 @@ if ! $KEEP_CONFIG; then
   echo "==> Removing config + secrets dir..."
   if [[ -d "$SECRET_DIR" ]]; then
     # Guard against a symlinked project dir escaping the config root: resolve
-    # both and require the secrets dir to live under the dev-containers root.
-    dc_root_real="$(cd -P "$HOME/.config/dev-containers" 2>/dev/null && pwd)"
+    # both and require the secrets dir to live under the DC Enclave root.
+    dce_root_real="$(cd -P "$HOME/.config/dce-enclave" 2>/dev/null && pwd)"
     secret_real="$(cd -P "$SECRET_DIR" 2>/dev/null && pwd)"
-    if [[ -n "$dc_root_real" && -n "$secret_real" ]]; then
-      if [[ "$secret_real" != "$dc_root_real" && "$secret_real" != "$dc_root_real"/* ]]; then
-        echo "ERROR: Refusing to remove '$SECRET_DIR': resolves outside the dev-containers config root." >&2
+    if [[ -n "$dce_root_real" && -n "$secret_real" ]]; then
+      if [[ "$secret_real" != "$dce_root_real" && "$secret_real" != "$dce_root_real"/* ]]; then
+        echo "ERROR: Refusing to remove '$SECRET_DIR': resolves outside the DC Enclave config root." >&2
         exit 1
       fi
     fi

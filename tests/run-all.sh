@@ -9,8 +9,8 @@
 # output dumped only for failures.
 #
 # `smoke.sh` is intentionally excluded: it chains these same files AND adds the
-# `dc` command-surface checks (help/version) plus the optional backend-dependent
-# checks (dc list/status/clean). Run it separately when you want those, e.g.:
+# `dce` command-surface checks (help/version) plus the optional backend-dependent
+# checks (dce list/status/clean). Run it separately when you want those, e.g.:
 #   tests/smoke.sh
 #   CONTAINER_BACKEND=podman tests/run-all.sh   # passed through to test files
 #

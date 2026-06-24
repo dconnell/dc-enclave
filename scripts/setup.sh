@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/setup.sh - One-time host setup for dev-containers.
+# scripts/setup.sh - One-time host setup for DC Enclave.
 #
 # Idempotent and safe to re-run. Per active backend it: starts/reaches the
 # runtime, picks a repos dir, creates the config + two-root overlay/recipe
 # directories, writes the global config (DC_TEAM_DIR / DC_USER_DIR), registers a
-# global gitignore for secrets, builds dev-base:latest into that backend's image
-# store, and adds the `dc` alias + completion + DC_REPOS_DIR to the shell
+# global gitignore for secrets, builds dce-base:latest into that backend's image
+# store, and adds the `dce` alias + completion + DC_REPOS_DIR to the shell
 # profile.
 #
 # Run once per backend you use - image stores are not shared across backends.
@@ -31,7 +31,7 @@ backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 
 echo "========================================"
-echo "dev-containers: host setup"
+echo "DC Enclave: host setup"
 echo "========================================"
 echo ""
 echo "Selected backend: $ACTIVE_BACKEND"
@@ -100,7 +100,7 @@ echo ""
 echo "==> Creating host directories..."
 
 DIRS=(
-  "$HOME/.config/dev-containers"
+  "$HOME/.config/dce-enclave"
 )
 
 for dir in "${DIRS[@]}"; do
@@ -108,17 +108,17 @@ for dir in "${DIRS[@]}"; do
   echo "  ✓ $dir"
 done
 
-GLOBAL_CONFIG="$HOME/.config/dev-containers/config"
-DEFAULT_TEAM_DIR="$(dc_team_default_root)"
-DEFAULT_USER_DIR="$(dc_user_default_root)"
+GLOBAL_CONFIG="$HOME/.config/dce-enclave/config"
+DEFAULT_TEAM_DIR="$(dce_team_default_root)"
+DEFAULT_USER_DIR="$(dce_user_default_root)"
 
 echo ""
 echo "==> Bootstrapping global config..."
 if [[ ! -f "$GLOBAL_CONFIG" ]]; then
   cat > "$GLOBAL_CONFIG" <<EOF
-# Global dev-containers config
+# Global DC Enclave config
 # Each root may be its own git repo, holding both overlays/ (image layers) and
-# container-recipes/ (per-container-name dc new recipe files).
+# container-recipes/ (per-container-name dce new recipe files).
 DC_TEAM_DIR="$DEFAULT_TEAM_DIR"
 DC_USER_DIR="$DEFAULT_USER_DIR"
 EOF
@@ -144,31 +144,31 @@ _ensure_config_key DC_USER_DIR "$DEFAULT_USER_DIR"
 
 # Read both roots back through the hardened parser (no `source`), so a
 # hand-edited global config can't execute code during setup.
-_dc_setup_normalize() {
+_dce_setup_normalize() {
   local varname="$1"
   local val="${!varname}"
   if [[ "$val" == "~" || "$val" == "~/"* ]]; then
     val="$HOME${val#\~}"
   elif [[ "$val" != /* ]]; then
-    val="$HOME/.config/dev-containers/$val"
+    val="$HOME/.config/dce-enclave/$val"
   fi
   printf -v "$varname" '%s' "$val"
 }
 
-if ! DC_TEAM_DIR="$(dc_config_extract_scalar "$GLOBAL_CONFIG" DC_TEAM_DIR)" \
+if ! DC_TEAM_DIR="$(dce_config_extract_scalar "$GLOBAL_CONFIG" DC_TEAM_DIR)" \
    || [[ -z "${DC_TEAM_DIR:-}" ]]; then
-  echo "ERROR: DC_TEAM_DIR is not set (or is malformed) in ~/.config/dev-containers/config"
+  echo "ERROR: DC_TEAM_DIR is not set (or is malformed) in ~/.config/dce-enclave/config"
   echo "Set DC_TEAM_DIR and rerun scripts/setup.sh"
   exit 1
 fi
-if ! DC_USER_DIR="$(dc_config_extract_scalar "$GLOBAL_CONFIG" DC_USER_DIR)" \
+if ! DC_USER_DIR="$(dce_config_extract_scalar "$GLOBAL_CONFIG" DC_USER_DIR)" \
    || [[ -z "${DC_USER_DIR:-}" ]]; then
-  echo "ERROR: DC_USER_DIR is not set (or is malformed) in ~/.config/dev-containers/config"
+  echo "ERROR: DC_USER_DIR is not set (or is malformed) in ~/.config/dce-enclave/config"
   echo "Set DC_USER_DIR and rerun scripts/setup.sh"
   exit 1
 fi
-_dc_setup_normalize DC_TEAM_DIR
-_dc_setup_normalize DC_USER_DIR
+_dce_setup_normalize DC_TEAM_DIR
+_dce_setup_normalize DC_USER_DIR
 
 for _r in "$DC_TEAM_DIR" "$DC_USER_DIR"; do
   if [[ -e "$_r" && ! -d "$_r" ]]; then
@@ -199,12 +199,12 @@ _write_overlays_readme() {
 
 Optional ${who}-wide overlay Containerfile fragments. Place files directly here
 named Containerfile.<scope> so they are auto-layered when the matching scope is
-selected with dc new or dc rebuild-container. For example:
+selected with dce new or dce rebuild-container. For example:
 
 - Containerfile.all
 - Containerfile.<any-scope-name>
 
-These files are automatically layered by dc new/dc rebuild-container when they
+These files are automatically layered by dce new/dce rebuild-container when they
 exist.
 EOF
     echo "  ✓ Created $dir/README.md"
@@ -217,8 +217,8 @@ _write_recipes_readme() {
 # ${who} container recipes
 
 Optional ${who}-wide container recipes. A recipe is a key=value file named after
-a container name (e.g. \`api\`) that pre-fills the inputs to \`dc new <name>\`
-(scopes, cpus, memory, hide, network, ip, repo-path, port). \`dc new <name>\`
+a container name (e.g. \`api\`) that pre-fills the inputs to \`dce new <name>\`
+(scopes, cpus, memory, hide, network, ip, repo-path, port). \`dce new <name>\`
 auto-loads \$DC_$(echo "$who" | tr '[:lower:]' '[:upper:]')_DIR/container-recipes/<name>
 when it exists; user recipes override team recipes per key, and CLI flags
 override both. The filename IS the container name.
@@ -241,10 +241,10 @@ _write_recipes_readme "$DC_USER_DIR/container-recipes" user
 # Register a global gitignore so per-project secrets (tokens, SSH keys, npmrc)
 # are never accidentally committed, and point git at it.
 GLOBAL_GITIGNORE="$HOME/.gitignore_global"
-if ! grep -q "dev-containers secrets" "$GLOBAL_GITIGNORE" 2>/dev/null; then
+if ! grep -q "DC Enclave secrets" "$GLOBAL_GITIGNORE" 2>/dev/null; then
   cat >> "$GLOBAL_GITIGNORE" <<'EOF'
 
-# dev-containers secrets (never commit these)
+# DC Enclave secrets (never commit these)
 github-token
 *.github-token
 ssh_key
@@ -260,9 +260,9 @@ echo ""
 echo "==> Building base container image (this takes a few minutes)..."
 echo ""
 
-echo "--- Building dev-base ---"
+echo "--- Building dce-base ---"
 backend_build_image \
-  "dev-base:latest" \
+  "dce-base:latest" \
   "$ROOT_DIR/Containerfiles/Containerfile.base" \
   "$ROOT_DIR"
 
@@ -295,24 +295,23 @@ echo ""
 echo "==> Shell integration ($USER_SHELL -> $PROFILE_FILE)"
 
 if [[ "$USER_SHELL" == "zsh" ]]; then
-  # zsh command wiring: use a shell function, not an alias. Some users disable
-  # alias expansion (`setopt no_aliases`) or have another `dc` on PATH
-  # (historically the desk calculator), which makes an alias-based setup brittle.
-  # A function is always resolved before PATH lookup and reliably forwards args.
-  DC_UNALIAS_LINE="unalias dc 2>/dev/null"
-  DC_FUNCTION_LINE="dc() { \"$ROOT_DIR/scripts/dc\" \"\$@\"; }"
-  LEGACY_ALIAS_LINE="alias dc='$ROOT_DIR/scripts/dc'"
+  # zsh command wiring: use a shell function, not an alias. A function is always
+  # resolved before PATH lookup and reliably forwards args, so it stays robust
+  # even if a user disables alias expansion (`setopt no_aliases`).
+  DC_UNALIAS_LINE="unalias dce 2>/dev/null"
+  DC_FUNCTION_LINE="dce() { \"$ROOT_DIR/scripts/dce\" \"\$@\"; }"
+  LEGACY_ALIAS_LINE="alias dce='$ROOT_DIR/scripts/dce'"
 
   if grep -Fxq "$DC_FUNCTION_LINE" "$PROFILE_FILE"; then
-    echo "  ✓ dc command function already present in $PROFILE_FILE"
+    echo "  ✓ dce command function already present in $PROFILE_FILE"
   else
     {
       echo ""
-      echo "# dev-containers command"
+      echo "# DC Enclave command"
       echo "$DC_UNALIAS_LINE"
       echo "$DC_FUNCTION_LINE"
     } >> "$PROFILE_FILE"
-    echo "  ✓ Added dc command function to $PROFILE_FILE"
+    echo "  ✓ Added dce command function to $PROFILE_FILE"
   fi
 
   # Migration: remove the exact legacy alias line managed by older setup runs.
@@ -321,19 +320,19 @@ if [[ "$USER_SHELL" == "zsh" ]]; then
     grep -Fxv "$LEGACY_ALIAS_LINE" "$PROFILE_FILE" > "$tmp_profile"
     cat "$tmp_profile" > "$PROFILE_FILE"
     rm -f "$tmp_profile"
-    echo "  ✓ Removed legacy dc alias line from $PROFILE_FILE"
+    echo "  ✓ Removed legacy dce alias line from $PROFILE_FILE"
   fi
 
-  # Native zsh completion: put scripts/ on fpath, autoload _dc, ensure
-  # compinit has run, and bind it to dc. Explicit compdef + autoload means this
+  # Native zsh completion: put scripts/ on fpath, autoload _dce, ensure
+  # compinit has run, and bind it to dce. Explicit compdef + autoload means this
   # works regardless of whether the user's own compinit runs before or after.
-  # Bind _dc to `dc`. Because dc is a shell function (wired above), zsh
-  # resolves the command name directly and `_comps[dc]` is what fires on
-  # `dc <TAB>` -- no path-keyed binding is needed (that was an artifact of the
+  # Bind _dce to `dce`. Because dce is a shell function (wired above), zsh
+  # resolves the command name directly and `_comps[dce]` is what fires on
+  # `dce <TAB>` -- no path-keyed binding is needed (that was an artifact of the
   # old alias-based wiring, where completion could key off the expanded alias
   # path). The path-qualified form is retained only as a legacy migration target.
-  COMPDEF_LINE="compdef _dc dc"
-  LEGACY_COMPDEF_LINE="compdef _dc dc '$ROOT_DIR/scripts/dc'"
+  COMPDEF_LINE="compdef _dce dce"
+  LEGACY_COMPDEF_LINE="compdef _dce dce '$ROOT_DIR/scripts/dce'"
 
   # Exact-line match (-Fxq): the new line is a substring of the legacy
   # path-qualified form, so a plain -F substring check would falsely report a
@@ -353,9 +352,9 @@ if [[ "$USER_SHELL" == "zsh" ]]; then
     else
       {
         echo ""
-        echo "# dev-containers completion (zsh)"
+        echo "# DC Enclave completion (zsh)"
         echo "fpath+=('$ROOT_DIR/scripts')"
-        echo "autoload -Uz _dc"
+        echo "autoload -Uz _dce"
         echo "autoload -Uz compinit"
         echo "(( \${+_comps} )) || compinit -u"
         echo "$COMPDEF_LINE"
@@ -375,10 +374,10 @@ if [[ "$USER_SHELL" == "zsh" ]]; then
   fi
 
   # Migration: a previous (bash-targeted) setup, or a manual bridge, may have
-  # left a `source .../dc-complete.bash` line in ~/.zshrc. That file ends in the
+  # left a `source .../dce-complete.bash` line in ~/.zshrc. That file ends in the
   # bash-only `complete -F` builtin, which errors under zsh. Remove our exact
   # line if present; never touch anything else.
-  STALE_BASH_COMP="source '$ROOT_DIR/scripts/dc-complete.bash'"
+  STALE_BASH_COMP="source '$ROOT_DIR/scripts/dce-complete.bash'"
   if grep -Fq "$STALE_BASH_COMP" "$PROFILE_FILE"; then
     tmp_profile="$(mktemp)"
     grep -Fv "$STALE_BASH_COMP" "$PROFILE_FILE" > "$tmp_profile"
@@ -388,27 +387,27 @@ if [[ "$USER_SHELL" == "zsh" ]]; then
   fi
 else
   # bash command alias.
-  ALIAS_LINE="alias dc='$ROOT_DIR/scripts/dc'"
+  ALIAS_LINE="alias dce='$ROOT_DIR/scripts/dce'"
   if ! grep -Fq "$ALIAS_LINE" "$PROFILE_FILE"; then
     {
       echo ""
-      echo "# dev-containers alias"
+      echo "# DC Enclave alias"
       echo "$ALIAS_LINE"
     } >> "$PROFILE_FILE"
-    echo "  ✓ Added dc alias to $PROFILE_FILE"
+    echo "  ✓ Added dce alias to $PROFILE_FILE"
   fi
 
   # bash: source the bash completion file (unchanged behavior).
-  COMPLETION_LINE="source '$ROOT_DIR/scripts/dc-complete.bash'"
+  COMPLETION_LINE="source '$ROOT_DIR/scripts/dce-complete.bash'"
   if ! grep -Fq "$COMPLETION_LINE" "$PROFILE_FILE"; then
     {
       echo ""
-      echo "# dev-containers completion"
+      echo "# DC Enclave completion"
       echo "$COMPLETION_LINE"
     } >> "$PROFILE_FILE"
-    echo "  ✓ Added dc completion to $PROFILE_FILE"
+    echo "  ✓ Added dce completion to $PROFILE_FILE"
   else
-    echo "  ✓ dc completion already present in $PROFILE_FILE"
+    echo "  ✓ dce completion already present in $PROFILE_FILE"
   fi
 fi
 
@@ -431,7 +430,7 @@ if grep -Eq "^(export[[:space:]]+)?DC_REPOS_DIR=" "$PROFILE_FILE" 2>/dev/null; t
 else
   {
     echo ""
-    echo "# dev-containers repos directory"
+    echo "# DC Enclave repos directory"
     echo "$REPOS_DIR_EXPORT_LINE"
   } >> "$PROFILE_FILE"
   echo "✓ Added DC_REPOS_DIR to $PROFILE_FILE"
@@ -450,4 +449,4 @@ fi
 echo ""
 echo "Next:"
 echo "  1. source $PROFILE_FILE   (or start a new $USER_SHELL shell)"
-echo "  2. dc new <name> [scope] [port:port]"
+echo "  2. dce new <name> [scope] [port:port]"
