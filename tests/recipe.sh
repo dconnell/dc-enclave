@@ -103,7 +103,9 @@ load_cfg() {
   local project="$1"
   local cfg="$HOME/.config/dce-enclave/$project/config"
   [[ -f "$cfg" ]] || fail "missing config for $project"
-  PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
+  # shellcheck disable=SC2034
+  # Reset before dce_load_project_config repopulates them from the sourced cfg.
+  PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=()
   dce_load_project_config "$cfg"
 }
 

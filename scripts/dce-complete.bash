@@ -23,7 +23,7 @@ _dce_complete_self_dir() {
   cd -P "$(dirname "$src")" && pwd
 }
 _dce_scripts_dir="$(_dce_complete_self_dir)"
-# shellcheck source=../lib/complete-data.sh
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$_dce_scripts_dir/../lib/complete-data.sh"
 unset -f _dce_complete_self_dir
 unset _dce_scripts_dir
@@ -49,7 +49,7 @@ _dce_complete() {
 
   # First word is always a subcommand.
   if [[ $COMP_CWORD -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "$(dce_complete_subcommands)" -- "$cur") )
+    mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_subcommands)" -- "$cur")
     return 0
   fi
 
@@ -81,7 +81,7 @@ _dce_complete() {
         return 0
       fi
       [[ "$prev" == "--tail" ]] && return 0
-      COMPREPLY=( $(compgen -W "--follow -f --tail" -- "$cur") )
+      mapfile -t COMPREPLY < <(compgen -W "--follow -f --tail" -- "$cur")
       return 0
       ;;
     exec)
@@ -102,7 +102,7 @@ _dce_complete() {
         _dce_reply_projects "$cur"
         return 0
       fi
-      COMPREPLY=( $(compgen -W "--yes -y --keep-config --keep-volumes" -- "$cur") )
+      mapfile -t COMPREPLY < <(compgen -W "--yes -y --keep-config --keep-volumes" -- "$cur")
       return 0
       ;;
     rebuild-container)
@@ -111,20 +111,20 @@ _dce_complete() {
         return 0
       fi
       # >= 3: optional flags (order-independent).
-      COMPREPLY=( $(compgen -W "--rotate-keys --keep-hidden-volumes" -- "$cur") )
+      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --keep-hidden-volumes" -- "$cur")
       return 0
       ;;
     install)
       if [[ $COMP_CWORD -eq 2 ]]; then
         _dce_reply_projects "$cur"
       elif [[ $COMP_CWORD -eq 3 ]]; then
-        COMPREPLY=( $(compgen -d -- "$cur") )
+        mapfile -t COMPREPLY < <(compgen -d -- "$cur")
       fi
       return 0
       ;;
     rebuild-image)
       if [[ $COMP_CWORD -eq 2 ]]; then
-        COMPREPLY=( $(compgen -W "$(dce_complete_rebuild_image_targets)" -- "$cur") )
+        mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_rebuild_image_targets)" -- "$cur")
       fi
       return 0
       ;;
@@ -133,7 +133,7 @@ _dce_complete() {
         _dce_reply_projects "$cur"
         return 0
       fi
-      COMPREPLY=( $(compgen -W "--history --all" -- "$cur") )
+      mapfile -t COMPREPLY < <(compgen -W "--history --all" -- "$cur")
       return 0
       ;;
     clean)
@@ -141,7 +141,7 @@ _dce_complete() {
       return 0
       ;;
     doctor)
-      COMPREPLY=( $(compgen -W "$(dce_complete_doctor_targets "$cur")" -- "$cur") )
+      mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_doctor_targets "$cur")" -- "$cur")
       return 0
       ;;
     network|net)
@@ -237,11 +237,11 @@ _dce_complete_new() {
   # Flags that consume a following value.
   case "$prev" in
     --repo-path)
-      COMPREPLY=( $(compgen -d -- "$cur") )
+      mapfile -t COMPREPLY < <(compgen -d -- "$cur")
       return 0
       ;;
     --config)
-      COMPREPLY=( $(compgen -f -- "$cur") )
+      mapfile -t COMPREPLY < <(compgen -f -- "$cur")
       return 0
       ;;
     --cpus|--memory|--hide|--network|--ip)
@@ -252,9 +252,9 @@ _dce_complete_new() {
   local flags="--config --save-team --save-user --repo-path --cpus --memory --hide --network --ip"
   if [[ $COMP_CWORD -eq 3 ]]; then
     # Second positional: a scope (with flags also accepted).
-    COMPREPLY=( $(compgen -W "$(dce_complete_scopes) $flags" -- "$cur") )
+    mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_scopes) $flags" -- "$cur")
   else
-    COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
+    mapfile -t COMPREPLY < <(compgen -W "$flags" -- "$cur")
   fi
 }
 
@@ -265,7 +265,7 @@ _dce_complete_network() {
   local cur="$1" prev="$2"
 
   if [[ $COMP_CWORD -eq 2 ]]; then
-    COMPREPLY=( $(compgen -W "$(dce_complete_network_subactions)" -- "$cur") )
+    mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_network_subactions)" -- "$cur")
     return 0
   fi
 
@@ -275,7 +275,7 @@ _dce_complete_network() {
       ;;
   esac
 
-  COMPREPLY=( $(compgen -W "--force --ip --subnet --subnet-v6" -- "$cur") )
+  mapfile -t COMPREPLY < <(compgen -W "--force --ip --subnet --subnet-v6" -- "$cur")
   return 0
 }
 

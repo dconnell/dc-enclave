@@ -159,10 +159,15 @@ SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 unset _src _dir
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/container-backend.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/network.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/recipe.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/vscode.sh"
 
 dce_load_global_config
@@ -324,6 +329,8 @@ done
 
 SECRET_DIR="$HOME/.config/dce-enclave/$PROJECT"
 CONFIG_FILE="$HOME/.config/dce-enclave/$PROJECT/config"
+# shellcheck disable=SC2088
+# Display path shown to the user with a literal ~; not meant to expand.
 CONFIG_FILE_DISPLAY="~/.config/dce-enclave/$PROJECT/config"
 
 if [[ -f "$CONFIG_FILE" ]]; then
@@ -374,6 +381,8 @@ else
   repo_target="${DC_REPOS_DIR:-$HOME/repos}/$PROJECT"
 fi
 
+# shellcheck disable=SC2088
+# ~ is a literal char matched against user input, not an expansion.
 if [[ "$repo_target" == "~" || "$repo_target" == "~/"* ]]; then
   repo_target="$HOME${repo_target#\~}"
 elif [[ "$repo_target" != /* ]]; then
@@ -481,11 +490,13 @@ echo ""
 
 TOKEN_FILE="$SECRET_DIR/github-token"
 if [[ ! -f "$TOKEN_FILE" ]]; then
-  echo "# GitHub Personal Access Token for container: $PROJECT" > "$TOKEN_FILE"
-  echo "# Scope: repo (or fine-grained: specific repos, contents read/write)" >> "$TOKEN_FILE"
-  echo "# NO admin permissions, NO org-level access" >> "$TOKEN_FILE"
-  echo "# Replace this line with your token:" >> "$TOKEN_FILE"
-  echo "ghp_REPLACE_ME" >> "$TOKEN_FILE"
+  {
+    echo "# GitHub Personal Access Token for container: $PROJECT"
+    echo "# Scope: repo (or fine-grained: specific repos, contents read/write)"
+    echo "# NO admin permissions, NO org-level access"
+    echo "# Replace this line with your token:"
+    echo "ghp_REPLACE_ME"
+  } > "$TOKEN_FILE"
   chmod 600 "$TOKEN_FILE"
 fi
 echo "✓ GitHub token placeholder: $TOKEN_FILE"
@@ -536,25 +547,19 @@ NPMRC_PATH="$esc_npmrc"
 EOF
 
 if [[ ${#PORTS[@]} -gt 0 ]]; then
-  printf 'PORTS=(' >> "$CONFIG_FILE"
-  printf '%q ' "${PORTS[@]}" >> "$CONFIG_FILE"
-  printf ')\n' >> "$CONFIG_FILE"
+  { printf 'PORTS=('; printf '%q ' "${PORTS[@]}"; printf ')\n'; } >> "$CONFIG_FILE"
 else
   echo "PORTS=()" >> "$CONFIG_FILE"
 fi
 
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
-  printf 'CONTAINER_HIDDEN_PATHS=(' >> "$CONFIG_FILE"
-  printf '%q ' "${CONTAINER_HIDDEN_PATHS[@]}" >> "$CONFIG_FILE"
-  printf ')\n' >> "$CONFIG_FILE"
+  { printf 'CONTAINER_HIDDEN_PATHS=('; printf '%q ' "${CONTAINER_HIDDEN_PATHS[@]}"; printf ')\n'; } >> "$CONFIG_FILE"
 else
   echo "CONTAINER_HIDDEN_PATHS=()" >> "$CONFIG_FILE"
 fi
 
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
-  printf 'CONTAINER_NETWORKS=(' >> "$CONFIG_FILE"
-  printf '%q ' "${CONTAINER_NETWORKS[@]}" >> "$CONFIG_FILE"
-  printf ')\n' >> "$CONFIG_FILE"
+  { printf 'CONTAINER_NETWORKS=('; printf '%q ' "${CONTAINER_NETWORKS[@]}"; printf ')\n'; } >> "$CONFIG_FILE"
 else
   echo "CONTAINER_NETWORKS=()" >> "$CONFIG_FILE"
 fi

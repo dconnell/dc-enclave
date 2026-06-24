@@ -30,8 +30,11 @@ SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 unset _src _dir
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/container-backend.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/platform.sh"
 
 PASS_COUNT=0
@@ -70,6 +73,8 @@ _info() {  # <label>: <value>
 # macOS-only advice. apple/container and OrbStack are macOS-only products, so
 # their hints need no per-OS branching.
 
+# shellcheck disable=SC2329
+# Invoked indirectly by name via the _check dispatcher; reached through _chk_bash.
 _hint_bash_install() {
   case "$(platform_os)" in
     macos) printf 'macOS ships Bash 3.2; install 4+: brew install bash' ;;
@@ -134,12 +139,16 @@ _check() {  # <label> <check-fn> [args...]
 
 # --- host probes --------------------------------------------------------------
 
+# shellcheck disable=SC2329
+# Invoked indirectly by name via the _check dispatcher (see _check calls below).
 _chk_bash() {
   if [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]]; then return 0; fi
   printf 'Bash %s detected (need 4+); %s\n' "${BASH_VERSION:-unknown}" "$(_hint_bash_install)" >&2
   return 1
 }
 
+# shellcheck disable=SC2329
+# Invoked indirectly by name via the _check dispatcher.
 _chk_global_config() {
   local cfg
   cfg="$(dce_global_config_path)" || return 1
@@ -153,6 +162,8 @@ _chk_global_config() {
   fi
 }
 
+# shellcheck disable=SC2329
+# Invoked indirectly by name via the _check dispatcher (once per config var).
 _chk_root() {  # <varname>
   local varname="$1" cfg val
   cfg="$(dce_global_config_path)" || return 1
@@ -161,6 +172,8 @@ _chk_root() {  # <varname>
     return 1
   }
   [[ -n "$val" ]] || { echo "$varname is empty in $cfg" >&2; return 1; }
+  # shellcheck disable=SC2088
+  # ~ is a literal char matched against user input, not an expansion.
   case "$val" in
     "~")   val="$HOME" ;;
     "~/"*) val="$HOME${val#\~}" ;;

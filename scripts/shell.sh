@@ -26,7 +26,9 @@ SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 unset _src _dir
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/container-backend.sh"
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
@@ -81,6 +83,8 @@ _dce_token_env_file=""
 _dce_seed_token_file() {
   _dce_token_env_file="$(backend_exec "$PROJECT" mktemp "/tmp/dce-gh-token.XXXXXX")"
   backend_exec "$PROJECT" chmod 600 "$_dce_token_env_file"
+  # shellcheck disable=SC2016
+  # sh -c runs in the container; $1 expands in that inner shell, not here.
   printf '%s' "$GITHUB_TOKEN" \
     | backend_exec_stdin "$PROJECT" sh -c 'cat >"$1"' _ "$_dce_token_env_file"
 }
@@ -97,6 +101,8 @@ trap '_dce_cleanup_token_file' EXIT INT TERM
 if $HAS_COMMAND; then
   if [[ -n "$GITHUB_TOKEN" ]]; then
     _dce_seed_token_file
+    # shellcheck disable=SC2016
+    # sh -lc runs in the container; $1/$2 and $(cat) expand in the inner shell.
     backend_exec "$PROJECT" env \
       "PS1=[${PROJECT}] %~ %# " \
       sh -lc 'export GITHUB_TOKEN="$(cat "$1")"; rm -f "$1"; exec zsh -ic "$2"' \
@@ -107,9 +113,13 @@ if $HAS_COMMAND; then
       zsh -ic "$COMMAND"
   fi
 else
+  # shellcheck disable=SC2016
+  # sh -lc runs in the container; $(hostname)/$(whoami)/$(pwd) expand there.
   backend_exec "$PROJECT" sh -lc 'echo "  Connected to container: $(hostname) (user=$(whoami), pwd=$(pwd))"'
   if [[ -n "$GITHUB_TOKEN" ]]; then
     _dce_seed_token_file
+    # shellcheck disable=SC2016
+    # sh -lc runs in the container; $1 and $(cat) expand in the inner shell.
     backend_exec_interactive "$PROJECT" \
       --env "PS1=[${PROJECT}] %~ %# " \
       -- \

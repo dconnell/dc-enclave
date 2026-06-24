@@ -25,13 +25,15 @@
 # enough (mirrors how container-backend.sh auto-sources common.sh).
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
   _dce_network_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  # shellcheck source=common.sh
+  # shellcheck disable=SC1091
+  # Sibling lib auto-import; path resolved above, not followed statically.
   source "$_dce_network_lib_dir/common.sh"
   unset _dce_network_lib_dir
 fi
 if [[ -z "${_DC_BACKEND_SH_LOADED:-}" ]]; then
   _dce_network_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  # shellcheck source=container-backend.sh
+  # shellcheck disable=SC1091
+  # Sibling lib auto-import; path resolved above, not followed statically.
   source "$_dce_network_lib_dir/container-backend.sh"
   unset _dce_network_lib_dir
 fi
@@ -268,7 +270,7 @@ dce_networks_attach_extras() {
 # scan. Used by `dce network ls` / `dce network members`.
 dce_network_scan_membership() {
   local base="$HOME/.config/dce-enclave"
-  local config_file="" project="" line="" ip=""
+  local config_file="" project="" ip=""
 
   [[ -d "$base" ]] || return 0
 
@@ -280,9 +282,10 @@ dce_network_scan_membership() {
       [[ -z "$net" ]] && continue
       printf '%s\t%s\t%s\n' "$project" "$net" "${nip:--}"
     done < <(
-      PORTS=()
-      CONTAINER_HIDDEN_PATHS=()
-      CONTAINER_NETWORKS=()
+      # shellcheck disable=SC2034
+      # Reset before dce_load_project_config repopulates them from the sourced
+      # config; not read in this subshell but cleared to avoid stale leakage.
+      PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=()
       if dce_load_project_config "$config_file" 2>/dev/null; then
         # NOTE: this runs in a process-substitution subshell, not a function, so
         # `local` is unavailable; plain assignments are correctly scoped here.

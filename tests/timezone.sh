@@ -45,6 +45,7 @@ v "EST5EDT"                    || fail "valid: POSIX EST5EDT rejected"
 v ""              && fail "invalid: empty must be rejected"
 v "America/New York" && fail "invalid: space must be rejected"
 v "America:New_York" && fail "invalid: colon must be rejected"
+# shellcheck disable=SC2016  # literal $ in the invalid input under test
 v 'a$b'           && fail "invalid: dollar must be rejected"
 v 'a;b'           && fail "invalid: semicolon must be rejected"
 v 'a`b'           && fail "invalid: backtick must be rejected"

@@ -160,6 +160,9 @@ dce_recipe_parse_file() {
   local normalized=""
   local lineno=0
 
+  # shellcheck disable=SC2094
+  # $file is read below and passed to error/context helpers that only print its
+  # name; none of them write it. ShellCheck can't verify that across functions.
   while IFS= read -r line || [[ -n "$line" ]]; do
     lineno=$((lineno + 1))
     raw="$(_dce_recipe_trim "$line")"

@@ -411,7 +411,9 @@ dce_load_project_config "$ICONFIG"
 run_script "$ROOT_DIR/scripts/network.sh" remove addnet "$IPROJ" \
   >"$WORK/ir.stdout" 2>"$WORK/ir.stderr" || fail "network remove failed"
 grep -Fq 'CALL docker network disconnect addnet iprod' "$LOG" || true
-PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
+# shellcheck disable=SC2034
+# Reset before dce_load_project_config; CONTAINER_NETWORKS is read below.
+PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=()
 dce_load_project_config "$ICONFIG"
 [[ ${#CONTAINER_NETWORKS[@]} -eq 0 ]] || fail "remove: config should be empty (got [${CONTAINER_NETWORKS[*]}])"
 

@@ -22,8 +22,11 @@ SCRIPT_DIR="$(cd -P "$(dirname "$_sub")" && pwd)"
 unset _sub _d
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/container-backend.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/network.sh"
 
 USAGE() {
@@ -277,7 +280,7 @@ do_add() {
   fi
 
   # Persist so the next rebuild re-attaches. Replace any existing entry for name.
-  local -a newnets=() nname
+  local -a newnets=()
   for e in "${CONTAINER_NETWORKS[@]:-}"; do
     [[ -z "$e" ]] && continue
     [[ "$(dce_network_entry_name "$e")" == "$name" ]] && continue
@@ -303,7 +306,10 @@ do_remove() {
   local config="$HOME/.config/dce-enclave/$project/config"
   [[ -f "$config" ]] || { echo "ERROR: No config for project '$project'." >&2; exit 1; }
 
-  PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
+  # shellcheck disable=SC2034
+  # Reset before dce_load_project_config repopulates them; cleared to avoid
+  # stale leakage. CONTAINER_NETWORKS is read below.
+  PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=()
   dce_load_project_config "$config"
   backend_use "${CONTAINER_BACKEND:-}"
   local backend; backend="$(backend_name)"

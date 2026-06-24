@@ -19,6 +19,8 @@
 # Auto-source common.sh if this lib is loaded directly (keeps a single import).
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
   _dce_backend_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck disable=SC1091
+  # Sibling lib auto-import; path is resolved above, not followed statically.
   source "$_dce_backend_lib_dir/common.sh"
   unset _dce_backend_lib_dir
 fi

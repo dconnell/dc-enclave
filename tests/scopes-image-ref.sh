@@ -49,6 +49,7 @@ n() { dce_normalize_scopes_csv "$1" || true; }
 # Invalid tokens must be rejected (regex ^[a-z0-9][a-z0-9._-]*$ after trim/lower).
 dce_normalize_scopes_csv ".x" >/dev/null 2>&1 && fail "normalize: leading-dot scope must be rejected"
 dce_normalize_scopes_csv "a/b" >/dev/null 2>&1 && fail "normalize: slash scope must be rejected"
+# shellcheck disable=SC2016  # literal $ in the invalid input under test
 dce_normalize_scopes_csv 'a$b' >/dev/null 2>&1 && fail "normalize: dollar scope must be rejected"
 
 pass "dce_normalize_scopes_csv (valid, dedup, invalid)"

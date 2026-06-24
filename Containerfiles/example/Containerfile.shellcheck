@@ -1,0 +1,77 @@
+# Example overlay fragment that installs ShellCheck.
+#
+# Copy this file to:
+# - $DC_TEAM_DIR/overlays/Containerfile.shellcheck
+# - or $DC_USER_DIR/overlays/Containerfile.shellcheck
+#
+# Then opt in as a scope (alone or layered with a language overlay):
+#
+#   dce new <project> shellcheck [ports...]
+#   dce new <project> nodejs,shellcheck [ports...]
+#
+# ShellCheck is the static analyzer the project's tests/shellcheck.sh harness
+# runs (see the "Smoke tests" section of the README). Installing it in the
+# container lets contributors run the full tests/run-all.sh suite -- including
+# the ShellCheck pass -- without a host install.
+#
+# Supply-chain posture: the upstream release is a statically-linked binary
+# fetched over HTTPS from the GitHub release and verified against a pinned
+# SHA256 BEFORE extraction (no `curl | bash`, no unpinned remote binary). This
+# mirrors how Containerfile.golang/rust/python pin their toolchains. The project
+# does NOT publish a checksums file or a detached signature, so the two digests
+# below are sourced directly from the release artifacts over HTTPS and pinned in
+# this file -- the same trust model as the uv overlay. Multi-arch: both the
+# amd64 and arm64 digests are pinned; a mismatch fails the build fast.
+#
+# ----------------------------------------------------------------------------
+# Upgrading ShellCheck
+# ----------------------------------------------------------------------------
+# 1. Set SC_VERSION below to the new release number (no leading "v"), e.g. 0.12.0.
+# 2. Download BOTH linux tarballs over HTTPS and compute their SHA256:
+#
+#      ver=0.12.0
+#      for a in x86_64 aarch64; do
+#        curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${ver}/shellcheck-v${ver}.linux.${a}.tar.gz" -o sc.tgz
+#        printf '%s  %s\n' "$(sha256sum sc.tgz | cut -d' ' -f1)" "$a"
+#        rm -f sc.tgz
+#      done
+#
+# 3. Paste the two hashes into SC_SHA256_AMD64 and SC_SHA256_ARM64.
+# 4. Rebuild the image. The `sha256sum -c -` check below fails the build if either
+#    digest is wrong, which proves the values match the release byte-for-byte.
+# 5. The release ships .tar.gz (used here) and .tar.xz; .tar.gz is used so no
+#    extra xz dependency is needed (the base image has tar+gzip).
+#
+# If you would rather track the distro package (older, currently 0.9.0 on noble)
+# than pin a release, replace the RUN block below with:
+#   RUN apt-get update && apt-get install -y shellcheck && rm -rf /var/lib/apt/lists/*
+
+FROM dce-base:latest
+
+USER root
+
+# TARGETARCH is injected by BuildKit (arm64/amd64) and falls back to the host
+# arch for plain `docker build`. SC_VERSION carries no leading "v".
+ARG TARGETARCH
+ARG SC_VERSION=0.11.0
+ARG SC_SHA256_AMD64=b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+ARG SC_SHA256_ARM64=68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc
+RUN set -eu; \
+    arch="${TARGETARCH:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"; \
+    case "$arch" in \
+      arm64|aarch64) scarch=aarch64; sha="$SC_SHA256_ARM64";; \
+      amd64|x86_64)  scarch=x86_64;  sha="$SC_SHA256_AMD64";; \
+      *) echo "unsupported arch: $arch" >&2; exit 1;; \
+    esac; \
+    wget -q "https://github.com/koalaman/shellcheck/releases/download/v${SC_VERSION}/shellcheck-v${SC_VERSION}.linux.${scarch}.tar.gz" && \
+    echo "${sha}  shellcheck-v${SC_VERSION}.linux.${scarch}.tar.gz" | sha256sum -c - && \
+    tar -xzf "shellcheck-v${SC_VERSION}.linux.${scarch}.tar.gz" && \
+    mv "shellcheck-v${SC_VERSION}/shellcheck" /usr/local/bin/shellcheck && \
+    rm -rf "shellcheck-v${SC_VERSION}" "shellcheck-v${SC_VERSION}.linux.${scarch}.tar.gz"
+
+USER dev
+
+# Fail the build fast if the binary is missing or non-functional.
+RUN shellcheck --version
+
+WORKDIR /workspace

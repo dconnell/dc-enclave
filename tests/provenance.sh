@@ -82,6 +82,7 @@ pass "dce_provenance_combined_hash (deterministic, side-sensitive, 64 hex)"
 [[ "$(dce_json_escape $'a\tb')" == 'a\tb' ]] || fail "json_escape: tab escaped"
 [[ "$(dce_json_escape $'a\nb')" == 'a\nb' ]] || fail "json_escape: newline escaped"
 [[ "$(dce_label_scrub 'sha256:abc')" == 'sha256:abc' ]] || fail "label_scrub: safe passthrough"
+# shellcheck disable=SC2016  # literal $ in the value being scrubbed
 scrubbed="$(dce_label_scrub 'a"b$c`d\e')"
 [[ "$scrubbed" == 'abcde' ]] || fail "label_scrub: strips quote/backslash/dollar/backtick (got [$scrubbed])"
 pass "dce_json_escape + dce_label_scrub (sanitization)"
@@ -220,7 +221,9 @@ grep -Fq 'LABEL dce.user.git_commit=""' "$CF" || fail "compose: loose-file user.
 # base.id / built.utc are populated at build time via ARG (no backend at compose time).
 grep -Fq 'ARG DC_BASE_ID=' "$CF" || fail "compose: DC_BASE_ID ARG missing"
 grep -Fq 'ARG DC_BUILT_UTC=' "$CF" || fail "compose: DC_BUILT_UTC ARG missing"
+# shellcheck disable=SC2016  # literal LABEL text grep'd from the Containerfile
 grep -Fq 'LABEL dce.base.id="${DC_BASE_ID}"' "$CF" || fail "compose: base.id must reference ARG"
+# shellcheck disable=SC2016  # literal LABEL text grep'd from the Containerfile
 grep -Fq 'LABEL dce.built.utc="${DC_BUILT_UTC}"' "$CF" || fail "compose: built.utc must reference ARG"
 # OCI revision carries the combined hash value (matched by capturing the content.hash value).
 rev_val="$(grep -Eo '^LABEL dce\.content\.hash="[0-9a-f]{64}"' "$CF" | sed -E 's/.*"([0-9a-f]{64})"/\1/')"

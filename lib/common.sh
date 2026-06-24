@@ -182,6 +182,8 @@ dce_user_recipes_dir() {
 _dce_normalize_config_root() {
   local varname="$1"
   local val="${!varname}"
+  # shellcheck disable=SC2088
+  # ~ is a literal char being matched against user input, not an expansion.
   if [[ "$val" == "~" || "$val" == "~/"* ]]; then
     val="$HOME${val#\~}"
   elif [[ "$val" != /* ]]; then
@@ -249,22 +251,23 @@ Run: scripts/setup.sh"
 # code works across all supported host platforms without extra dependencies.
 dce_sha256_hex() {
   local input="$1"
+  local digest=""
 
   if command -v sha256sum >/dev/null 2>&1; then
-    set -- $(printf '%s' "$input" | sha256sum)
-    printf '%s\n' "$1"
+    digest="$(printf '%s' "$input" | sha256sum)"
+    printf '%s\n' "${digest%% *}"
     return 0
   fi
 
   if command -v shasum >/dev/null 2>&1; then
-    set -- $(printf '%s' "$input" | shasum -a 256)
-    printf '%s\n' "$1"
+    digest="$(printf '%s' "$input" | shasum -a 256)"
+    printf '%s\n' "${digest%% *}"
     return 0
   fi
 
   if command -v openssl >/dev/null 2>&1; then
-    set -- $(printf '%s' "$input" | openssl dgst -sha256 -r)
-    printf '%s\n' "$1"
+    digest="$(printf '%s' "$input" | openssl dgst -sha256 -r)"
+    printf '%s\n' "${digest%% *}"
     return 0
   fi
 
@@ -278,22 +281,23 @@ dce_sha256_hex() {
 # Same tool fallback chain as dce_sha256_hex so it works on every supported host.
 dce_sha256_file() {
   local file="$1"
+  local digest=""
 
   if command -v sha256sum >/dev/null 2>&1; then
-    set -- $(sha256sum "$file")
-    printf '%s\n' "$1"
+    digest="$(sha256sum "$file")"
+    printf '%s\n' "${digest%% *}"
     return 0
   fi
 
   if command -v shasum >/dev/null 2>&1; then
-    set -- $(shasum -a 256 "$file")
-    printf '%s\n' "$1"
+    digest="$(shasum -a 256 "$file")"
+    printf '%s\n' "${digest%% *}"
     return 0
   fi
 
   if command -v openssl >/dev/null 2>&1; then
-    set -- $(openssl dgst -sha256 -r "$file")
-    printf '%s\n' "$1"
+    digest="$(openssl dgst -sha256 -r "$file")"
+    printf '%s\n' "${digest%% *}"
     return 0
   fi
 
@@ -574,6 +578,9 @@ dce_hidden_mounts_verified() {
     [[ -z "$hidden_path" ]] && continue
     target="/workspace/$hidden_path"
 
+    # shellcheck disable=SC2016
+    # Command runs in the container via sh -c; $(stat ...) must be evaluated by
+    # that inner shell, not expanded here. Only ${target} is host-side.
     backend_exec "$project" sh -c \
       '[ -d "'"${target}"'" ] && [ "$(stat -c %d /workspace)" != "$(stat -c %d "'"${target}"'")" ]' \
       2>/dev/null || rc=1
@@ -773,7 +780,7 @@ dce_json_escape() {
   for ((i = 0; i < ${#s}; i++)); do
     ch="${s:i:1}"
     case "$ch" in
-      \\) out+='\\' ;;
+      \\) out+=$'\\\\' ;;
       '"')  out+='\"' ;;
       $'\n') out+='\n' ;;
       $'\r') out+='\r' ;;
@@ -808,6 +815,8 @@ dce_label_scrub() {
 
   for ((i = 0; i < ${#s}; i++)); do
     ch="${s:i:1}"
+    # shellcheck disable=SC1003
+    # '\' is a literal single-backslash comparison (valid in single quotes).
     if [[ "$ch" == '"' || "$ch" == '\' || "$ch" == '$' || "$ch" == '`' ]]; then
       continue
     fi
@@ -1228,6 +1237,8 @@ dce_quoted_has_unescaped_subst() {
       escaped=0
       continue
     fi
+    # shellcheck disable=SC1003
+    # '\' is a literal single-backslash comparison (valid in single quotes).
     if [[ "$ch" == '\' ]]; then
       escaped=1
       continue
@@ -1253,6 +1264,8 @@ dce_config_line_is_safe() {
   # Comment line. Reject a trailing backslash, which would continue the comment
   # onto the next line and could hide a payload after the comment.
   if [[ "$line" =~ ^[[:space:]]*# ]]; then
+    # shellcheck disable=SC1003
+    # *'\' tests whether the line ends with a literal backslash.
     [[ "$line" != *'\' ]]
     return $?
   fi
@@ -1501,6 +1514,8 @@ dce_config_extract_scalar() {
         escaped=0
         continue
       fi
+      # shellcheck disable=SC1003
+      # '\' is a literal single-backslash comparison (valid in single quotes).
       if [[ "$ch" == '\' ]]; then
         escaped=1
         continue

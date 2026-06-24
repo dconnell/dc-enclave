@@ -23,8 +23,11 @@ SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 unset _src _dir
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/platform.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/container-backend.sh"
 
 backend_use "${CONTAINER_BACKEND:-}"
@@ -86,6 +89,8 @@ if [[ -n "$repos_dir_input" ]]; then
   REPOS_DIR_PROMPT="$repos_dir_input"
 fi
 
+# shellcheck disable=SC2088
+# ~ is a literal char matched against user input, not an expansion.
 if [[ "$REPOS_DIR_PROMPT" == "~" || "$REPOS_DIR_PROMPT" == "~/"* ]]; then
   REPOS_DIR_PROMPT="$HOME${REPOS_DIR_PROMPT#\~}"
 elif [[ "$REPOS_DIR_PROMPT" != /* ]]; then
@@ -147,6 +152,8 @@ _ensure_config_key DC_USER_DIR "$DEFAULT_USER_DIR"
 _dce_setup_normalize() {
   local varname="$1"
   local val="${!varname}"
+  # shellcheck disable=SC2088
+  # ~ is a literal char matched against user input, not an expansion.
   if [[ "$val" == "~" || "$val" == "~/"* ]]; then
     val="$HOME${val#\~}"
   elif [[ "$val" != /* ]]; then

@@ -79,6 +79,11 @@ for f in "${FILES[@]}"; do
     rc=$?
     if [[ $rc -eq 0 ]]; then
       printf '  -> PASS: %s\n' "$base"
+      # Surface the project's WARN: convention (e.g. tests/shellcheck.sh noting
+      # a missing ShellCheck install) even from a passing test, otherwise quiet
+      # mode would swallow it. Reuses the same indent as the failure path.
+      warnings="$(printf '%s\n' "$out" | grep 'WARN' || true)"
+      [[ -z "$warnings" ]] || printf '%s\n' "$warnings" | sed 's/^/      /'
       passed=$((passed + 1))
     else
       printf '  -> FAIL: %s (exit %s)\n' "$base" "$rc"

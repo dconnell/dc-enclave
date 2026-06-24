@@ -11,12 +11,16 @@
 # Auto-source deps if this lib is loaded directly (single-import convenience).
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
   _dce_vscode_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck disable=SC1091
+  # Sibling lib auto-import; path is resolved above, not followed statically.
   source "$_dce_vscode_lib_dir/common.sh"
   unset _dce_vscode_lib_dir
 fi
 
 if [[ -z "${_DC_PLATFORM_SH_LOADED:-}" ]]; then
   _dce_vscode_platform_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck disable=SC1091
+  # Sibling lib auto-import; path is resolved above, not followed statically.
   source "$_dce_vscode_platform_lib_dir/platform.sh"
   unset _dce_vscode_platform_lib_dir
 fi

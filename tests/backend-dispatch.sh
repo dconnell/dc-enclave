@@ -247,6 +247,8 @@ network_call_func() {
 
 for spec in "apple container" "docker docker" "orbstack docker" "colima docker" "podman podman"; do
   read -r backend bin <<< "$spec"
+  # shellcheck disable=SC2034
+  # Read by the backend dispatch code under test (selects the backend).
   DEV_CONTAINERS_BACKEND="$backend"
   _DC_CLI="$bin"
   _DC_PODMAN_HOST_GATEWAY_WARNED=0

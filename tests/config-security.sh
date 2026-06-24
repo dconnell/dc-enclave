@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
+# This file deliberately writes literal $/backtick command-substitution payloads
+# into configs to prove they are treated as data, never executed.
 # =============================================================================
 # tests/config-security.sh - M1 regression coverage.
 #

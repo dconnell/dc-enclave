@@ -142,6 +142,7 @@ run_shell() {
 # Static guard: shell.sh must not inject the token value inline into an exec
 # argv. Catches a regression where the leak is reintroduced by hand.
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2016  # literal $ in the grep pattern under test
 if grep -nE 'GITHUB_TOKEN=\$GITHUB_TOKEN|--env[[:space:]]+"GITHUB_TOKEN=' "$ROOT_DIR/scripts/shell.sh" >/dev/null; then
   fail "static: shell.sh still injects GITHUB_TOKEN inline into exec argv"
 fi
@@ -151,6 +152,7 @@ pass "static: shell.sh has no inline GITHUB_TOKEN exec injection"
 # One-shot path with a real (sentinel) token.
 # ---------------------------------------------------------------------------
 : > "$LOG"; : > "$STDIN_CAP"
+# shellcheck disable=SC2016  # command string; $GITHUB_TOKEN expands when run
 run_shell 'printf "%s" "$GITHUB_TOKEN"' < /dev/null
 
 grep -Fq "$SENTINEL" "$LOG" && fail "one-shot: sentinel token leaked into host argv"
@@ -161,6 +163,7 @@ pass "one-shot: token delivered via stdin"
 
 grep -Fq "mktemp" "$LOG" || fail "one-shot: token file not created via mktemp"
 grep -Fq '/tmp/dce-gh-token.STUB01' "$LOG" || fail "one-shot: temp token file not referenced in argv"
+# shellcheck disable=SC2016  # literal text being grep'd from the log
 grep -Fq 'cat "$1"' "$LOG" || fail "one-shot: wrapper does not read+delete token file"
 pass "one-shot: token seeded via temp file and consumed"
 
@@ -184,6 +187,7 @@ grep -Fq "$SENTINEL" "$STDIN_CAP" || fail "interactive: token did not cross via 
 pass "interactive: token delivered via stdin"
 
 grep -Fq "mktemp" "$LOG" || fail "interactive: token file not created via mktemp"
+# shellcheck disable=SC2016  # literal text being grep'd from the log
 grep -Fq 'cat "$1"' "$LOG" || fail "interactive: wrapper does not read+delete token file"
 grep -Eq 'rm[[:space:]]+-f[[:space:]]+/tmp/dce-gh-token' "$LOG" \
   || fail "interactive: cleanup trap did not remove token file"
@@ -198,6 +202,7 @@ printf 'ghp_REPLACE_ME\n' > "$TOKEN_PATH"
 run_shell 'echo placeholder-token' < /dev/null
 
 grep -Fq "mktemp" "$LOG" && fail "placeholder token: token file should not be created"
+# shellcheck disable=SC2016  # literal text being grep'd from the log
 grep -Fq 'cat "$1"' "$LOG" && fail "placeholder token: should not use token wrapper"
 grep -Fq "GITHUB_TOKEN" "$LOG" && fail "placeholder token: GITHUB_TOKEN must not appear in argv"
 pass "placeholder token: treated as unset (no seeding, no wrapper)"

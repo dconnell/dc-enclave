@@ -127,12 +127,13 @@ CONFIG="$SECRET_DIR/config"
 # ===========================================================================
 BACKEND=docker
 : > "$LOG"
-run_script "$ROOT_DIR/scripts/new-container.sh" \
+if ! run_script "$ROOT_DIR/scripts/new-container.sh" \
   "$PROJECT" nodejs,golang --cpus 2 --memory 4g --hide node_modules 3000:3000 8080 \
-  >"$WORK/new.stdout" 2>"$WORK/new.stderr"
-[[ $? -eq 0 ]] || fail "dce new exited non-zero
+  >"$WORK/new.stdout" 2>"$WORK/new.stderr"; then
+  fail "dce new exited non-zero
 -- stdout:$(cat "$WORK/new.stdout")
 -- stderr:$(cat "$WORK/new.stderr")"
+fi
 
 # --- config persistence --------------------------------------------------
 [[ -f "$CONFIG" ]] || fail "dce new: config not written"

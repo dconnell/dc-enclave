@@ -63,7 +63,9 @@ SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 unset _src _dir
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/container-backend.sh"
 
 backend_use "${CONTAINER_BACKEND:-}"
@@ -171,8 +173,7 @@ if $CLEAN_HIDDEN_VOLUMES; then
     exit 0
   fi
 
-  IFS=$'\n' clean_hidden_volumes=($(printf '%s\n' "${REMOVE_VOLUMES[@]}" | sort))
-  unset IFS
+  mapfile -t clean_hidden_volumes < <(printf '%s\n' "${REMOVE_VOLUMES[@]}" | sort)
 
   echo "Active backend: $ACTIVE_BACKEND"
   echo "The following orphan hidden volumes will be removed:"
@@ -281,14 +282,12 @@ if [[ ${#REMOVE_REFS[@]} -eq 0 ]]; then
   exit 0
 fi
 
-IFS=$'\n' refs=($(printf '%s\n' "${REMOVE_REFS[@]}" | sort))
-unset IFS
+mapfile -t refs < <(printf '%s\n' "${REMOVE_REFS[@]}" | sort)
 
 expected_repo_names=("${!EXPECTED_REPOS[@]}")
 managed_repo_names=("${!MANAGED_REPOS[@]}")
-IFS=$'\n' expected_repo_names=($(printf '%s\n' "${expected_repo_names[@]}" | sort))
-IFS=$'\n' managed_repo_names=($(printf '%s\n' "${managed_repo_names[@]}" | sort))
-unset IFS
+mapfile -t expected_repo_names < <(printf '%s\n' "${expected_repo_names[@]}" | sort)
+mapfile -t managed_repo_names < <(printf '%s\n' "${managed_repo_names[@]}" | sort)
 
 echo "Active backend: $ACTIVE_BACKEND"
 echo "Expected repos: ${expected_repo_names[*]}"

@@ -95,7 +95,7 @@ done
 # --- (2) multi-arch + real checksums on downloaded toolchains -----------------
 sha256_re='[0-9a-f]{64}'
 for row in "${ARCH_OVERLAYS[@]}"; do
-  IFS='|' read -r scope stem ver <<<"$row"
+  IFS='|' read -r scope stem _ <<<"$row"
   cf="$EX/Containerfile.$scope"
   [[ -f "$cf" ]] || { fail "multi-arch: $scope (no file)"; continue; }
 
@@ -135,6 +135,7 @@ done
 
 # --- (4) compose owns a single chained ENTRYPOINT -----------------------------
 COMPOSE="$ROOT_DIR/scripts/compose-containerfile.sh"
+# shellcheck disable=SC2016  # literal awk pattern ($1 is awk's, not expanded here)
 assert_file "compose: strips per-overlay ENTRYPOINT" 'toupper\(\$1\) == "ENTRYPOINT"' "$COMPOSE"
 assert_file "compose: emits runner ENTRYPOINT" '/home/dev/.local/bin/dce-entrypoint' "$COMPOSE"
 assert_file "compose: runner chains dce-*-entrypoint.sh" 'dce-\*-entrypoint\.sh' "$COMPOSE"

@@ -163,6 +163,8 @@ dce_complete_scopes() {
 # would.
 _dce_complete_resolve_root() {
   local val="$1"
+  # shellcheck disable=SC2088
+  # ~ is a literal char being matched against user input, not an expansion.
   if [[ "$val" == "~" || "$val" == "~/"* ]]; then
     val="$HOME${val#\~}"
   elif [[ "$val" != /* && -n "$val" ]]; then

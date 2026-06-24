@@ -44,7 +44,7 @@ touch "$USER_DIR/overlays/Containerfile.node" "$USER_DIR/overlays/Containerfile.
 # ---------------------------------------------------------------------------
 # Section 1 - shared discovery library (lib/complete-data.sh)
 # ---------------------------------------------------------------------------
-# shellcheck source=../lib/complete-data.sh
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/complete-data.sh"
 
 expect_sorted() {
@@ -87,7 +87,9 @@ ok_cfg="$DC_ROOT/config"
   || fail "parser should accept valid DC_TEAM_DIR quoted value"
 [[ "$(_dce_read_user_dir "$ok_cfg")" == "$USER_DIR" ]] \
   || fail "parser should accept valid DC_USER_DIR quoted value"
+# shellcheck disable=SC2016  # literal $/backtick written into a test config
 printf 'DC_TEAM_DIR="$HOME/evil"\n' > "$WORK/dollar"
+# shellcheck disable=SC2016  # literal backtick written into a test config
 printf 'DC_TEAM_DIR="x`id`"\n'      > "$WORK/btick"
 printf 'DC_TEAM_DIR=unquoted\n'      > "$WORK/unq"
 _dce_read_team_dir "$WORK/dollar" >/dev/null && fail "parser leaked a \$-value"
@@ -108,7 +110,7 @@ pass "discovery safe on empty HOME (bash)"
 # ---------------------------------------------------------------------------
 # Stub `complete` so sourcing the file does not register globally.
 complete() { :; }
-# shellcheck source=../scripts/dce-complete.bash
+# shellcheck disable=SC1091  # script include, runtime-resolved path
 source "$ROOT_DIR/scripts/dce-complete.bash"
 
 # Drive _dce_complete by faking the completion line. $1 = COMP_CWORD, rest =
@@ -419,7 +421,7 @@ fi
 # ---------------------------------------------------------------------------
 # Section 4 - shell-aware wiring (lib/platform.sh) + migration
 # ---------------------------------------------------------------------------
-# shellcheck source=../lib/platform.sh
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/platform.sh"
 
 check_profile() { # <shell> <expected_basename>
@@ -429,6 +431,8 @@ check_profile() { # <shell> <expected_basename>
   pass "profile for $1 -> ~/$2"
 }
 # macOS profile resolution.
+# shellcheck disable=SC2329
+# Test stub overriding the real platform_os; invoked indirectly via platform.sh.
 platform_os() { printf macos; }
 check_profile zsh  .zshrc
 check_profile bash .bash_profile
