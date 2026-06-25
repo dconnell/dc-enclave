@@ -23,7 +23,7 @@ Images built on one backend are not visible to another. `dce new` checks for `dc
 bash --version
 ```
 
-macOS users: if version is 3.x, run `brew install bash`.
+macOS users: if version is 3.x, run `brew install bash`. Linux and WSL2 distros already ship bash 4+.
 
 2. Ensure one backend is installed and running:
 

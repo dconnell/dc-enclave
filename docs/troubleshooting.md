@@ -8,12 +8,11 @@ dce doctor colima       # one backend
 dce doctor myapp        # one project + its backend
 ```
 
-Bash version too old:
+Bash version too old — macOS ships bash 3.2 by default; Linux and WSL2 distros already ship bash 4+:
 
 ```
 bash --version
-# if < 4.0 on macOS:
-brew install bash
+brew install bash          # macOS
 ```
 
 No backend detected:

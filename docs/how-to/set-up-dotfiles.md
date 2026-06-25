@@ -6,7 +6,7 @@ Each team member sets up their own dotfiles for personal preferences (git identi
 
 ### VS Code (automatic on create/rebuild)
 
-In VS Code user settings (`Cmd+,`), point at a git repo or a local path:
+In VS Code user settings (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows), point at a git repo or a local path:
 
 Using a git repo:
 
@@ -17,11 +17,11 @@ Using a git repo:
 }
 ```
 
-Using a local path:
+Using a local path (an absolute path under your home directory — `/home/you/...` on Linux/WSL2, `/Users/you/...` on macOS):
 
 ```json
 {
-  "dev.containers.dotfilesRepository": "/Users/YOU/.dotfiles",
+  "dev.containers.dotfilesRepository": "/home/you/.dotfiles",
   "dev.containers.dotfilesInstallCommand": "install.sh"
 }
 ```

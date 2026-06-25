@@ -16,6 +16,8 @@ link. Install it to silence the warnings and enable the checks:
 
 ```
 brew install shellcheck        # macOS
+apt install shellcheck         # Debian/Ubuntu
+dnf install shellcheck         # Fedora
 # https://github.com/koalaman/shellcheck
 ```
 
