@@ -53,6 +53,7 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 | `<name>` *(required)* | Project/container name. Must already exist. |
 | `--rotate-keys` | Regenerate the SSH deploy key before recreating (old key backed up, new `.pub` printed, command pauses for you to update GitHub). |
 | `--keep-hidden-volumes` | Preserve hidden volumes instead of removing them (default removes them for a clean slate). Combining with `--rotate-keys` triggers a loud warning. |
+| `--from-snap <label>` | Recreate from the snapshot `dce-snap-<name>-<label>:latest` instead of the scope-derived image. Bypasses scope derivation and does NOT rewrite `CONTAINER_IMAGE`. Restores the filesystem layer only; hidden-volume state follows `--keep-hidden-volumes`. See [snapshots & rollback](../how-to/snapshot-and-rollback.md). |
 | `--yes`, `-y` | Skip the confirmation prompt (for scripted incident response). |
 
 ## `dce rebuild-image` — rebuild managed images
@@ -68,12 +69,23 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 | `<project>` *(required)* | Project/container name. |
 | `--history`, `--all` | Print every recorded build as a table (oldest first) instead of just the current one. |
 
-## `dce clean` — reclaim image tags / hidden volumes
+## `dce clean` — reclaim image tags / hidden volumes / snapshots
 
 | Flag / arg | Description |
 |---|---|
-| `--dry-run` | Show what would be removed without deleting anything. |
+| `--dry-run` | Show what would be removed (and how much space) without deleting. |
 | `--hidden-volumes [name]` | Operate on orphan hidden volumes instead of managed image tags. Optional trailing project name narrows scope to one project. |
+| `--snapshots [name]` | Operate on `dce-snap-*` container snapshots instead of managed image tags. Optional trailing project name narrows scope to one project. Default `dce clean` never touches snapshots. Mutually exclusive with `--hidden-volumes`. |
+
+## `dce snapshot` / `dce snapshots` — container snapshots
+
+| Form / arg | Description |
+|---|---|
+| `snapshot <name> [<label>]` | Stop → commit → restart the container, producing `dce-snap-<name>-<label>:latest`. `<label>` defaults to a sortable UTC timestamp (`YYYYmmdd-HHMMSS`); charset `[A-Za-z0-9_.-]`. Refuses to overwrite an existing label. Filesystem-layer only (image + writable layer; never named volumes or the repo). |
+| `snapshot rm <name> <label>` | Remove one snapshot image. |
+| `snapshots list [<name>]` | List snapshots newest-first with project, size, UTC time, and base image. Optional `<name>` scopes to one project. |
+
+Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never rewrites `CONTAINER_IMAGE`). See [snapshots & rollback](../how-to/snapshot-and-rollback.md).
 
 ## `dce network` — private networks
 

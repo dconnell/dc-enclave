@@ -71,7 +71,7 @@ pass "scopes dedup + membership"
 
 subs="$(dce_complete_subcommands | sort)"
 for c in new start stop status s list ls shell logs exec restart rm \
-         rebuild-container rebuild-image provenance clean network net doctor install version help; do
+         rebuild-container rebuild-image snapshot snapshots provenance clean network net doctor install version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
 pass "subcommands list"
@@ -156,10 +156,10 @@ drive 3 dce shell alpha ""; assert_empty   "shell alpha <TAB>"
 # rebuild-container: one project, then the flags.
 drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
 drive 3 dce rebuild-container alpha "--"; assert_reply "rebuild-container alpha --<TAB>" \
-  --keep-hidden-volumes --rotate-keys --yes
+  --from-snap --keep-hidden-volumes --rotate-keys --yes
 # Empty prefix offers all flags, including the short -y form.
 drive 3 dce rebuild-container alpha ""; assert_reply "rebuild-container alpha <TAB>" \
-  --keep-hidden-volumes --rotate-keys --yes -y
+  --from-snap --keep-hidden-volumes --rotate-keys --yes -y
 
 # install: one project, then a directory.
 drive 2 dce install "";     assert_reply "install <TAB>" alpha beta gamma
@@ -210,13 +210,24 @@ drive 3 dce restart alpha "";       assert_reply "restart alpha <TAB>" beta gamm
 drive 2 dce rm "";                  assert_reply "rm <TAB>" alpha beta gamma
 drive 3 dce rm alpha "";            assert_reply "rm alpha <TAB>" --yes -y --keep-config --keep-volumes
 
-# clean: flags + a single project when --hidden-volumes is active.
-drive 2 dce clean "--"; assert_reply "clean --<TAB>" --dry-run --hidden-volumes
+# clean: flags + a single project when --hidden-volumes/--snapshots is active.
+drive 2 dce clean "--"; assert_reply "clean --<TAB>" --dry-run --hidden-volumes --snapshots
 drive 3 dce clean --hidden-volumes ""; assert_reply "clean --hidden-volumes <TAB>" \
-  --dry-run --hidden-volumes alpha beta gamma
+  --dry-run --hidden-volumes --snapshots alpha beta gamma
 # once a project is typed, only flags remain.
 drive 4 dce clean --hidden-volumes alpha "--"; assert_reply "clean --hidden-volumes alpha --<TAB>" \
-  --dry-run --hidden-volumes
+  --dry-run --hidden-volumes --snapshots
+# --snapshots scopes to a project like --hidden-volumes does.
+drive 3 dce clean --snapshots ""; assert_reply "clean --snapshots <TAB>" \
+  --dry-run --hidden-volumes --snapshots alpha beta gamma
+drive 4 dce clean --snapshots alpha "--"; assert_reply "clean --snapshots alpha --<TAB>" \
+  --dry-run --hidden-volumes --snapshots
+
+# snapshot / snapshots: position 1 offers rm/list + projects; labels are free.
+drive 2 dce snapshot ""; assert_reply "snapshot <TAB>" rm alpha beta gamma
+drive 3 dce snapshot rm ""; assert_reply "snapshot rm <project> <TAB>" alpha beta gamma
+drive 2 dce snapshots ""; assert_reply "snapshots <TAB>" list alpha beta gamma
+drive 3 dce snapshots list ""; assert_reply "snapshots list <project> <TAB>" alpha beta gamma
 
 # new: name is free text (no completion), pos3 = scope + flags.
 drive 2 dce new "";               assert_empty "new <name> (free text, no completion)"
@@ -390,7 +401,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dce_subcommands
-    local want="--help --version -h -v clean doctor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm s shell start status stop version"
+    local want="--help --version -h -v clean doctor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm s shell snapshot snapshots start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -417,6 +428,9 @@ if command -v zsh >/dev/null 2>&1; then
     chk new              "*--hide["
     chk new              "*--network["
     chk new              "--ip+["
+    chk rebuild-container "--from-snap+[recreate from snapshot"
+    chk snapshot         "1:project or rm:"
+    chk snapshots        "1:list or project:"
     print "PASS: zsh per-subcommand dispatch specs"
   ' || fail "zsh completion logic/spec test failed"
 else

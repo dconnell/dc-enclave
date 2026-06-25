@@ -67,6 +67,12 @@ case "$SUBCOMMAND" in
   rebuild-image)
     exec "$SCRIPT_DIR/rebuild-image.sh" "$@"
     ;;
+  snapshot)
+    exec "$SCRIPT_DIR/snapshot.sh" "$@"
+    ;;
+  snapshots)
+    exec "$SCRIPT_DIR/snapshot.sh" "$@"
+    ;;
   provenance)
     exec "$SCRIPT_DIR/provenance.sh" "$@"
     ;;

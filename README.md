@@ -10,7 +10,7 @@ Every developer now runs tools that execute code on their machine — AI agents 
 
 - **Whatever runs in the container, stays in the container.** Your host filesystem, shell history, and global credentials stay out of reach.
 - **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it.
-- **A bad session is one command to undo.** `dce rebuild-container <name>` destroys the container filesystem and recreates it from a known-good image.
+- **A bad session is one command to undo.** `dce rebuild-container <name>` destroys the container filesystem and recreates it from a known-good image — and `dce snapshot <name>` / `dce rebuild-container <name> --from-snap <label>` give you a rollback point first.
 - **Your host code is never touched.** Repos live on the host and bind-mount in; destroying the container leaves your checkout exactly where it was.
 
 For the full rationale and a comparison against raw Docker/Podman, see [why DC Enclave](docs/explanation/why-dce.md).
@@ -48,5 +48,6 @@ The full manual lives in [`docs/`](docs/README.md). Common destinations:
 | Install and create my first container | [getting started](docs/tutorials/getting-started.md) |
 | See every command and flag | [command reference](docs/reference/commands.md) · [flags](docs/reference/flags.md) |
 | Change CPU/memory or timezone | [manage resources](docs/how-to/manage-resources.md) · [timezone](docs/how-to/set-timezone.md) |
+| Save a container state and roll back | [snapshot & rollback](docs/how-to/snapshot-and-rollback.md) |
 | Understand the security model | [isolation & security](docs/explanation/isolation-and-security.md) |
 | Fix something | [troubleshooting](docs/troubleshooting.md) |

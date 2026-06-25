@@ -117,8 +117,15 @@ _dce_dispatch() {
         '1:project:_dce_projects_simple' \
         '--rotate-keys[generate a fresh SSH deploy key]' \
         '--keep-hidden-volumes[preserve hidden volumes across the rebuild]' \
+        '--from-snap+[recreate from snapshot dce-snap-<name>-<label>]:snapshot label:' \
         '--yes[skip the confirmation prompt]' \
         '-y[skip the confirmation prompt]'
+      ;;
+    snapshot)
+      _dce_snapshot
+      ;;
+    snapshots)
+      _dce_snapshots
       ;;
     install)
       # One project, then a dotfiles directory.
@@ -199,27 +206,47 @@ _dce_projects_simple() {
   _wanted projects expl 'project' compadd -a all
 }
 
-# `dce clean [--dry-run] [--hidden-volumes [name]]`: flags are always offered;
-# a single optional project is offered once --hidden-volumes is active and no
-# project has been typed yet.
+# `dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]`: flags
+# are always offered; a single optional project is offered once a scoping flag is
+# active and no project has been typed yet.
 _dce_clean() {
-  local have_hv=0 have_proj=0 i w
+  local have_scope=0 have_proj=0 i w
   # After the *:: reset, $words[1] is the `clean` subcommand; scan its args
   # from index 2 onward.
   for ((i = 2; i < CURRENT; i++)); do
     w="${words[i]}"
-    [[ "$w" == "--hidden-volumes" ]] && have_hv=1
-    if (( have_hv )) && [[ "$w" != -* ]] && (( ! have_proj )); then
+    [[ "$w" == "--hidden-volumes" || "$w" == "--snapshots" ]] && have_scope=1
+    if (( have_scope )) && [[ "$w" != -* ]] && (( ! have_proj )); then
       have_proj=1
     fi
   done
 
   local -a flags
-  flags=(--dry-run --hidden-volumes)
+  flags=(--dry-run --hidden-volumes --snapshots)
   _wanted flags expl 'flag' compadd -a flags
-  if (( have_hv )) && (( ! have_proj )); then
+  if (( have_scope )) && (( ! have_proj )); then
     _dce_projects_simple
   fi
+}
+
+# `dce snapshot <project> [<label>]` (create) or `dce snapshot rm <project>
+# <label>` (remove). Position 1 offers `rm` plus project names; beyond it,
+# labels are free-form (no completion).
+_dce_snapshot() {
+  _arguments '1:project or rm: _dce_snapshot_first'
+}
+_dce_snapshot_first() {
+  compadd rm
+  _dce_projects_simple
+}
+
+# `dce snapshots list [<project>]`. Position 1 offers `list` plus project names.
+_dce_snapshots() {
+  _arguments '1:list or project: _dce_snapshots_first'
+}
+_dce_snapshots_first() {
+  compadd list
+  _dce_projects_simple
 }
 
 # `dce doctor [backend|project]`: one optional target (backend or project).

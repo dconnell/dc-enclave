@@ -110,8 +110,18 @@ _dce_complete() {
         _dce_reply_projects "$cur"
         return 0
       fi
+      # --from-snap takes a value (a snapshot label), not completed here.
+      [[ "$prev" == "--from-snap" ]] && return 0
       # >= 3: optional flags (order-independent).
-      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --keep-hidden-volumes --yes -y" -- "$cur")
+      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --keep-hidden-volumes --yes -y --from-snap" -- "$cur")
+      return 0
+      ;;
+    snapshot)
+      _dce_complete_snapshot "$cur" "$prev"
+      return 0
+      ;;
+    snapshots)
+      _dce_complete_snapshots "$cur" "$prev"
       return 0
       ;;
     install)
@@ -183,40 +193,41 @@ _dce_reply_projects_excluding() {
   COMPREPLY=("${out[@]}")
 }
 
-# `dce clean [--dry-run] [--hidden-volumes [name]]`: flags are always offered;
-# a single optional project is offered only after --hidden-volumes (and only if
-# one hasn't already been typed).
+# `dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]`: flags
+# are always offered; a single optional project is offered once --hidden-volumes
+# or --snapshots is active and no project has been typed yet.
 _dce_complete_clean() {
   local cur="$1" prev="$2"
   local -a reply=()
 
-  # Always allow the two flags at any position.
+  # Always allow the flags at any position.
   local f
-  for f in --dry-run --hidden-volumes; do
+  for f in --dry-run --hidden-volumes --snapshots; do
     if [[ -z "$cur" || "$f" == "$cur"* ]]; then
       reply+=("$f")
     fi
   done
 
-  # Track whether --hidden-volumes is present and whether a project is typed.
-  local have_hv=0 have_proj=0 w
+  # Track whether a scoping flag is present and whether a project is typed.
+  local have_scope=0 have_proj=0 w
   for ((i=2; i<COMP_CWORD; i++)); do
     w="${COMP_WORDS[i]}"
     case "$w" in
-      --dry-run|--hidden-volumes) ;;
+      --dry-run|--hidden-volumes|--snapshots) ;;
       --*) ;;
       *)
-        if [[ $have_hv -eq 1 && $have_proj -eq 0 ]]; then
+        if [[ $have_scope -eq 1 && $have_proj -eq 0 ]]; then
           have_proj=1
         fi
         ;;
     esac
-    [[ "$w" == "--hidden-volumes" ]] && have_hv=1
+    [[ "$w" == "--hidden-volumes" || "$w" == "--snapshots" ]] && have_scope=1
   done
 
-  # Offer a project when the previous word was --hidden-volumes, or generally
-  # when --hidden-volumes is active and no project has been given yet.
-  if [[ "$prev" == "--hidden-volumes" ]] || { [[ $have_hv -eq 1 && $have_proj -eq 0 ]]; }; then
+  # Offer a project when the previous word was a scoping flag, or generally when
+  # a scope is active and no project has been given yet.
+  if [[ "$prev" == "--hidden-volumes" || "$prev" == "--snapshots" ]] \
+     || { [[ $have_scope -eq 1 && $have_proj -eq 0 ]]; }; then
     local name
     while IFS= read -r name; do
       [[ -z "$name" ]] && continue
@@ -225,6 +236,66 @@ _dce_complete_clean() {
   fi
 
   COMPREPLY=("${reply[@]}")
+}
+
+# `dce snapshot <project> [<label>]` (create) or `dce snapshot rm <project>
+# <label>` (remove). Position 2 offers `rm` and project names; after `rm`,
+# position 3 is a project and position 4 a free-form label.
+_dce_complete_snapshot() {
+  local cur="$1" prev="$2"
+
+  # Detect whether `rm` was already typed.
+  local have_rm=0 w positional=0
+  for ((i=2; i<COMP_CWORD; i++)); do
+    w="${COMP_WORDS[i]}"
+    [[ -z "$w" ]] && continue
+    [[ "$w" == "rm" && $have_rm -eq 0 ]] && { have_rm=1; continue; }
+    if [[ "$w" != -* ]]; then positional=$((positional+1)); fi
+  done
+
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    local -a reply=()
+    [[ -z "$cur" || "rm" == "$cur"* ]] && reply+=("rm")
+    local name
+    while IFS= read -r name; do
+      [[ -z "$name" ]] && continue
+      reply+=("$name")
+    done < <(dce_complete_projects "$cur")
+    COMPREPLY=("${reply[@]}")
+    return 0
+  fi
+
+  # After `rm`: position 3 is a project; position 4+ is a free-form label.
+  if [[ $have_rm -eq 1 ]]; then
+    if [[ $positional -eq 0 ]]; then
+      _dce_reply_projects "$cur"
+    fi
+    return 0
+  fi
+
+  # create with a second positional: label is free-form.
+  return 0
+}
+
+# `dce snapshots list [<project>]`.
+_dce_complete_snapshots() {
+  local cur="$1" prev="$2"
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    local -a reply=()
+    [[ -z "$cur" || "list" == "$cur"* ]] && reply+=("list")
+    local name
+    while IFS= read -r name; do
+      [[ -z "$name" ]] && continue
+      reply+=("$name")
+    done < <(dce_complete_projects "$cur")
+    COMPREPLY=("${reply[@]}")
+    return 0
+  fi
+  # After `list`, an optional project may follow.
+  if [[ "$prev" == "list" ]]; then
+    _dce_reply_projects "$cur"
+  fi
+  return 0
 }
 
 # `dce new <name> [scope] [flags] [port:port ...]`.

@@ -19,7 +19,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]"
+  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
   exit 1
 fi
 
@@ -27,38 +27,48 @@ PROJECT=""
 ROTATE_KEYS=false
 KEEP_HIDDEN_VOLUMES=false
 ASSUME_YES=false
+FROM_SNAP=""
 
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --rotate-keys)
       ROTATE_KEYS=true
+      shift
       ;;
     --keep-hidden-volumes)
       KEEP_HIDDEN_VOLUMES=true
+      shift
       ;;
     --yes|-y)
       ASSUME_YES=true
+      shift
+      ;;
+    --from-snap)
+      [[ $# -ge 2 && "$2" != --* ]] || { echo "ERROR: --from-snap requires a <label> argument"; exit 1; }
+      FROM_SNAP="$2"
+      shift 2
       ;;
     --*)
-      echo "ERROR: Unknown option: $arg"
-      echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]"
+      echo "ERROR: Unknown option: $1"
+      echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
       exit 1
       ;;
     *)
       if [[ -z "$PROJECT" ]]; then
-        PROJECT="$arg"
+        PROJECT="$1"
       else
-        echo "ERROR: Unexpected argument: $arg"
-        echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]"
+        echo "ERROR: Unexpected argument: $1"
+        echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
         exit 1
       fi
+      shift
       ;;
   esac
 done
 
 if [[ -z "$PROJECT" ]]; then
   echo "ERROR: Project name is required."
-  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]"
+  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
   exit 1
 fi
 
@@ -93,8 +103,11 @@ if [[ -z "${CONTAINER_PROJECT:-}" ]]; then
   CONTAINER_PROJECT="$PROJECT"
 fi
 
-# Normalize persisted scopes/hidden paths, then re-derive the image from current
-# overlay state. We never build here - the required image must already exist.
+# Normalize persisted hidden paths (always). Scope normalization + image
+# re-derivation are SKIPPED under --from-snap: the restore path recreates the
+# container from a saved snapshot image instead of the scope-derived one, and it
+# never rewrites CONTAINER_IMAGE (a snapshot is a one-off restore source, never
+# the project's configured image). We never build images here.
 OVERLAY_SCOPES_CSV="${CONTAINER_OVERLAY_SCOPES:-}"
 
 if ! declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1; then
@@ -107,15 +120,6 @@ if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
   IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
 fi
 
-dce_load_global_config
-NORMALIZED_SCOPES="$(dce_normalize_scopes_csv "$OVERLAY_SCOPES_CSV")" || exit 1
-if [[ "$NORMALIZED_SCOPES" != "$OVERLAY_SCOPES_CSV" ]]; then
-  OVERLAY_SCOPES_CSV="$NORMALIZED_SCOPES"
-  dce_set_config_key "$CONFIG" "CONTAINER_OVERLAY_SCOPES" "$OVERLAY_SCOPES_CSV"
-fi
-
-DERIVED_IMAGE="$(dce_image_ref_from_scopes "$(dce_team_overlays_dir)" "$(dce_user_overlays_dir)" "$OVERLAY_SCOPES_CSV")" || exit 1
-
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 DOCKER_COMPATIBLE=false
@@ -123,15 +127,44 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   DOCKER_COMPATIBLE=true
 fi
 
-if ! backend_image_exists "$DERIVED_IMAGE"; then
-  echo "ERROR: Required image '$DERIVED_IMAGE' is not present on backend '$ACTIVE_BACKEND'."
-  echo "Run: dce rebuild-image all"
-  exit 1
-fi
+if [[ -n "$FROM_SNAP" ]]; then
+  # --- restore path: image = the named snapshot ------------------------------
+  if ! dce_validate_snapshot_label "$FROM_SNAP"; then
+    echo "ERROR: Invalid snapshot label '$FROM_SNAP'." >&2
+    echo "  Allowed pattern: ^[A-Za-z0-9_.-]+\$" >&2
+    exit 1
+  fi
+  CONTAINER_IMAGE="$(dce_snapshot_ref "$PROJECT" "$FROM_SNAP")"
+  if ! backend_image_exists "$CONTAINER_IMAGE"; then
+    echo "ERROR: snapshot '$FROM_SNAP' is not present on backend '$ACTIVE_BACKEND'." >&2
+    echo "         $CONTAINER_IMAGE" >&2
+    echo "Run: dce snapshots list $PROJECT"
+    exit 1
+  fi
+  # Deliberately do NOT call dce_load_global_config / dce_image_ref_from_scopes
+  # and do NOT write CONTAINER_IMAGE back to config: a snapshot is a one-off
+  # restore source, not the project's configured image.
+else
+  # --- normal path: re-derive the image from current overlay state -----------
+  dce_load_global_config
+  NORMALIZED_SCOPES="$(dce_normalize_scopes_csv "$OVERLAY_SCOPES_CSV")" || exit 1
+  if [[ "$NORMALIZED_SCOPES" != "$OVERLAY_SCOPES_CSV" ]]; then
+    OVERLAY_SCOPES_CSV="$NORMALIZED_SCOPES"
+    dce_set_config_key "$CONFIG" "CONTAINER_OVERLAY_SCOPES" "$OVERLAY_SCOPES_CSV"
+  fi
 
-if [[ "${CONTAINER_IMAGE:-}" != "$DERIVED_IMAGE" ]]; then
-  CONTAINER_IMAGE="$DERIVED_IMAGE"
-  dce_set_config_key "$CONFIG" "CONTAINER_IMAGE" "$CONTAINER_IMAGE"
+  DERIVED_IMAGE="$(dce_image_ref_from_scopes "$(dce_team_overlays_dir)" "$(dce_user_overlays_dir)" "$OVERLAY_SCOPES_CSV")" || exit 1
+
+  if ! backend_image_exists "$DERIVED_IMAGE"; then
+    echo "ERROR: Required image '$DERIVED_IMAGE' is not present on backend '$ACTIVE_BACKEND'."
+    echo "Run: dce rebuild-image all"
+    exit 1
+  fi
+
+  if [[ "${CONTAINER_IMAGE:-}" != "$DERIVED_IMAGE" ]]; then
+    CONTAINER_IMAGE="$DERIVED_IMAGE"
+    dce_set_config_key "$CONFIG" "CONTAINER_IMAGE" "$CONTAINER_IMAGE"
+  fi
 fi
 
 # Re-validate the persisted network membership before destroying anything: a
@@ -165,11 +198,18 @@ echo "Rebuilding container: $PROJECT"
 if $ROTATE_KEYS; then
   echo "Mode: rotate keys (new SSH deploy key will be generated)"
 fi
+if [[ -n "$FROM_SNAP" ]]; then
+  echo "Mode: restore from snapshot '$FROM_SNAP'"
+fi
 echo "======================================================================"
 echo ""
 echo "  Container:  ${CONTAINER_PROJECT}"
 echo "  Image:      ${CONTAINER_IMAGE:-unknown}"
-echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
+if [[ -n "$FROM_SNAP" ]]; then
+  echo "  Source:     snapshot '$FROM_SNAP' (CONTAINER_IMAGE is NOT rewritten)"
+else
+  echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
+fi
 echo "  Backend:    $ACTIVE_BACKEND"
 echo "  Repos:      ${REPOS_DIR:-unknown} (PRESERVED - verify your commits separately)"
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
@@ -373,7 +413,13 @@ echo "Rebuild complete: $PROJECT"
 echo "======================================================================"
 echo ""
 echo "  Container recreated from $CONTAINER_IMAGE"
-echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
+if [[ -n "$FROM_SNAP" ]]; then
+  echo "  Source:     snapshot '$FROM_SNAP'"
+  echo "  (CONTAINER_IMAGE was NOT rewritten; the container will read 'stale')"
+  echo "  (until the next normal rebuild -- this is correct, not an error.)"
+else
+  echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
+fi
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   if $KEEP_HIDDEN_VOLUMES; then
     echo "  Hidden volumes: preserved (--keep-hidden-volumes)"
@@ -385,6 +431,20 @@ echo ""
 echo "Host repos ($REPOS_DIR) are untouched — container state was wiped."
 if $ROTATE_KEYS; then
   echo "SSH deploy key rotated — confirm new key is on GitHub and old key is removed."
+fi
+
+# Record a restore provenance event so the project log reflects that this image
+# came from a snapshot (not a scope-derived build). Best-effort: never abort a
+# successful rebuild on a provenance-write failure. Run in a subshell so a
+# dce_die from a missing/broken global config cannot exit the rebuilt container's
+# success path. Only relevant under --from-snap.
+if [[ -n "$FROM_SNAP" ]]; then
+  (
+    dce_load_global_config
+    dce_log_provenance "$PROJECT" "$CONTAINER_IMAGE" "restore" \
+      "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" \
+      "$(backend_image_id "$CONTAINER_IMAGE" 2>/dev/null || true)"
+  ) 2>/dev/null || true
 fi
 echo ""
 echo "Next steps:"

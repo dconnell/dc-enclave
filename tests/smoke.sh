@@ -69,6 +69,7 @@ run_check "scopes + image-ref unit checks" "$ROOT_DIR/tests/scopes-image-ref.sh"
 run_check "compose layering checks" "$ROOT_DIR/tests/compose-layering.sh"
 run_check "backend dispatch matrix" "$ROOT_DIR/tests/backend-dispatch.sh"
 run_check "new/rebuild lifecycle checks" "$ROOT_DIR/tests/new-container-lifecycle.sh"
+run_check "snapshot checks" "$ROOT_DIR/tests/snapshots.sh"
 run_check "internal-networking checks" "$ROOT_DIR/tests/networks.sh"
 
 echo ""
@@ -89,6 +90,7 @@ run_check "dce help restart" "$DC_BIN" help restart
 run_check "dce help rm" "$DC_BIN" help rm
 run_check "dce help rebuild-container" "$DC_BIN" help rebuild-container
 run_check "dce help rebuild-image" "$DC_BIN" help rebuild-image
+run_check "dce help snapshot" "$DC_BIN" help snapshot
 run_check "dce help provenance" "$DC_BIN" help provenance
 run_check "dce help clean" "$DC_BIN" help clean
 run_check "dce help doctor" "$DC_BIN" help doctor

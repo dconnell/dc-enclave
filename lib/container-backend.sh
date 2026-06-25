@@ -568,6 +568,40 @@ backend_image_id() {
   esac
 }
 
+# Echo the on-disk size (in bytes) of an image, or empty when it cannot be
+# determined. Best-effort and backend-local by design (like backend_image_id):
+# empty is an acceptable "unknown," never a hard failure. Used by snapshot
+# listings so operators can see disk cost.
+backend_image_size() {
+  local ref="$1"
+
+  case "$(backend_name)" in
+    apple)
+      container image inspect "$ref" --format '{{.size}}' 2>/dev/null || true
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" image inspect "$ref" --format '{{.Size}}' 2>/dev/null || true
+      ;;
+  esac
+}
+
+# Echo the value of an OCI image LABEL key, or empty when absent / unknown.
+# Best-effort and backend-local by design: never fails a listing. Used to read
+# dce.snapshot.* provenance labels stamped on snapshot images.
+backend_image_label() {
+  local ref="$1"
+  local key="$2"
+
+  case "$(backend_name)" in
+    apple)
+      container image inspect "$ref" --format "{{index .config.labels \"$key\"}}" 2>/dev/null || true
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" image inspect "$ref" --format "{{index .Config.Labels \"$key\"}}" 2>/dev/null || true
+      ;;
+  esac
+}
+
 # Echo the backend-local image Id that a running/stopped container is bound to,
 # or empty if it cannot be determined. Used by the stale-container check
 # (scripts/list.sh, scripts/status.sh) to compare the container's bound image
@@ -770,6 +804,157 @@ backend_create() {
       ;;
     docker|orbstack|colima|podman)
       "$(backend_cli)" create --name "$name" "${create_args[@]}" "$image" >/dev/null
+      ;;
+  esac
+}
+
+# Split a Go-template []string rendering ("[a b c]" or "a b c" or "[]") into
+# one token per line (surrounding brackets stripped). Empty input yields no
+# output. apple/container's image inspect prints array config fields in this
+# bracketed, whitespace-separated form; ENV/CMD/ENTRYPOINT are read this way.
+_backend_template_array_tokens() {
+  local raw="$1"
+  [[ -n "$raw" ]] || return 0
+  raw="${raw#[}"
+  raw="${raw%]}"
+  [[ -z "${raw//[[:space:]]/}" ]] && return 0
+  local -a words=()
+  # shellcheck disable=SC2206
+  # Word-splitting is exactly the intent: the template emits space-separated tokens.
+  words=($raw)
+  local w=""
+  for w in "${words[@]}"; do
+    [[ -n "$w" ]] && printf '%s\n' "$w"
+  done
+}
+
+# Render a Go-template []string rendering as a JSON exec-form array
+# (["a","b"]), with embedded double-quotes backslash-escaped so the result is
+# safe to emit as the argument to CMD/ENTRYPOINT. Empty/[] -> empty (caller
+# omits the directive).
+_backend_template_array_json() {
+  local raw="$1"
+  local token="" out="" esc=""
+  while IFS= read -r token; do
+    [[ -n "$token" ]] || continue
+    esc="${token//\"/\\\"}"
+    if [[ -n "$out" ]]; then out+=","; fi
+    out+="\"$esc\""
+  done < <(_backend_template_array_tokens "$raw")
+  [[ -n "$out" ]] || { printf ''; return 0; }
+  printf '[%s]\n' "$out"
+}
+
+# apple/container has no `commit` and no image `import`, so a commit is composed
+# from `export` (flat merged FS tar, volumes excluded) + `build FROM scratch ADD`.
+# `FROM scratch` discards image config, so base-image metadata (USER, WORKDIR,
+# ENV, CMD, ENTRYPOINT) is read from the container's current image via
+# `container image inspect` and re-emitted. USER re-application is mandatory:
+# after a restore, credential injection writes ~/.ssh as the dev user, so a
+# snapshot that defaulted to root would break the dev user. The caller must
+# ensure the container is stopped first (export requires a stopped container).
+_backend_apple_container_commit() {
+  local container_name="$1"
+  local image_tag="$2"
+  shift 2
+  local -a label_kv=("$@")
+
+  local image_id=""
+  image_id="$(container inspect "$container_name" --format '{{.ImageID}}' 2>/dev/null || true)"
+
+  local cfg_user="" cfg_workdir="" cfg_env="" cfg_cmd="" cfg_entrypoint=""
+  if [[ -n "$image_id" ]]; then
+    cfg_user="$(container image inspect "$image_id" --format '{{.config.user}}' 2>/dev/null || true)"
+    cfg_workdir="$(container image inspect "$image_id" --format '{{.config.workingDir}}' 2>/dev/null || true)"
+    cfg_env="$(container image inspect "$image_id" --format '{{.config.env}}' 2>/dev/null || true)"
+    cfg_cmd="$(container image inspect "$image_id" --format '{{.config.cmd}}' 2>/dev/null || true)"
+    cfg_entrypoint="$(container image inspect "$image_id" --format '{{.config.entrypoint}}' 2>/dev/null || true)"
+  fi
+
+  local work_dir=""
+  work_dir="$(mktemp -d "${TMPDIR:-/tmp}/dce-snap.XXXXXX")" || {
+    echo "ERROR: could not create a temp dir for the apple snapshot build." >&2
+    return 1
+  }
+  local tar_file="$work_dir/rootfs.tar"
+  local cfile="$work_dir/Containerfile"
+
+  if ! container export -o "$tar_file" "$container_name" >/dev/null 2>&1; then
+    rm -rf "$work_dir"
+    echo "ERROR: apple/container export failed for '$container_name'." >&2
+    echo "       Ensure the container is stopped before snapshotting." >&2
+    return 1
+  fi
+
+  {
+    printf 'FROM scratch\n'
+    printf 'ADD rootfs.tar /\n'
+    if [[ -n "$cfg_user" ]]; then
+      printf 'USER %s\n' "$cfg_user"
+    fi
+    if [[ -n "$cfg_workdir" ]]; then
+      printf 'WORKDIR %s\n' "$cfg_workdir"
+    fi
+    local env_token=""
+    while IFS= read -r env_token; do
+      [[ -n "$env_token" ]] && printf 'ENV %s\n' "$env_token"
+    done < <(_backend_template_array_tokens "$cfg_env")
+    local cmd_json="" ep_json=""
+    cmd_json="$(_backend_template_array_json "$cfg_cmd")"
+    [[ -n "$cmd_json" ]] && printf 'CMD %s\n' "$cmd_json"
+    ep_json="$(_backend_template_array_json "$cfg_entrypoint")"
+    [[ -n "$ep_json" ]] && printf 'ENTRYPOINT %s\n' "$ep_json"
+    if [[ ${#label_kv[@]} -gt 0 ]]; then
+      local kv=""
+      printf 'LABEL'
+      for kv in "${label_kv[@]}"; do
+        [[ -n "$kv" ]] && printf ' %s' "$kv"
+      done
+      printf '\n'
+    fi
+  } > "$cfile"
+
+  if ! container build --tag "$image_tag" --file "$cfile" "$work_dir" >/dev/null 2>&1; then
+    rm -rf "$work_dir"
+    echo "ERROR: apple/container build failed for snapshot '$image_tag'." >&2
+    return 1
+  fi
+
+  rm -rf "$work_dir"
+}
+
+# Commit a container's filesystem to <image_tag> as a new image. Captures the
+# image + writable layer only (never named volumes or the bind-mounted repo),
+# matching `export` semantics. Optional label_kv pairs ("key=value") are stamped
+# as OCI image labels for snapshot provenance. The caller MUST ensure the
+# container is stopped first: a clean commit (and apple's export) require it.
+#
+# docker/orbstack/colima/podman use native `<cli> commit`, which carries USER,
+# ENV, WORKDIR, CMD, ENTRYPOINT, and existing labels forward automatically.
+# apple/container has no commit/import, so it composes export + FROM-scratch
+# build and re-applies base metadata (see _backend_apple_container_commit).
+backend_container_commit() {
+  local container_name="$1"
+  local image_tag="$2"
+  shift 2
+  local -a label_kv=("$@")
+
+  local backend=""
+  backend="$(backend_name)" || return 1
+
+  case "$backend" in
+    docker|orbstack|colima|podman)
+      local -a args=("commit")
+      local kv=""
+      for kv in "${label_kv[@]:-}"; do
+        [[ -n "$kv" ]] || continue
+        args+=(--change "LABEL $kv")
+      done
+      args+=("$container_name" "$image_tag")
+      "$(backend_cli)" "${args[@]}" >/dev/null
+      ;;
+    apple)
+      _backend_apple_container_commit "$container_name" "$image_tag" "${label_kv[@]:-}"
       ;;
   esac
 }

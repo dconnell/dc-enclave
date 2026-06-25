@@ -17,6 +17,7 @@ shopt -s nullglob
 
 DRY_RUN=false
 CLEAN_HIDDEN_VOLUMES=false
+CLEAN_SNAPSHOTS=false
 TARGET_PROJECT=""
 
 while [[ $# -gt 0 ]]; do
@@ -29,17 +30,21 @@ while [[ $# -gt 0 ]]; do
       CLEAN_HIDDEN_VOLUMES=true
       shift
       ;;
+    --snapshots)
+      CLEAN_SNAPSHOTS=true
+      shift
+      ;;
     --)
       shift
       break
       ;;
     -* )
-      echo "Usage: dce clean [--dry-run] [--hidden-volumes [name]]"
+      echo "Usage: dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]"
       exit 1
       ;;
     *)
       if [[ -n "$TARGET_PROJECT" ]]; then
-        echo "Usage: dce clean [--dry-run] [--hidden-volumes [name]]"
+        echo "Usage: dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]"
         exit 1
       fi
       TARGET_PROJECT="$1"
@@ -48,8 +53,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -n "$TARGET_PROJECT" && "$CLEAN_HIDDEN_VOLUMES" == "false" ]]; then
-  echo "Usage: dce clean [--dry-run] [--hidden-volumes [name]]"
+if [[ -n "$TARGET_PROJECT" && "$CLEAN_HIDDEN_VOLUMES" == "false" && "$CLEAN_SNAPSHOTS" == "false" ]]; then
+  echo "Usage: dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]"
+  exit 1
+fi
+
+if [[ "$CLEAN_HIDDEN_VOLUMES" == "true" && "$CLEAN_SNAPSHOTS" == "true" ]]; then
+  echo "ERROR: --hidden-volumes and --snapshots are mutually exclusive." >&2
   exit 1
 fi
 
@@ -200,6 +210,76 @@ if $CLEAN_HIDDEN_VOLUMES; then
 
   echo ""
   echo "Hidden volume cleanup complete. Removed: $removed"
+  if [[ $failed -gt 0 ]]; then
+    echo "Could not remove: $failed"
+  fi
+  exit 0
+fi
+
+# --- Snapshot cleanup mode ----------------------------------------------------
+# Reclaim dce-snap-* images (one-off container-FS snapshots). The default sweep
+# above already ignores them (is_managed_repo only matches dce-base /
+# dce-img-<16hex>), so snapshots are NEVER reclaimed without this flag. An
+# optional project name scopes to dce-snap-<slug>-*. --dry-run previews only.
+if $CLEAN_SNAPSHOTS; then
+  snap_prefix="dce-snap-"
+  if [[ -n "$TARGET_PROJECT" ]]; then
+    snap_prefix="dce-snap-$(dce_project_slug "$TARGET_PROJECT")-"
+  fi
+
+  declare -A SEEN_SNAPS=()
+  REMOVE_SNAPS=()
+  while IFS=$'\t' read -r repo tag image_id; do
+    [[ -z "$repo" || "$repo" == "<none>" ]] && continue
+    [[ "$repo" == "$snap_prefix"* ]] || continue
+    [[ "$tag" == "latest" || "$tag" == "<none>" ]] || continue
+    local_ref="$repo:$tag"
+    if [[ -z "${SEEN_SNAPS[$local_ref]-}" ]]; then
+      REMOVE_SNAPS+=("$local_ref")
+      SEEN_SNAPS["$local_ref"]=1
+    fi
+  done < <(backend_list_images)
+
+  if [[ ${#REMOVE_SNAPS[@]} -eq 0 ]]; then
+    if [[ -n "$TARGET_PROJECT" ]]; then
+      echo "No snapshots found for project '$TARGET_PROJECT'."
+    else
+      echo "No snapshots found."
+    fi
+    exit 0
+  fi
+
+  echo "Active backend: $ACTIVE_BACKEND"
+  echo "The following snapshots will be removed:"
+  for ref in "${REMOVE_SNAPS[@]}"; do
+    sz="$(backend_image_size "$ref" 2>/dev/null || true)"
+    if [[ -n "$sz" ]]; then
+      sz_h="$(awk -v b="$sz" 'BEGIN { split("B KB MB GB TB", u, " "); i=1; while (b>=1024 && i<5){b/=1024;i++} printf "%.1f%s", b, u[i] }')"
+      printf '  - %s (%s)\n' "$ref" "$sz_h"
+    else
+      printf '  - %s\n' "$ref"
+    fi
+  done
+
+  if $DRY_RUN; then
+    echo ""
+    echo "Dry run only; nothing removed."
+    exit 0
+  fi
+
+  removed=0
+  failed=0
+  for ref in "${REMOVE_SNAPS[@]}"; do
+    if backend_remove_image "$ref"; then
+      removed=$((removed + 1))
+    else
+      failed=$((failed + 1))
+      echo "WARN: Could not remove $ref (may be in use)."
+    fi
+  done
+
+  echo ""
+  echo "Snapshot cleanup complete. Removed: $removed"
   if [[ $failed -gt 0 ]]; then
     echo "Could not remove: $failed"
   fi

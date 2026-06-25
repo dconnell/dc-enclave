@@ -45,9 +45,13 @@ _show_summary() {
   echo "                                                    Remove a project (container, volumes, config)"
   echo "  rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes]"
   echo "                                                    Destroy and recreate container"
+  echo "  rebuild-container <name> --from-snap <label>     Recreate from a snapshot"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
+  echo "  snapshot <name> [<label>]                         Snapshot container FS to a tagged image"
+  echo "  snapshots list [<name>]                           List snapshots (with sizes)"
   echo "  provenance <name> [--history|--all]               Show image provenance (overlay commits + build state)"
-  echo "  clean [--dry-run] [--hidden-volumes [name]]       Remove old/orphan image tags or orphan hidden volumes"
+  echo "  clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]"
+  echo "                                                    Reclaim image tags, hidden volumes, or snapshots"
   echo "  doctor [backend|project]                          Run preflight checks and report pass/fail"
   echo "  network <create|ls|members|rm|add|remove> ...     Manage private networks between containers"
   echo "  install <name> <path>                             Install dotfiles"
@@ -470,6 +474,7 @@ EOF
 _show_help_rebuild_container() {
   cat <<'EOF'
 Usage: dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]
+              [--from-snap <label>]
 
 Description:
   Destroys a container and recreates it from its selected image.
@@ -488,6 +493,15 @@ Description:
   instructs you to run:
     dce rebuild-image all
 
+  --from-snap <label> switches the image source to a saved snapshot
+  (dce-snap-<project>-<label>:latest, created by `dce snapshot`). In that mode
+  scope derivation and the CONTAINER_IMAGE config rewrite are skipped: the
+  snapshot is a one-off restore source, never the project's configured image.
+  Hidden-volume handling (--keep-hidden-volumes) is independent and unchanged.
+  After a restore the container reads "stale" in `dce list`/`dce status` until
+  the next normal rebuild -- this is correct (it genuinely diverges from its
+  configured image), not an error.
+
 Arguments:
   <name>     Project/container name. Must already exist.
 
@@ -499,23 +513,31 @@ Options:
               GitHub before continuing.
 
    --keep-hidden-volumes
-               Preserve existing hidden volumes instead of removing them.
-               By default, hidden volumes are removed during rebuild for a
-               clean slate (dependency re-install, no stale caches).
-               WARNING: when the project has hidden paths configured,
-               combining this with --rotate-keys produces a loud warning,
-               since key rotation implies incident response where
-               preserving volumes may be unsafe.
+                Preserve existing hidden volumes instead of removing them.
+                By default, hidden volumes are removed during rebuild for a
+                clean slate (dependency re-install, no stale caches).
+                WARNING: when the project has hidden paths configured,
+                combining this with --rotate-keys produces a loud warning,
+                since key rotation implies incident response where
+                preserving volumes may be unsafe.
 
-  --yes, -y    Skip the confirmation prompt. Use this for scripted
-               incident-response flows. The destruction/recreation still
-               proceeds exactly as in the interactive path.
+   --from-snap <label>
+                Recreate from the snapshot `dce-snap-<name>-<label>:latest`
+                instead of the scope-derived image. Bypasses scope derivation
+                and does NOT rewrite CONTAINER_IMAGE. The snapshot must exist
+                (run `dce snapshots list <name>`). Restores the filesystem
+                layer only; hidden-volume state follows --keep-hidden-volumes.
+
+   --yes, -y    Skip the confirmation prompt. Use this for scripted
+                incident-response flows. The destruction/recreation still
+                proceeds exactly as in the interactive path.
 
 Examples:
   dce rebuild-container myapp
   dce rebuild-container myapp --rotate-keys
   dce rebuild-container myapp --keep-hidden-volumes
   dce rebuild-container myapp --rotate-keys --keep-hidden-volumes
+  dce rebuild-container myapp --from-snap 20250101-120000
   dce rebuild-container myapp --yes
 
 Notes:
@@ -526,6 +548,8 @@ Notes:
   - Re-apply dotfiles after rebuild with 'dce install <name> <path>'.
   - You will be prompted to type 'yes' to confirm before destruction
     (use --yes/-y to skip, e.g. for automation).
+  - Snapshots capture the filesystem layer only (image + writable layer), never
+    named volumes. To save a state first, run `dce snapshot <name> [<label>]`.
 EOF
 }
 
@@ -613,37 +637,53 @@ Usage: dce clean [--dry-run]
 
        dce clean [--dry-run] [--hidden-volumes [name]]
 
+       dce clean [--dry-run] [--snapshots [name]]
+
 Description:
-  Cleans managed image tags and orphan managed image repos.
+  Reclaims backend storage. Default mode removes old/orphan managed image tags
+  and managed image repos. Two opt-in modes target other object kinds.
 
-  Hidden volume mode:
-  - --hidden-volumes enables orphan hidden-volume cleanup.
-  - Optional [name] scopes cleanup to one project.
-  - Hidden volume names are managed as dce-hide-<project>-<hash>.
-
-  Rules:
+  Image-tag mode (default):
   - Expected managed repos (dce-base + currently configured derived repos):
     keep latest, remove non-latest tags.
-  - Orphan managed repos (no longer expected):
-    remove all tags, including latest.
+  - Orphan managed repos (no longer expected): remove all tags, including latest.
+
+  Hidden-volume mode (--hidden-volumes):
+  - Removes orphan managed hidden volumes (dce-hide-* no longer referenced by an
+    active project config). Optional [name] scopes to one project.
+
+  Snapshot mode (--snapshots):
+  - Removes dce-snap-* container-filesystem snapshots (created by
+    `dce snapshot`). Optional [name] scopes to one project's snapshots.
+  - Default `dce clean` NEVER touches snapshots; they are only reclaimed with
+    this flag. --dry-run previews the sizes that would be freed.
 
 Options:
-  --dry-run   Show what would be removed without deleting anything.
+  --dry-run   Show what would be removed (and how much space) without deleting.
 
   --hidden-volumes
-              Operate on hidden volumes instead of managed image tags.
+              Operate on orphan hidden volumes instead of managed image tags.
               Optional trailing project name narrows cleanup to one project.
+
+  --snapshots
+              Operate on container snapshots instead of managed image tags.
+              Optional trailing project name narrows cleanup to one project.
+
+  --hidden-volumes and --snapshots are mutually exclusive.
 
 Examples:
   dce clean --dry-run
   dce clean
   dce clean --hidden-volumes --dry-run
   dce clean --hidden-volumes myproject
+  dce clean --snapshots --dry-run
+  dce clean --snapshots myproject
 
 Notes:
   - Managed repos are dce-base and dce-img-<16hex>.
   - Images currently in use may fail to remove; those failures are reported.
   - Hidden volume cleanup removes only orphan managed hidden volumes.
+  - Snapshot cleanup removes only dce-snap-* images (default sweep ignores them).
   - Requires a reachable container backend.
 EOF
 }
@@ -780,6 +820,72 @@ Notes:
 EOF
 }
 
+_show_help_snapshot() {
+  cat <<'EOF'
+Usage: dce snapshot <project> [<label>]
+
+       dce snapshot rm <project> <label>
+
+       dce snapshots list [<project>]
+
+Description:
+  A snapshot commits a project container's filesystem to a tagged image, saving
+  a state you can return to later. It is an independent operation you can run at
+  any time -- before a risky change, before a rebuild, or simply to preserve a
+  state. Restoring one is opt-in via `dce rebuild-container --from-snap`.
+
+  Snapshot semantics are FILESYSTEM-LAYER ONLY: the image plus the container's
+  writable layer. Named volumes (e.g. node_modules, caches) and the bind-mounted
+  repo are NEVER captured. Hidden-volume state after a restore follows the
+  existing --keep-hidden-volumes rebuild logic.
+
+  Two distinct workflows share one mechanism:
+  - Restore a known-good state: snapshot before you experiment; if it breaks,
+    rebuild clean and restore with `dce rebuild-container --from-snap`.
+  - Preserve a suspect state for forensics: snapshot the suspect container,
+    then rebuild clean and inspect the snapshot image later.
+
+Subcommands:
+  snapshot <project> [<label>]
+              Stop -> commit -> restart the project container, producing
+              dce-snap-<project>-<label>:latest. <label> defaults to a sortable
+              timestamp (YYYYmmdd-HHMMSS). Refuses to overwrite an existing
+              label. Label charset: [A-Za-z0-9_.-].
+
+  snapshot rm <project> <label>
+              Remove one snapshot image (convenience for `dce clean --snapshots`).
+
+  snapshots list [<project>]
+              List snapshots newest-first with project, size, UTC time, and the
+              base image the container was running. Optional <project> scopes to
+              that project.
+
+Arguments:
+  <project>   Project/container name. Must already exist (and for `snapshot`,
+              its container must exist on the backend).
+
+  [<label>]   Optional snapshot label. Defaults to a sortable UTC timestamp.
+
+Examples:
+  dce snapshot myapp                         # label defaults to a timestamp
+  dce snapshot myapp before-rust-upgrade
+  dce snapshots list
+  dce snapshots list myapp
+  dce snapshot rm myapp before-rust-upgrade
+  dce rebuild-container myapp --from-snap before-rust-upgrade
+  dce clean --snapshots myapp --dry-run
+
+Notes:
+  - A snapshot is stop -> commit -> start (a clean commit, and apple/container's
+    export, require a stopped container on every backend).
+  - Snapshots live in the active backend's local image store only; they are not
+    pushed to a registry.
+  - `--from-snap` is a one-off restore: it never rewrites CONTAINER_IMAGE.
+  - Reclaim disk with `dce clean --snapshots [<project>]` (default `dce clean`
+    ignores snapshots).
+EOF
+}
+
 _show_help_help() {
   cat <<'EOF'
 Usage: dce help [command]
@@ -792,7 +898,7 @@ Description:
 Arguments:
               [command]  Optional command name to show detailed help for. One of:
               new, start, stop, status, list, shell, logs, exec, restart, rm,
-              rebuild-container, rebuild-image, provenance, clean, doctor, network, install, version, help
+              rebuild-container, rebuild-image, snapshot, provenance, clean, doctor, network, install, version, help
 
 Aliases:
   --help     Same as 'dce help'
@@ -848,6 +954,7 @@ case "$COMMAND" in
   rm)                 _show_help_rm ;;
   rebuild-container)  _show_help_rebuild_container ;;
   rebuild-image)      _show_help_rebuild_image ;;
+  snapshot|snapshots) _show_help_snapshot ;;
   provenance)         _show_help_provenance ;;
   clean)              _show_help_clean ;;
   doctor)             _show_help_doctor ;;

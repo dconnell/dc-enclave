@@ -39,6 +39,8 @@ dce_complete_subcommands() {
     "rm" \
     "rebuild-container" \
     "rebuild-image" \
+    "snapshot" \
+    "snapshots" \
     "provenance" \
     "clean" \
     "network" \

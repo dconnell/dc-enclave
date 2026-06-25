@@ -645,6 +645,33 @@ dce_project_slug() {
   printf '%s\n' "$project_slug"
 }
 
+# Validate a snapshot label. Snapshot labels are embedded in image repository
+# names (dce-snap-<slug>-<label>) and image-tag slots, so they must match the
+# image-tag charset and never contain '/' or ':' (which would escape the ref).
+dce_validate_snapshot_label() {
+  local label="$1"
+  [[ -n "$label" ]] || return 1
+  [[ "$label" =~ ^[A-Za-z0-9_.-]+$ ]]
+}
+
+# Build the snapshot image reference: dce-snap-<project-slug>-<label>:latest.
+# Mirrors dce-hide-<slug>-<hash> hidden-volume naming so snapshot repos are
+# visually grouped with their project and excluded from the default image sweep
+# (is_managed_repo only matches dce-base / dce-img-<16hex>).
+dce_snapshot_ref() {
+  local project="$1"
+  local label="$2"
+
+  printf 'dce-snap-%s-%s:latest\n' "$(dce_project_slug "$project")" "$label"
+}
+
+# Repo (repository name, no :tag) prefix for a project's snapshots, used to
+# scope enumeration. dce-snap-<slug>-  — append a label (and :latest) for a ref.
+dce_snapshot_repo_prefix() {
+  local project="$1"
+  printf 'dce-snap-%s-\n' "$(dce_project_slug "$project")"
+}
+
 # Return whether an overlay scope exists in either team or user overlays dir.
 # Each dir is the resolved leaf overlays/ directory of a root (see
 # dce_team_overlays_dir / dce_user_overlays_dir).
