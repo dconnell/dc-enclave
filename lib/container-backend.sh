@@ -804,25 +804,33 @@ backend_stop() {
 
 # Fetch a container's stdout/stderr log stream.
 #
-# Structured args keep argv consistent across backends (every backend's `logs`
-# subcommand accepts the same -f/--tail shape on recent versions): follow=true
-# attaches (-f, blocks until interrupted); tail (empty or integer N) prepends
-# `--tail N`. Flag support is backend-version-dependent; on unsupported flags
-# the backend itself reports the error.
+# Structured args keep the user-facing shape uniform: follow=true attaches
+# (-f, blocks until interrupted); tail (empty or integer N) limits output to
+# the last N lines. The follow flag (-f) is identical on every backend; the
+# tail flag is NOT -- docker/orbstack/colima/podman take `--tail N`, while
+# apple/container has no `--tail` and exposes line count as `-n N` -- so the
+# flag is translated per backend to keep `dce logs --tail` working everywhere.
 backend_logs() {
   local name="$1"
   local follow="$2"
   local tail="${3:-}"
+
+  local backend=""
+  backend="$(backend_name)" || return 1
 
   local -a log_args=()
   if [[ "$follow" == "true" ]]; then
     log_args+=("-f")
   fi
   if [[ -n "$tail" ]]; then
-    log_args+=("--tail" "$tail")
+    if [[ "$backend" == "apple" ]]; then
+      log_args+=("-n" "$tail")
+    else
+      log_args+=("--tail" "$tail")
+    fi
   fi
 
-  case "$(backend_name)" in
+  case "$backend" in
     apple)
       container logs "${log_args[@]}" "$name"
       ;;

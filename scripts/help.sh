@@ -340,8 +340,8 @@ Examples:
   dce logs myapp --follow --tail 50    Last 50 lines, then follow
 
 Notes:
-  - Flag support (-f, --tail) depends on the backend version. DC Enclave
-    targets the latest stable release of each backend.
+  - Both -f/--follow and --tail are supported on every backend (apple/container
+    maps --tail to its native -n flag).
   - To see container state rather than logs, use `dce status` or `dce list`.
 EOF
 }

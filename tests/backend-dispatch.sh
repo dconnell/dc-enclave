@@ -113,7 +113,11 @@ dispatch_expected() {
     create)           s="$bin create --name myproj --volume src:dst img:latest" ;;
     start)            s="$bin start myproj" ;;
     stop)             s="$bin stop myproj" ;;
-    logs)             s="$bin logs -f --tail 50 myproj" ;;
+    logs)
+      # apple/container exposes line count as -n <n> (it has no --tail), so the
+      # backend_logs translation must emit -n there; docker-family keeps --tail.
+      [[ "$backend" == apple ]] && s="container logs -f -n 50 myproj" \
+                                 || s="$bin logs -f --tail 50 myproj" ;;
     delete)
       [[ "$backend" == apple ]] && s="container delete myproj"              || s="$bin rm -f myproj" ;;
     exec)             s="$bin exec myproj whoami" ;;
