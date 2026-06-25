@@ -79,9 +79,9 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce start [name ...]` | Start one or more projects, or all configured projects if none given |
 | `dce stop [name ...]` | Stop one or more projects, or all configured projects if none given |
 | `dce list` (`dce ls`) | List DC Enclave and their running/stopped state |
-| `dce shell <name> [command]` | Open a shell or run one command inside a project container |
+| `dce shell <name> [command]` | Open a shell or run one command inside a project container; injects `GITHUB_TOKEN` and wraps the command in `zsh -ic` |
 | `dce logs <name> [-f\|--follow] [--tail N]` | Fetch a container's stdout/stderr log stream (works on stopped containers) |
-| `dce exec [--root] <name> <command...>` | Run a single command in a running container (docker-exec style; auto-TTY) |
+| `dce exec [--root] <name> <command...>` | Run a single command in a running container, docker-exec style: no `GITHUB_TOKEN`, no zsh wrapping, auto-TTY |
 | `dce restart [name ...]` | Restart one or more projects, or all configured projects |
 | `dce rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, and config+secrets (host code preserved) |
 | `dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]` | Destroy and recreate container from selected image |
@@ -92,6 +92,8 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
 | `dce version` (`dce --version`, `dce -v`) | Print the DC Enclave version |
 | `dce help [command]` (`dce --help`, `dce -h`) | Show usage summary or detailed help for a specific command |
+
+> **`shell` vs `exec`:** `dce shell` is for working *inside* the container — it auto-starts the container, injects `GITHUB_TOKEN`, and runs commands through `zsh -ic` (so aliases and interactive config load). `dce exec` is a raw, docker-exec-style escape hatch for host-driven one-shots: no token, no zsh wrapping, args passed verbatim, and the container must already be running. The common pitfall is reaching for `exec` when a command needs the token, or `shell` when you want raw/piped output — see `dce help shell` and `dce help exec`.
 
 `<scope>` values in `dce new` are overlay scopes that match `Containerfile.<scope>` files in your overlay directories. Scope is optional — `dce new <name>` creates a base-only project. The `all` scope is always auto-layered when `Containerfile.all` exists.
 

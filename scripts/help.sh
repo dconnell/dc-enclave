@@ -37,9 +37,9 @@ _show_summary() {
   echo "  stop [name ...]                                   Stop one or more projects, or all"
   echo "  list                                              List containers and status"
   echo "  status                                            Show overall status and per-project details"
-  echo "  shell <name> [command]                            Open shell or run command"
+  echo "  shell <name> [command]                            Interactive shell/command; seeds GITHUB_TOKEN (zsh -ic)"
   echo "  logs <name> [-f|--follow] [--tail N]              Fetch container log stream"
-  echo "  exec [--root] <name> <command...>                 Run a command in a running container"
+  echo "  exec [--root] <name> <command...>                 Raw one-shot in a running container; no token (docker-exec style)"
   echo "  restart [name ...]                                Restart one or more projects, or all"
   echo "  rm <name> [--yes] [--keep-config] [--keep-volumes]"
   echo "                                                    Remove a project (container, volumes, config)"
@@ -302,6 +302,9 @@ Notes:
   - If the container is stopped, 'dce start' is called automatically.
   - The workspace directory /workspace is mounted from the host repos dir.
   - GITHUB_TOKEN is available if the token file has been filled in.
+  - For a raw, scriptable command with NO GITHUB_TOKEN and NO zsh wrapping
+    (docker-exec style, args passed verbatim), use 'dce exec' instead. The
+    container must already be running for 'dce exec'. See: dce help exec.
 EOF
 }
 
