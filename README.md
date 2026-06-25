@@ -84,7 +84,7 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce exec [--root] <name> <command...>` | Run a single command in a running container, docker-exec style: no `GITHUB_TOKEN`, no zsh wrapping, auto-TTY |
 | `dce restart [name ...]` | Restart one or more projects, or all configured projects |
 | `dce rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, and config+secrets (host code preserved) |
-| `dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]` | Destroy and recreate container from selected image |
+| `dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes]` | Destroy and recreate container from selected image |
 | `dce rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
 | `dce provenance <name> [--history]` | Show image provenance: team/user overlay commits + content fingerprints + base id + build time for the project's image |
 | `dce clean [--dry-run] [--hidden-volumes [name]]` | Remove old/orphan managed image tags or orphan managed hidden volumes |
@@ -459,7 +459,7 @@ CONTAINER_BACKEND=colima scripts/setup.sh
 
 Both front-ends share one discovery layer (`lib/complete-data.sh`), including the hardened global-config parser, so project/scope lists and security guarantees are identical across shells. If you previously bridged the bash completion into zsh by hand, re-running `setup.sh` removes that stale line in favor of native zsh completion.
 
-Completion covers each command's real argument grammar, e.g. `dce start`/`dce stop` complete multiple project names (excluding ones already typed), `dce rebuild-container` offers `--rotate-keys`/`--keep-hidden-volumes`, and `dce install` completes a dotfiles directory after the project.
+Completion covers each command's real argument grammar, e.g. `dce start`/`dce stop` complete multiple project names (excluding ones already typed), `dce rebuild-container` offers `--rotate-keys`/`--keep-hidden-volumes`/`--yes`, and `dce install` completes a dotfiles directory after the project.
 
 ## Setup of a new repo
 
@@ -763,6 +763,12 @@ Rebuild while preserving hidden volumes (skip dependency re-install):
 
 ```
 dce rebuild-container myapp-monorepo --keep-hidden-volumes
+```
+
+Rebuild without prompting (scripted incident response / automation):
+
+```
+dce rebuild-container myapp-monorepo --yes
 ```
 
 For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. When the project has hidden paths configured, combining `--rotate-keys` with `--keep-hidden-volumes` triggers a loud warning (key rotation implies incident response, where preserving volumes may be unsafe).

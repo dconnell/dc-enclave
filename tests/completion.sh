@@ -153,10 +153,13 @@ drive 5 dce stop alpha beta gamma "";  assert_empty   "stop all three <TAB>"
 drive 2 dce shell "";       assert_reply "shell <TAB>" alpha beta gamma
 drive 3 dce shell alpha ""; assert_empty   "shell alpha <TAB>"
 
-# rebuild-container: one project, then the two flags.
+# rebuild-container: one project, then the flags.
 drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
 drive 3 dce rebuild-container alpha "--"; assert_reply "rebuild-container alpha --<TAB>" \
-  --keep-hidden-volumes --rotate-keys
+  --keep-hidden-volumes --rotate-keys --yes
+# Empty prefix offers all flags, including the short -y form.
+drive 3 dce rebuild-container alpha ""; assert_reply "rebuild-container alpha <TAB>" \
+  --keep-hidden-volumes --rotate-keys --yes -y
 
 # install: one project, then a directory.
 drive 2 dce install "";     assert_reply "install <TAB>" alpha beta gamma
@@ -404,6 +407,8 @@ if command -v zsh >/dev/null 2>&1; then
     chk rm               "1:project:"
     chk rm               "--keep-config["
     chk rebuild-container "--rotate-keys["
+    chk rebuild-container "--yes["
+    chk rebuild-container "-y["
     chk install          "2:dotfiles directory:_files -/"
     chk rebuild-image    "1:target:_dce_rebuild_image_targets"
     chk provenance       "1:project:_dce_projects_simple"

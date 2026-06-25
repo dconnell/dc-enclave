@@ -43,7 +43,7 @@ _show_summary() {
   echo "  restart [name ...]                                Restart one or more projects, or all"
   echo "  rm <name> [--yes] [--keep-config] [--keep-volumes]"
   echo "                                                    Remove a project (container, volumes, config)"
-  echo "  rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]"
+  echo "  rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes]"
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
   echo "  provenance <name> [--history|--all]               Show image provenance (overlay commits + build state)"
@@ -469,7 +469,7 @@ EOF
 
 _show_help_rebuild_container() {
   cat <<'EOF'
-Usage: dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes]
+Usage: dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]
 
 Description:
   Destroys a container and recreates it from its selected image.
@@ -499,19 +499,24 @@ Options:
               GitHub before continuing.
 
    --keep-hidden-volumes
-              Preserve existing hidden volumes instead of removing them.
-              By default, hidden volumes are removed during rebuild for a
-              clean slate (dependency re-install, no stale caches).
-              WARNING: when the project has hidden paths configured,
-              combining this with --rotate-keys produces a loud warning,
-              since key rotation implies incident response where
-              preserving volumes may be unsafe.
+               Preserve existing hidden volumes instead of removing them.
+               By default, hidden volumes are removed during rebuild for a
+               clean slate (dependency re-install, no stale caches).
+               WARNING: when the project has hidden paths configured,
+               combining this with --rotate-keys produces a loud warning,
+               since key rotation implies incident response where
+               preserving volumes may be unsafe.
+
+  --yes, -y    Skip the confirmation prompt. Use this for scripted
+               incident-response flows. The destruction/recreation still
+               proceeds exactly as in the interactive path.
 
 Examples:
   dce rebuild-container myapp
   dce rebuild-container myapp --rotate-keys
   dce rebuild-container myapp --keep-hidden-volumes
   dce rebuild-container myapp --rotate-keys --keep-hidden-volumes
+  dce rebuild-container myapp --yes
 
 Notes:
   - This is DESTRUCTIVE to the container filesystem. Uncommitted work inside
@@ -519,7 +524,8 @@ Notes:
   - Your code on the host ($REPOS_DIR) is safe - it is a bind mount.
   - Hidden volumes are removed by default unless --keep-hidden-volumes is set.
   - Re-apply dotfiles after rebuild with 'dce install <name> <path>'.
-  - You will be prompted to type 'yes' to confirm before destruction.
+  - You will be prompted to type 'yes' to confirm before destruction
+    (use --yes/-y to skip, e.g. for automation).
 EOF
 }
 

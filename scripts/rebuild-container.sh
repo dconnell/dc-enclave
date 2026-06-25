@@ -14,18 +14,19 @@
 #   - Hidden volumes are REMOVED by default for a clean slate; --keep-hidden-
 #     volumes preserves them. Combining --rotate-keys with --keep-hidden-volumes
 #     raises a loud warning (key rotation implies incident response).
-#   - Destructive: requires typing 'yes' to confirm.
+#   - Destructive: requires typing 'yes' to confirm (unless --yes/-y).
 # =============================================================================
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes]"
+  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]"
   exit 1
 fi
 
 PROJECT=""
 ROTATE_KEYS=false
 KEEP_HIDDEN_VOLUMES=false
+ASSUME_YES=false
 
 for arg in "$@"; do
   case "$arg" in
@@ -35,9 +36,12 @@ for arg in "$@"; do
     --keep-hidden-volumes)
       KEEP_HIDDEN_VOLUMES=true
       ;;
+    --yes|-y)
+      ASSUME_YES=true
+      ;;
     --*)
       echo "ERROR: Unknown option: $arg"
-      echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes]"
+      echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]"
       exit 1
       ;;
     *)
@@ -45,7 +49,7 @@ for arg in "$@"; do
         PROJECT="$arg"
       else
         echo "ERROR: Unexpected argument: $arg"
-        echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes]"
+        echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]"
         exit 1
       fi
       ;;
@@ -54,7 +58,7 @@ done
 
 if [[ -z "$PROJECT" ]]; then
   echo "ERROR: Project name is required."
-  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes]"
+  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]"
   exit 1
 fi
 
@@ -207,11 +211,13 @@ fi
 
 echo "This will DESTROY the container '$PROJECT' and recreate it."
 echo "Your code in ${REPOS_DIR:-unknown} is safe."
-echo ""
-read -r -p "Type 'yes' to continue: " confirm
-if [[ "$confirm" != "yes" ]]; then
-  echo "Aborted."
-  exit 0
+if ! $ASSUME_YES; then
+  echo ""
+  read -r -p "Type 'yes' to continue: " confirm
+  if [[ "$confirm" != "yes" ]]; then
+    echo "Aborted."
+    exit 0
+  fi
 fi
 
 echo ""

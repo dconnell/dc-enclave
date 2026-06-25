@@ -111,7 +111,7 @@ _dce_complete() {
         return 0
       fi
       # >= 3: optional flags (order-independent).
-      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --keep-hidden-volumes" -- "$cur")
+      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --keep-hidden-volumes --yes -y" -- "$cur")
       return 0
       ;;
     install)

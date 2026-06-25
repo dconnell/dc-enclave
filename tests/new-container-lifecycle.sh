@@ -354,6 +354,48 @@ pub_after="$(cat "$SECRET_DIR/ssh_key.pub")"
 pass "rebuild --rotate-keys: backs up old key, generates a new one"
 
 # ===========================================================================
+# rebuild --yes/-y: skips the confirmation prompt (matches `dce rm`).
+# ===========================================================================
+# No flag + a non-'yes' answer -> the prompt gate still fires: exit 0 and no
+# destructive calls. Proves behavior is unchanged when the flag is absent.
+: > "$LOG"
+if printf 'no\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" \
+      >"$WORK/abort.stdout" 2>"$WORK/abort.stderr"; then
+  :   # exit 0 is expected for an aborted confirmation
+else
+  fail "rebuild (default, non-yes): aborted confirm should exit 0
+-- stderr:$(cat "$WORK/abort.stderr")"
+fi
+if grep -qE 'rm -f myapp|create --name myapp|stop myapp' "$LOG"; then
+  fail "rebuild (default): non-yes answer must NOT issue destructive calls
+$(grep -E 'rm -f|create|stop' "$LOG")"
+fi
+pass "rebuild (default): confirmation gate still aborts without 'yes' (behavior unchanged)"
+
+# --yes skips the prompt entirely: </dev/null proves no prompt is read, and the
+# full destructive lifecycle still runs.
+: > "$LOG"
+if ! run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" --yes \
+      </dev/null >"$WORK/y.stdout" 2>"$WORK/y.stderr"; then
+  fail "rebuild --yes exited non-zero
+-- stderr:$(cat "$WORK/y.stderr")"
+fi
+[[ -n "$(first_call 'rm -f myapp')" ]] || fail "rebuild --yes: missing delete call"
+[[ -n "$(first_call 'create --name myapp')" ]] || fail "rebuild --yes: missing create call"
+[[ -n "$(first_call 'start myapp')" ]] || fail "rebuild --yes: missing start call"
+pass "rebuild --yes: skips prompt, destructive lifecycle intact"
+
+# -y short form behaves identically.
+: > "$LOG"
+if ! run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" -y \
+      </dev/null >"$WORK/y2.stdout" 2>"$WORK/y2.stderr"; then
+  fail "rebuild -y exited non-zero
+-- stderr:$(cat "$WORK/y2.stderr")"
+fi
+[[ -n "$(first_call 'create --name myapp')" ]] || fail "rebuild -y: missing create call"
+pass "rebuild -y: short form skips prompt"
+
+# ===========================================================================
 # dce new (apple backend): VS Code terminal-profile settings.json branch
 # ===========================================================================
 APROJ="appleproj"

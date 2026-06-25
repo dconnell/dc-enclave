@@ -116,7 +116,9 @@ _dce_dispatch() {
       _arguments \
         '1:project:_dce_projects_simple' \
         '--rotate-keys[generate a fresh SSH deploy key]' \
-        '--keep-hidden-volumes[preserve hidden volumes across the rebuild]'
+        '--keep-hidden-volumes[preserve hidden volumes across the rebuild]' \
+        '--yes[skip the confirmation prompt]' \
+        '-y[skip the confirmation prompt]'
       ;;
     install)
       # One project, then a dotfiles directory.
