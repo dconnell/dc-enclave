@@ -3,7 +3,7 @@
 # tests/compose-layering.sh - Characterize scripts/compose-containerfile.sh.
 #
 # The compose helper implements the documented canonical layering contract
-# (README "Canonical layering order"; plans/layering.md). This locks it down so
+# (docs/explanation/overlay-model.md "Canonical layering order"; plans/layering.md). This locks it down so
 # a reorder or a stripped guard regresses loudly:
 #
 #   - Canonical overlay order: team/all, user/all, team/<s1>, user/<s1>,
