@@ -43,6 +43,7 @@ dce_complete_subcommands() {
     "snapshots" \
     "provenance" \
     "clean" \
+    "config" \
     "network" \
     "net" \
     "doctor" \
@@ -191,6 +192,28 @@ dce_complete_network_subactions() {
     "rm" \
     "add" \
     "remove"
+}
+
+# Print the subactions of `dce config` (show/get/set/ls). Mirrors the dispatch
+# table in scripts/config.sh.
+dce_complete_config_subactions() {
+  printf '%s\n' \
+    "show" \
+    "get" \
+    "set" \
+    "ls"
+}
+
+# Print the writable friendly key names for `dce config get/set` (the settable
+# vocabulary; read-only keys are intentionally not offered for completion).
+dce_complete_config_keys() {
+  printf '%s\n' \
+    "cpus" \
+    "memory" \
+    "scopes" \
+    "ports" \
+    "hide" \
+    "networks"
 }
 
 # Print the candidate targets for `dce doctor`: the five backend names followed by

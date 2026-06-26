@@ -79,6 +79,9 @@ case "$SUBCOMMAND" in
   clean)
     exec "$SCRIPT_DIR/clean.sh" "$@"
     ;;
+  config)
+    exec "$SCRIPT_DIR/config.sh" "$@"
+    ;;
   doctor)
     exec "$SCRIPT_DIR/doctor.sh" "$@"
     ;;

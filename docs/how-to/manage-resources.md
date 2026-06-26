@@ -19,11 +19,21 @@ Omit both flags to use backend defaults (typically unrestricted).
 
 Change limits on an existing project:
 
-1. Edit `~/.config/dce-enclave/<name>/config`
-2. Update `CONTAINER_CPUS` and/or `CONTAINER_MEMORY`
-3. Run `dce rebuild-container <name>`
+```
+dce config set <name> cpus=4
+dce config set <name> memory=8g
+dce rebuild-container <name>
+```
 
-Resource limits are applied at container creation time. Changes to the config file take effect only after `dce rebuild-container` — `dce start` simply starts the existing container with its existing limits.
+Clear a limit back to the backend default by setting it empty:
+
+```
+dce config set <name> cpus=
+```
+
+`dce config` is a thin, validating wrapper over the config file — it stays the source of truth. Use `dce config show <name>` to inspect the current values and `dce config get <name> memory` to read one value for scripting. (You can still edit `~/.config/dce-enclave/<name>/config` by hand, but `dce config set` validates before it writes.)
+
+Resource limits are applied at container creation time. Changes take effect only after `dce rebuild-container <name>` — `dce start` simply starts the existing container with its existing limits. `dce config set` prints a reminder.
 
 Config keys:
 

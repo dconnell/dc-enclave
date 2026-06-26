@@ -71,10 +71,16 @@ pass "scopes dedup + membership"
 
 subs="$(dce_complete_subcommands | sort)"
 for c in new start stop status s list ls shell logs exec restart rm \
-         rebuild-container rebuild-image snapshot snapshots provenance clean network net doctor install version help; do
+         rebuild-container rebuild-image snapshot snapshots provenance clean config network net doctor install version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
 pass "subcommands list"
+
+# config data layer: subactions + writable keys.
+expect_sorted "config subactions" \
+  "$(dce_complete_config_subactions)" get ls set show
+expect_sorted "config keys" \
+  "$(dce_complete_config_keys)" cpus hide memory networks ports scopes
 
 # doctor targets: the five backend names plus configured projects.
 expect_sorted "doctor targets" \
@@ -185,6 +191,19 @@ drive 3 dce provenance alpha "--";      assert_reply "provenance alpha --<TAB>" 
 # network: subactions at position 2.
 drive 2 dce network ""; assert_reply "network <TAB>" \
   add create list ls members remove rm
+
+# config: subactions at position 2; project at 3; key at 4 (get/set).
+drive 2 dce config ""; assert_reply "config <TAB>" get ls set show
+drive 3 dce config show ""; assert_reply "config show <TAB>" alpha beta gamma
+drive 3 dce config get "";  assert_reply "config get <project> <TAB>" alpha beta gamma
+drive 4 dce config get alpha ""; assert_reply "config get alpha <key> <TAB>" \
+  cpus hide memory networks ports scopes
+drive 4 dce config set alpha ""; assert_reply "config set alpha <key> <TAB>" \
+  cpus hide memory networks ports scopes
+# set's value (position 5) is free-form -> no completion.
+drive 5 dce config set alpha cpus ""; assert_empty "config set alpha cpus <val> (free-form)"
+# ls takes no further args.
+drive 3 dce config ls ""; assert_empty "config ls <TAB> (no further args)"
 
 # doctor: one optional target (backend or project). Backends are always offered;
 # configured projects (alpha/beta/gamma) appear too.
@@ -406,7 +425,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dce_subcommands
-    local want="--help --version -h -v clean doctor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm s shell snapshot snapshots start status stop version"
+    local want="--help --version -h -v clean config doctor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm s shell snapshot snapshots start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -439,6 +458,11 @@ if command -v zsh >/dev/null 2>&1; then
     chk snapshot         "*--exclude-volume[exclude specific hidden volume"
     chk snapshot         "--yes[skip the confirmation prompt]"
     chk snapshots        "1:list or project:"
+    # config: dispatched subcommand offers its subactions; get/set offer a key.
+    chk config           "1:subcommand: _dce_config_subactions"
+    words=(config get "") CURRENT=3 SPEC=(); _dce_config
+    [[ "${SPEC[*]}" == *"3:key: _dce_config_keys"* ]] || { print "FAIL: zsh config get should offer a key at slot 3 -> [${SPEC[*]}]"; exit 1 }
+    print "PASS: zsh config dispatch + key spec"
     # rm subcommand branch: completes a project at slot 2 and offers NO create
     # flags (parity with the bash rm path).
     words=(snapshot rm "") CURRENT=3 SPEC=(); _dce_snapshot

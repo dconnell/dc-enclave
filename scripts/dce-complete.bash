@@ -158,6 +158,10 @@ _dce_complete() {
       _dce_complete_network "$cur" "$prev"
       return 0
       ;;
+    config)
+      _dce_complete_config "$cur" "$prev"
+      return 0
+      ;;
     new)
       _dce_complete_new "$cur" "$prev"
       return 0
@@ -359,6 +363,48 @@ _dce_complete_network() {
 
   mapfile -t COMPREPLY < <(compgen -W "--force --ip --subnet --subnet-v6" -- "$cur")
   return 0
+}
+
+# `dce config <show|get|set|ls> <project> [key] [value]`: position 2 is the
+# subaction; position 3 a project; position 4 (get/set) a key name; the value
+# (set position 5+) is free-form. `ls` and `show` take no further completion.
+_dce_complete_config() {
+  local cur="$1" prev="$2"
+
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_config_subactions)" -- "$cur")
+    return 0
+  fi
+
+  local subaction="${COMP_WORDS[2]}"
+
+  case "$subaction" in
+    ls)
+      return 0
+      ;;
+    show)
+      # show takes exactly one project.
+      [[ $COMP_CWORD -eq 3 ]] && _dce_reply_projects "$cur"
+      return 0
+      ;;
+    get)
+      if [[ $COMP_CWORD -eq 3 ]]; then
+        _dce_reply_projects "$cur"
+      elif [[ $COMP_CWORD -eq 4 ]]; then
+        mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_config_keys)" -- "$cur")
+      fi
+      return 0
+      ;;
+    set)
+      if [[ $COMP_CWORD -eq 3 ]]; then
+        _dce_reply_projects "$cur"
+      elif [[ $COMP_CWORD -eq 4 ]]; then
+        # Offer bare key names; the value (incl. key=value) is free-form.
+        mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_config_keys)" -- "$cur")
+      fi
+      return 0
+      ;;
+  esac
 }
 
 complete -F _dce_complete dce

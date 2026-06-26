@@ -55,6 +55,7 @@ _show_summary() {
   echo "  doctor [backend|project]                          Run preflight checks and report pass/fail"
   echo "  network <create|ls|members|rm|add|remove> ...     Manage private networks between containers"
   echo "  install <name> <path>                             Install dotfiles"
+  echo "  config <show|get|set|ls> ...                      Inspect/edit a project's config (validating wrapper)"
   echo "  version                                           Print version (aliases: --version, -v)"
   echo "  help [command]                                    Show this help or detailed help"
   echo ""
@@ -701,6 +702,72 @@ Notes:
 EOF
 }
 
+_show_help_config() {
+  cat <<'EOF'
+Usage: dce config <subcommand> [args]
+
+       dce config show <name>
+       dce config get  <name> <key>
+       dce config set  <name> <key>=<value>
+       dce config set  <name> <key> <value>
+       dce config ls
+
+Description:
+  Inspect and edit a project's config file
+  (~/.config/dce-enclave/<name>/config) without leaving the CLI. The file stays
+  the source of truth; this is a thin, validating wrapper. It needs NO container
+  backend, so it works even when no runtime is running.
+
+  Only user-input keys are writable. Identity/derived/path keys (project,
+  backend, image, repos) are read-only: `set` rejects them so this surface can
+  never desync the container from its managed state. Change those by recreating
+  or rebuilding the project.
+
+  Every value is validated with the same validators `dce new` and
+  `dce rebuild-container` use; every write goes through the hardened config
+  helpers and is then reloaded to prove the file still loads before success is
+  reported.
+
+Subcommands:
+  show <name>               Print a grouped, human-readable view of the config.
+  get  <name> <key>         Print one value. Scalars print the value (empty =
+                            unset); arrays print one element per line. Exit 0
+                            even when unset, so it is scriptable.
+  set  <name> <key>=<value> Validate, atomically write, then reload to prove the
+                            file still loads. Arrays take a comma-separated
+                            value. Both `key=value` and `key value` forms work.
+  ls                        List projects that have a config (no backend needed).
+
+Keys:
+  Writable (set/get):
+    cpus        CPU limit, e.g. 2 or 1.5. Empty = backend default.
+    memory      Memory limit, e.g. 4g or 512m. Empty = backend default.
+    scopes      Overlay scopes, comma-separated (e.g. nodejs,golang).
+    ports       Port mappings, comma-separated (e.g. 3000:3000,8080).
+    hide        Hidden /workspace paths, comma-separated (e.g. node_modules,.cache).
+    networks    Networks, comma-separated; each is name or name:ip.
+  Read-only (get only): project, backend, image, repos.
+
+Examples:
+  dce config show myapp
+  dce config get myapp memory
+  dce config set myapp cpus=4
+  dce config set myapp memory 8g
+  dce config set myapp scopes=nodejs,golang
+  dce config set myapp ports=3000:3000,8080
+  dce config set myapp cpus=                     # clear -> backend default
+  dce config ls
+
+Notes:
+  - Changes to cpus, memory, scopes, ports, hide, or networks take effect only
+    after `dce rebuild-container <name>` (resource limits and mounts are applied
+    at container creation time). A successful `set` prints a reminder.
+  - To create or remove a project (rather than edit its config), use `dce new`
+    or `dce rm`. To change the image or backend, recreate the project.
+  - The config file permissions (mode 600) are preserved across every edit.
+EOF
+}
+
 _show_help_network() {
   cat <<'EOF'
 Usage: dce network <create|ls|members|rm|add|remove> ...
@@ -941,7 +1008,7 @@ Description:
 Arguments:
               [command]  Optional command name to show detailed help for. One of:
               new, start, stop, status, list, shell, logs, exec, restart, rm,
-              rebuild-container, rebuild-image, snapshot, provenance, clean, doctor, network, install, version, help
+              rebuild-container, rebuild-image, snapshot, provenance, clean, config, doctor, network, install, version, help
 
 Aliases:
   --help     Same as 'dce help'
@@ -1000,6 +1067,7 @@ case "$COMMAND" in
   snapshot|snapshots) _show_help_snapshot ;;
   provenance)         _show_help_provenance ;;
   clean)              _show_help_clean ;;
+  config)             _show_help_config ;;
   doctor)             _show_help_doctor ;;
   network|net)        _show_help_network ;;
   install)            _show_help_install ;;

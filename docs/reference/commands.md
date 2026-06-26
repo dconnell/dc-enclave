@@ -23,6 +23,7 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce snapshots list [<name>]` | List snapshots newest-first (project, size, volumes captured, time, base image); optional project scope |
 | `dce provenance <name> [--history\|--all]` | Show image provenance: team/user overlay commits + content fingerprints + base id + build time for the project's image |
 | `dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]` | Reclaim old/orphan image tags, orphan hidden volumes, or snapshots |
+| `dce config <show\|get\|set\|ls> ...` | Inspect/edit a project's config (validating wrapper over the config file); needs no backend |
 | `dce doctor [backend\|project]` | Run read-only preflight checks and report pass/fail per subsystem (nonzero if any fail) |
 | `dce network <create\|ls\|members\|rm\|add\|remove> ...` | Manage private networks between containers (no host port publishing); see [private networks](../how-to/connect-private-networks.md) |
 | `dce install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |

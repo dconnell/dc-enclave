@@ -151,6 +151,9 @@ _dce_dispatch() {
     network|net)
       _dce_network
       ;;
+    config)
+      _dce_config
+      ;;
     new)
       _dce_new
       ;;
@@ -298,6 +301,53 @@ _dce_network() {
   local -a subs
   subs=("${(@f)$(dce_complete_network_subactions)}")
   _describe 'network subcommand' subs
+}
+
+# `dce config <show|get|set|ls> <project> [key] [value]`. Position 1 is the
+# subaction; show/get/set take a project next, get/set take a key after that.
+# The value for set is free-form. ls takes no further args.
+_dce_config() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+
+  local sub="${words[2]}"
+  case "$sub" in
+    ls)
+      _arguments '1:subcommand: _dce_config_subactions'
+      ;;
+    show)
+      _arguments \
+        '1:subcommand: _dce_config_subactions' \
+        '2:project:_dce_projects_simple'
+      ;;
+    get)
+      _arguments \
+        '1:subcommand: _dce_config_subactions' \
+        '2:project:_dce_projects_simple' \
+        '3:key: _dce_config_keys'
+      ;;
+    set)
+      _arguments \
+        '1:subcommand: _dce_config_subactions' \
+        '2:project:_dce_projects_simple' \
+        '3:key: _dce_config_keys'
+      ;;
+    *)
+      _arguments '1:subcommand: _dce_config_subactions'
+      ;;
+  esac
+}
+_dce_config_subactions() {
+  local -a subs
+  subs=("${(@f)$(dce_complete_config_subactions)}")
+  _describe 'config subcommand' subs
+}
+_dce_config_keys() {
+  local -a keys
+  keys=("${(@f)$(dce_complete_config_keys)}")
+  _wanted keys expl 'key' compadd -a keys
 }
 
 _dce_scopes() {

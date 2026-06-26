@@ -94,6 +94,7 @@ run_check "dce help rebuild-image" "$DC_BIN" help rebuild-image
 run_check "dce help snapshot" "$DC_BIN" help snapshot
 run_check "dce help provenance" "$DC_BIN" help provenance
 run_check "dce help clean" "$DC_BIN" help clean
+run_check "dce help config" "$DC_BIN" help config
 run_check "dce help doctor" "$DC_BIN" help doctor
 run_check "dce help network" "$DC_BIN" help network
 run_check "dce help install" "$DC_BIN" help install
