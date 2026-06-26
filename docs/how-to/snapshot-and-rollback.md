@@ -124,8 +124,9 @@ dce snapshots list                # every project, newest-first, with sizes
 dce snapshots list myapp          # scoped to one project
 ```
 
-The table shows the label, project, size, UTC time, and the base image the
-container was running when the snapshot was taken.
+The table shows the label, project, size, volumes captured (e.g. `captured 2`),
+UTC time, and the base image the container was running when the snapshot was
+taken.
 
 ## Restore from a snapshot
 

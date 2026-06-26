@@ -9,6 +9,6 @@ Step-by-step recipes for specific tasks. Each guide is self-contained.
 - [Connect containers with private networks](connect-private-networks.md) — let containers talk without publishing ports.
 - [Connect to host PostgreSQL](connect-host-postgres.md) — reach a host database securely.
 - [Rebuild and recover](rebuild-and-recover.md) — rebuild containers, rotate keys, clean up, remove projects.
-- [Snapshot and roll back](snapshot-and-rollback.md) — save a container's filesystem and restore it after a broken experiment.
+- [Snapshot and roll back](snapshot-and-rollback.md) — save a container's filesystem and hidden volumes as a full restore point, and roll back to it after a broken experiment.
 - [Work with monorepos and multiple repos](work-with-monorepos.md) — single- and multi-container repo layouts.
 - [Set up personal dotfiles](set-up-dotfiles.md) — apply your shell/editor/git config inside containers.

@@ -42,7 +42,7 @@ _show_summary() {
   echo "  exec [--root] <name> <command...>                 Raw one-shot in a running container; no token (docker-exec style)"
   echo "  restart [name ...]                                Restart one or more projects, or all"
   echo "  rm <name> [--yes] [--keep-config] [--keep-volumes]"
-  echo "                                                    Remove a project (container, volumes, config)"
+  echo "                                                    Remove a project (container, volumes, snapshots, config)"
   echo "  rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes]"
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-container <name> --from-snap <label>     Recreate from a snapshot"
@@ -465,6 +465,9 @@ Notes:
     needed:  rm -rf "${DC_REPOS_DIR:-$HOME/repos}/<name>"
   - The generated .devcontainer/devcontainer.json lives under $REPOS_DIR and is
     likewise preserved.
+  - Snapshot artifacts (dce-snap-* images, dce-snapvol-* volumes, and snapshot
+    manifests) are reclaimed too -- they follow --keep-volumes: preserved with
+    the flag, removed without it (the same lifecycle as hidden volumes).
   - To recreate a removed project, run `dce new <name> [scope] ...` again.
   - To wipe only the container filesystem while keeping config and code, use
     `dce rebuild-container <name>` instead.
@@ -497,7 +500,9 @@ Description:
   (dce-snap-<project>-<label>:latest, created by `dce snapshot`). In that mode
   scope derivation and the CONTAINER_IMAGE config rewrite are skipped: the
   snapshot is a one-off restore source, never the project's configured image.
-  Hidden-volume handling (--keep-hidden-volumes) is independent and unchanged.
+  Hidden volumes are ALWAYS isolated on restore: each is mounted from its
+  snapshot volume (populated where captured, empty otherwise), and the live
+  originals are left untouched, so --keep-hidden-volumes has no effect here.
   After a restore the container reads "stale" in `dce list`/`dce status` until
   the next normal rebuild -- this is correct (it genuinely diverges from its
   configured image), not an error.
@@ -552,8 +557,9 @@ Notes:
   - Re-apply dotfiles after rebuild with 'dce install <name> <path>'.
   - You will be prompted to type 'yes' to confirm before destruction
     (use --yes/-y to skip, e.g. for automation).
-  - Snapshots capture the filesystem layer only (image + writable layer), never
-    named volumes. To save a state first, run `dce snapshot <name> [<label>]`.
+  - Snapshots capture the image plus the container's writable layer, and by
+    default also clone each hidden volume (run `dce snapshot <name> [<label>]`
+    with --exclude-volumes for a filesystem-only snapshot).
 EOF
 }
 
@@ -657,8 +663,9 @@ Description:
     active project config). Optional [name] scopes to one project.
 
   Snapshot mode (--snapshots):
-  - Removes dce-snap-* container-filesystem snapshots (created by
-    `dce snapshot`). Optional [name] scopes to one project's snapshots.
+  - Removes dce-snap-* snapshot images AND their dce-snapvol-* snapshot volumes
+    (created by `dce snapshot`). Optional [name] scopes to one project's
+    snapshots.
   - Default `dce clean` NEVER touches snapshots; they are only reclaimed with
     this flag. --dry-run previews the sizes that would be freed.
 
@@ -670,8 +677,9 @@ Options:
               Optional trailing project name narrows cleanup to one project.
 
   --snapshots
-              Operate on container snapshots instead of managed image tags.
-              Optional trailing project name narrows cleanup to one project.
+              Operate on snapshot images + snapshot volumes instead of managed
+              image tags. Optional trailing project name narrows cleanup to one
+              project.
 
   --hidden-volumes and --snapshots are mutually exclusive.
 
@@ -687,7 +695,8 @@ Notes:
   - Managed repos are dce-base and dce-img-<16hex>.
   - Images currently in use may fail to remove; those failures are reported.
   - Hidden volume cleanup removes only orphan managed hidden volumes.
-  - Snapshot cleanup removes only dce-snap-* images (default sweep ignores them).
+  - Snapshot cleanup removes dce-snap-* images and their dce-snapvol-* volumes
+    (the default sweep ignores both).
   - Requires a reachable container backend.
 EOF
 }
@@ -838,10 +847,14 @@ Description:
   any time -- before a risky change, before a rebuild, or simply to preserve a
   state. Restoring one is opt-in via `dce rebuild-container --from-snap`.
 
-  Snapshot semantics are FILESYSTEM-LAYER ONLY: the image plus the container's
-  writable layer. Named volumes (e.g. node_modules, caches) and the bind-mounted
-  repo are NEVER captured. Hidden-volume state after a restore follows the
-  existing --keep-hidden-volumes rebuild logic.
+  Snapshot semantics: the image plus the container's writable layer is always
+  captured, and by default each hidden volume (e.g. node_modules, caches) is
+  cloned into a snapshot-specific volume (the source is mounted READ-ONLY during
+  the copy, so the live volume can never be corrupted). The bind-mounted repo is
+  never captured. Use --exclude-volumes for a filesystem-only snapshot. On
+  restore, hidden volumes are ALWAYS isolated: each comes back populated (if
+  captured) or EMPTY (if excluded / copy failed / added after the snapshot), and
+  the live originals are never reused or touched.
 
   Two distinct workflows share one mechanism:
   - Restore a known-good state: snapshot before you experiment; if it breaks,

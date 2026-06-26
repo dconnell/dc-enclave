@@ -220,11 +220,16 @@ echo "  Backend:    $ACTIVE_BACKEND"
 echo "  Repos:      ${REPOS_DIR:-unknown} (PRESERVED - verify your commits separately)"
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   echo "  Hidden paths: ${CONTAINER_HIDDEN_PATHS[*]}"
-  if $KEEP_HIDDEN_VOLUMES; then
+  if [[ -n "$FROM_SNAP" ]]; then
+    echo "  Hidden volumes: mounted from snapshot volumes (originals left untouched)"
+  elif $KEEP_HIDDEN_VOLUMES; then
     echo "  Hidden volumes: PRESERVED (--keep-hidden-volumes)"
   else
     echo "  Hidden volumes: REMOVED (clean rebuild)"
   fi
+fi
+if [[ -n "$FROM_SNAP" ]] && $KEEP_HIDDEN_VOLUMES; then
+  echo "  (note: --keep-hidden-volumes has no effect in --from-snap mode)"
 fi
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
   echo "  Networks: ${CONTAINER_NETWORKS[*]}"
@@ -456,7 +461,9 @@ else
   echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
 fi
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
-  if $KEEP_HIDDEN_VOLUMES; then
+  if [[ -n "$FROM_SNAP" ]]; then
+    echo "  Hidden volumes: mounted from snapshot volumes (originals untouched)"
+  elif $KEEP_HIDDEN_VOLUMES; then
     echo "  Hidden volumes: preserved (--keep-hidden-volumes)"
   else
     echo "  Hidden volumes: removed (clean rebuild)"

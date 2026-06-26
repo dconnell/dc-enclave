@@ -370,6 +370,26 @@ dce_set_config_array "$CONFIG" CONTAINER_HIDDEN_PATHS "node_modules"
 chmod 600 "$CONFIG" 2>/dev/null || true
 
 # ===========================================================================
+# E2. WS4: under --from-snap the summary must NOT print generic removed/preserved
+#     hidden-volume lines (volumes are mounted from snapshot volumes, not removed
+#     or preserved-as-live). restore.stdout is from section E (single hidden path).
+# ===========================================================================
+if grep -Eq 'Hidden volumes:.*\((clean rebuild|--keep-hidden-volumes)\)' "$WORK/restore.stdout"; then
+  fail "rebuild --from-snap: must not print generic removed/preserved hidden-volume lines
+$(grep -E 'Hidden volumes' "$WORK/restore.stdout")"
+fi
+pass "rebuild --from-snap: no contradictory removed/preserved hidden-volume lines"
+
+# --keep-hidden-volumes has no effect under --from-snap; a note must say so.
+: > "$LOG"
+printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" --from-snap pre --keep-hidden-volumes \
+  >"$WORK/restore_khv.stdout" 2>"$WORK/restore_khv.stderr" \
+  || fail "rebuild --from-snap --keep-hidden-volumes exited non-zero"
+grep -Fqi 'no effect' "$WORK/restore_khv.stdout" \
+  || fail "rebuild --from-snap --keep-hidden-volumes: should note the flag has no effect"
+pass "rebuild --from-snap: notes that --keep-hidden-volumes has no effect"
+
+# ===========================================================================
 # G. snapshot rm / clean --snapshots / dce rm reclaim volumes
 # ===========================================================================
 : > "$LOG"

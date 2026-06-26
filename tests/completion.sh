@@ -439,6 +439,12 @@ if command -v zsh >/dev/null 2>&1; then
     chk snapshot         "*--exclude-volume[exclude specific hidden volume"
     chk snapshot         "--yes[skip the confirmation prompt]"
     chk snapshots        "1:list or project:"
+    # rm subcommand branch: completes a project at slot 2 and offers NO create
+    # flags (parity with the bash rm path).
+    words=(snapshot rm "") CURRENT=3 SPEC=(); _dce_snapshot
+    [[ "${SPEC[*]}" == *"2:project"* ]] || { print "FAIL: zsh snapshot rm should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" != *"--exclude-volumes"* ]] || { print "FAIL: zsh snapshot rm must not offer create flags -> [${SPEC[*]}]"; exit 1 }
+    print "PASS: zsh snapshot rm completes a project, no create flags"
     print "PASS: zsh per-subcommand dispatch specs"
   ' || fail "zsh completion logic/spec test failed"
 else

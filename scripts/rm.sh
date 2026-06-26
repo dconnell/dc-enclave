@@ -115,8 +115,22 @@ else
 fi
 
 if ! $BACKEND_OK; then
-  echo "WARN: Backend not reachable; skipping container/volume removal."
+  echo "WARN: Backend not reachable; skipping container/volume/snapshot removal."
   echo "      Config + secrets will still be removed (unless --keep-config)."
+fi
+
+# Snapshot-artifact disposition for the summary: the snapshot set (image +
+# volume + manifest) is atomic and follows --keep-volumes -- preserved with the
+# flag, reclaimed without it. When the backend is unreachable the sweep cannot
+# run, so any leftover snapshot images/volumes must be reclaimed later by hand.
+if $BACKEND_OK; then
+  if $KEEP_VOLUMES; then
+    SNAP_DISP="PRESERVED (--keep-volumes)"
+  else
+    SNAP_DISP="REMOVED (snapshot images/volumes/manifests, if any)"
+  fi
+else
+  SNAP_DISP="skipped (backend unreachable; reclaim with 'dce clean --snapshots')"
 fi
 
 echo "======================================================================"
@@ -137,9 +151,11 @@ if [[ ${#HIDDEN_PATHS[@]} -gt 0 ]]; then
     echo "                 -> volumes REMOVED"
   fi
 fi
+echo "  Snapshots:      $SNAP_DISP"
 echo "  Host code dir:  ${REPOS_DIR_VAL:-(unknown)}  (NEVER touched by dce rm)"
 echo ""
-echo "This will remove the container, hidden volumes, and config+secrets for '$PROJECT'."
+echo "This will remove the container, hidden volumes, snapshot artifacts, and config+secrets for '$PROJECT'"
+echo "(each step honors its --keep-* flag as shown above)."
 if ! $ASSUME_YES; then
   echo ""
   read -r -p "Type 'yes' to continue: " confirm
@@ -181,13 +197,12 @@ if $BACKEND_OK; then
     done
   fi
 
-  # Reclaim any snapshot images + snapshot volumes + manifests this project
-  # owns (dce-snap-<slug>-* / dce-snapvol-<slug>-*). These leak otherwise until
-  # a manual `dce clean --snapshots`; removing the project should take them too.
-  # (--keep-volumes preserves HIDDEN volumes; snapshots are a separate concern
-  # and are still swept, matching how `dce rm` already removes images by effect
-  # of removing the project. If KEEP_VOLUMES should also spare snapshots, that's
-  # a separate decision; today they are reclaimed.)
+  # Reclaim snapshot artifacts this project owns so they do not leak until a
+  # manual `dce clean --snapshots`. Snapshot objects are an atomic
+  # (image, volume, manifest) set that follows --keep-volumes: preserved with the
+  # flag, reclaimed without it -- the same lifecycle as hidden volumes. When
+  # reclaimed, all three go together so no dangling manifest references a swept
+  # image/volume.
   if ! $KEEP_VOLUMES; then
     proj_slug="$(dce_project_slug "$PROJECT")"
     snapvol_prefix="dce-snapvol-$proj_slug-"
@@ -203,6 +218,10 @@ if $BACKEND_OK; then
       [[ "$img_repo" == "$snapimg_prefix"* ]] || continue
       backend_remove_image "$img_repo:$img_tag" 2>/dev/null && swept=$((swept + 1)) || true
     done < <(backend_list_images 2>/dev/null)
+    # Drop this project's snapshot manifests so reclaimed snapshots leave no
+    # dangling metadata (image + volume + manifest reclaimed together). The
+    # project name is validated above, so the path cannot traverse.
+    rm -rf "$(dce_snapshot_volumes_dir "$PROJECT")" 2>/dev/null || true
     if [[ $swept -gt 0 ]]; then
       echo "==> Removed $swept snapshot image(s)/volume(s) for '$PROJECT'."
     fi

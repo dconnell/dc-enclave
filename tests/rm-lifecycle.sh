@@ -35,6 +35,10 @@ mkdir -p "$STUB_DIR"
 LOG="$WORK/calls.log"
 STATE="$WORK/state"
 mkdir -p "$STATE"
+IMAGES="$WORK/images.lst"
+VOLUMES="$WORK/volumes.lst"
+: > "$IMAGES"
+: > "$VOLUMES"
 
 cat > "$STUB_DIR/docker" <<'STUB'
 #!/usr/bin/env bash
@@ -46,6 +50,12 @@ printf 'CALL %s %s\n' "$me" "$*" >> "$_log"
 # image ls -> controlled tag list (harmless for rm, keeps parity with other stubs).
 if [[ "${1:-}" == "image" && "${2:-}" == "ls" ]]; then
   [[ -f "${DC_STUB_IMAGES:-}" ]] && cat "${DC_STUB_IMAGES:-}"
+  exit 0
+fi
+
+# volume ls --format -> controlled volume-name list (backend_list_volumes).
+if [[ "${1:-}" == "volume" && "${2:-}" == "ls" ]]; then
+  [[ -f "${DC_STUB_VOLUMES:-}" ]] && cat "${DC_STUB_VOLUMES:-}"
   exit 0
 fi
 
@@ -123,6 +133,7 @@ setup_absent_container() {
 run_rm() {
   HOME="$WORK/home" \
   DC_STUB_LOG="$LOG" DC_STUB_STATE="$STATE" \
+  DC_STUB_IMAGES="$IMAGES" DC_STUB_VOLUMES="$VOLUMES" \
   PATH="$STUB_DIR:$ORIG_PATH" \
   bash "$ROOT_DIR/scripts/rm.sh" "$@"
 }
@@ -237,6 +248,91 @@ fi
 [[ ! -d "$SECRET_DIR" ]] || fail "dce rm (absent): config should still be removed"
 [[ -d "$REPOS_DIR" ]] || fail "dce rm (absent): REPOS_DIR must be preserved"
 pass "dce rm: already-absent container skips backend ops, still cleans config"
+
+# ===========================================================================
+# Snapshot-reclaim setup: plant a snapshot image + snapshot volume + manifest
+# owned by the project, so the snapshot-sweep path is observable.
+# ===========================================================================
+setup_snapshots() {
+  setup_project
+  snap_repo="dce-snap-rmproj-pre"
+  snap_ref="$snap_repo:latest"
+  printf '%s\t%s\t%s\n' "$snap_repo" latest id-snap > "$IMAGES"
+  snapvol="$(dce_snapshot_volume_name "$PROJECT" pre node_modules)"
+  printf '%s\n' "$snapvol" > "$VOLUMES"
+  manifest_dir="$(dce_snapshot_volumes_dir "$PROJECT")"
+  mkdir -p "$manifest_dir"
+  printf '%s\t%s\t%s\n' "node_modules" "$snapvol" "captured" > "$manifest_dir/pre.volumes"
+  chmod 600 "$manifest_dir/pre.volumes"
+  : > "$LOG"
+}
+
+# ===========================================================================
+# H. dce rm (no flags): snapshot image + volume reclaimed; config removed too.
+# ===========================================================================
+setup_snapshots
+run_rm "$PROJECT" --yes </dev/null >"$WORK/h.stdout" 2>&1 \
+  || fail "dce rm (snapshots, no flags) exited non-zero"
+grep -Fq "CALL docker image rm $snap_ref" "$LOG" \
+  || fail "dce rm (no flags): snapshot image not removed
+$(grep '^CALL' "$LOG")"
+grep -Fq "CALL docker volume rm $snapvol" "$LOG" \
+  || fail "dce rm (no flags): snapshot volume not removed
+$(grep '^CALL' "$LOG")"
+[[ ! -d "$SECRET_DIR" ]] || fail "dce rm (no flags): config should be removed"
+pass "dce rm (no flags): reclaims snapshot image + volume, removes config"
+
+# ===========================================================================
+# I. dce rm --keep-volumes: snapshot image + volume PRESERVED (no sweep); hidden
+#    volumes also preserved.
+# ===========================================================================
+setup_snapshots
+run_rm "$PROJECT" --yes --keep-volumes </dev/null >"$WORK/i.stdout" 2>&1 \
+  || fail "dce rm --keep-volumes (snapshots) exited non-zero"
+if grep -qE "image rm $snap_ref|volume rm $snapvol" "$LOG"; then
+  fail "dce rm --keep-volumes: must not reclaim snapshot image/volume
+$(grep -E 'image rm|volume rm' "$LOG")"
+fi
+pass "dce rm --keep-volumes: preserves snapshot image + volume"
+
+# ===========================================================================
+# J. dce rm --keep-config (no --keep-volumes): snapshot image + volume + MANIFEST
+#    reclaimed TOGETHER (atomic -- no dangling manifest); config+secrets kept.
+# ===========================================================================
+setup_snapshots
+run_rm "$PROJECT" --yes --keep-config </dev/null >"$WORK/j.stdout" 2>&1 \
+  || fail "dce rm --keep-config (snapshots) exited non-zero"
+grep -Fq "CALL docker image rm $snap_ref" "$LOG" \
+  || fail "dce rm --keep-config: snapshot image not removed
+$(grep '^CALL' "$LOG")"
+grep -Fq "CALL docker volume rm $snapvol" "$LOG" \
+  || fail "dce rm --keep-config: snapshot volume not removed
+$(grep '^CALL' "$LOG")"
+manifest_file="$(dce_snapshot_volumes_dir "$PROJECT")/pre.volumes"
+[[ ! -e "$manifest_file" ]] \
+  || fail "dce rm --keep-config: snapshot manifest must be removed with its image+volume (no orphans)"
+[[ -d "$SECRET_DIR" ]] || fail "dce rm --keep-config: config dir must be preserved"
+[[ -f "$SECRET_DIR/github-token" ]] || fail "dce rm --keep-config: secrets must be preserved"
+pass "dce rm --keep-config: reclaims snapshot image+volume+manifest atomically, keeps config"
+
+# ===========================================================================
+# K. confirmation summary lists snapshot removal when no keep flag is set.
+# ===========================================================================
+setup_snapshots
+run_rm "$PROJECT" </dev/null >"$WORK/k.stdout" 2>&1 || true
+grep -Fqi "Snapshots:" "$WORK/k.stdout" || fail "rm summary: must list snapshot disposition"
+grep -Eqi "Snapshots:.*REMOVED" "$WORK/k.stdout" \
+  || fail "rm summary (no keep flags): snapshot line must say REMOVED"
+pass "dce rm summary: lists snapshot removal when no keep flag is set"
+
+# ===========================================================================
+# L. confirmation summary states snapshots PRESERVED under --keep-volumes.
+# ===========================================================================
+setup_snapshots
+run_rm "$PROJECT" --keep-volumes </dev/null >"$WORK/l.stdout" 2>&1 || true
+grep -Eqi "Snapshots:.*PRESERVED" "$WORK/l.stdout" \
+  || fail "rm summary (--keep-volumes): snapshot line must say PRESERVED"
+pass "dce rm summary: states snapshots PRESERVED under --keep-volumes"
 
 echo ""
 echo "All dce rm lifecycle checks passed."

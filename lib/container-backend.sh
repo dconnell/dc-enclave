@@ -526,6 +526,21 @@ backend_build_image() {
   esac
 }
 
+# True if <needle> appears as an EXACT line in the output of the given command.
+#
+# The output is captured IN FULL before testing, so the reader never exits early
+# and never SIGPIPEs the producer. This replaces the unsafe `<cmd> | grep -Fxq`
+# shape: under `set -o pipefail`, grep's -q early-exit closes the pipe, a large
+# producer (e.g. `image ls` over a full image store) dies on its next write with
+# SIGPIPE (141), and pipefail turns a found match into a false-negative. Captured
+# membership testing has none of that failure mode.
+_backend_list_contains() {
+  local needle="$1"; shift
+  local out=""
+  out="$("$@" 2>/dev/null)" || true
+  [[ $'\n'"$out"$'\n' == *$'\n'"$needle"$'\n'* ]]
+}
+
 # Return whether an image tag exists in the backend's image store.
 # apple/container has several list-flag variants across versions, hence fallbacks.
 backend_image_exists() {
@@ -534,15 +549,20 @@ backend_image_exists() {
   case "$(backend_name)" in
     apple)
       if container image ls --format '{{.Repository}}:{{.Tag}}' >/dev/null 2>&1; then
-        container image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -Fxq "$tag"
+        _backend_list_contains "$tag" container image ls --format '{{.Repository}}:{{.Tag}}'
       elif container images --format '{{.Repository}}:{{.Tag}}' >/dev/null 2>&1; then
-        container images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -Fxq "$tag"
+        _backend_list_contains "$tag" container images --format '{{.Repository}}:{{.Tag}}'
       else
-        container image ls 2>/dev/null | awk '{print $1 ":" $2}' | grep -Fxq "$tag"
+        # Raw-table fallback for older apple/container: reformat to repo:tag and
+        # exact-match against the captured output (no early-exit reader).
+        local raw="" rows=""
+        raw="$(container image ls 2>/dev/null)" || raw=""
+        rows="$(printf '%s\n' "$raw" | awk '{print $1 ":" $2}')" || rows=""
+        [[ $'\n'"$rows"$'\n' == *$'\n'"$tag"$'\n'* ]]
       fi
       ;;
     docker|orbstack|colima|podman)
-      "$(backend_cli)" image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -Fxq "$tag"
+      _backend_list_contains "$tag" "$(backend_cli)" image ls --format '{{.Repository}}:{{.Tag}}'
       ;;
   esac
 }
@@ -798,10 +818,12 @@ backend_exists() {
 
   case "$(backend_name)" in
     apple)
-      container ps -a 2>/dev/null | awk '{print $1}' | grep -Fxq "$name"
+      local out=""
+      out="$(container ps -a 2>/dev/null | awk '{print $1}')" || out=""
+      [[ $'\n'"$out"$'\n' == *$'\n'"$name"$'\n'* ]]
       ;;
     docker|orbstack|colima|podman)
-      "$(backend_cli)" ps -a --format '{{.Names}}' 2>/dev/null | grep -Fxq "$name"
+      _backend_list_contains "$name" "$(backend_cli)" ps -a --format '{{.Names}}'
       ;;
   esac
 }
@@ -812,10 +834,12 @@ backend_is_running() {
 
   case "$(backend_name)" in
     apple)
-      container ps 2>/dev/null | awk '{print $1}' | grep -Fxq "$name"
+      local out=""
+      out="$(container ps 2>/dev/null | awk '{print $1}')" || out=""
+      [[ $'\n'"$out"$'\n' == *$'\n'"$name"$'\n'* ]]
       ;;
     docker|orbstack|colima|podman)
-      "$(backend_cli)" ps --format '{{.Names}}' 2>/dev/null | grep -Fxq "$name"
+      _backend_list_contains "$name" "$(backend_cli)" ps --format '{{.Names}}'
       ;;
   esac
 }

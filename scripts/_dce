@@ -232,6 +232,13 @@ _dce_clean() {
 # `dce snapshot <project> [<label>] [--exclude-volumes] [--exclude-volume <p>]
 # [--yes|-y]` (create) or `dce snapshot rm <project> <label>` (remove).
 _dce_snapshot() {
+  # `snapshot rm <project> <label>`: complete a project at the next slot; the
+  # label is free-form and no create flags apply on the rm path. After the
+  # top-level *:: reset, $words[1] is "snapshot", so the rm token is $words[2].
+  if [[ "${words[2]}" == "rm" ]]; then
+    _arguments '2:project: _dce_projects_simple'
+    return 0
+  fi
   _arguments \
     '1:project or rm: _dce_snapshot_first' \
     '--exclude-volumes[skip ALL hidden-volume capture]' \

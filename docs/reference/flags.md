@@ -53,7 +53,7 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 | `<name>` *(required)* | Project/container name. Must already exist. |
 | `--rotate-keys` | Regenerate the SSH deploy key before recreating (old key backed up, new `.pub` printed, command pauses for you to update GitHub). |
 | `--keep-hidden-volumes` | Preserve hidden volumes instead of removing them (default removes them for a clean slate). Combining with `--rotate-keys` triggers a loud warning. |
-| `--from-snap <label>` | Recreate from the snapshot `dce-snap-<name>-<label>:latest` instead of the scope-derived image. Bypasses scope derivation and does NOT rewrite `CONTAINER_IMAGE`. Restores the filesystem layer only; hidden-volume state follows `--keep-hidden-volumes`. See [snapshots & rollback](../how-to/snapshot-and-rollback.md). |
+| `--from-snap <label>` | Recreate from the snapshot `dce-snap-<name>-<label>:latest` instead of the scope-derived image. Bypasses scope derivation and does NOT rewrite `CONTAINER_IMAGE`. Hidden volumes are ALWAYS isolated on restore: each is mounted from its snapshot volume (populated where captured, empty otherwise) and the live originals are left untouched, so `--keep-hidden-volumes` has no effect here. See [snapshots & rollback](../how-to/snapshot-and-rollback.md). |
 | `--yes`, `-y` | Skip the confirmation prompt (for scripted incident response). |
 
 ## `dce rebuild-image` — rebuild managed images
@@ -75,7 +75,7 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 |---|---|
 | `--dry-run` | Show what would be removed (and how much space) without deleting. |
 | `--hidden-volumes [name]` | Operate on orphan hidden volumes instead of managed image tags. Optional trailing project name narrows scope to one project. |
-| `--snapshots [name]` | Operate on `dce-snap-*` container snapshots instead of managed image tags. Optional trailing project name narrows scope to one project. Default `dce clean` never touches snapshots. Mutually exclusive with `--hidden-volumes`. |
+| `--snapshots [name]` | Operate on `dce-snap-*` snapshot images and their `dce-snapvol-*` snapshot volumes instead of managed image tags. Optional trailing project name narrows scope to one project. Default `dce clean` never touches snapshots. Mutually exclusive with `--hidden-volumes`. |
 
 ## `dce snapshot` / `dce snapshots` — container snapshots
 
