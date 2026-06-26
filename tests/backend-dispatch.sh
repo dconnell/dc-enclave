@@ -125,6 +125,14 @@ dispatch_expected() {
       [[ "$backend" == apple ]] && s="container exec --uid 0 myproj whoami" || s="$bin exec -u 0 myproj whoami" ;;
     exec_stdin)       s="$bin exec -i myproj whoami" ;;
     exec_interactive) s="$bin exec -it --env K=V myproj whoami" ;;
+    volume_copy)
+      # Source mounted read-only; helper is dce-base:latest run as uid 0; the
+      # recipe is a pure-reader tar pipe. apple uses --mount readonly (its -v
+      # documents no :ro suffix); docker-family uses -v src:/from:ro.
+      local recipe='tar -C /from -cf - . | tar -C /to -xf -'
+      [[ "$backend" == apple ]] \
+        && s="container run --rm --uid 0 --mount type=volume,source=volsrc,target=/from,readonly --mount type=volume,source=voldst,target=/to dce-base:latest sh -c $recipe" \
+        || s="$bin run --rm -u 0 -v volsrc:/from:ro -v voldst:/to dce-base:latest sh -c $recipe" ;;
     *) fail "dispatch_expected: unknown func $func" ;;
   esac
   printf '%s\n' "$s"
@@ -153,13 +161,14 @@ call_func() {
     exec_as_root)     backend_exec_as_root myproj whoami ;;
     exec_stdin)       backend_exec_stdin myproj whoami ;;
     exec_interactive) backend_exec_interactive myproj --env K=V -- whoami ;;
+    volume_copy)      backend_volume_copy volsrc voldst ;;
     *) fail "call_func: unknown func $1" ;;
   esac
 }
 
 FUNCS=(build_image image_exists image_id list_images remove_image list_volumes remove_volume \
        list_running list_all exists is_running create start stop logs delete \
-       exec exec_as_root exec_stdin exec_interactive)
+       exec exec_as_root exec_stdin exec_interactive volume_copy)
 
 # ---------------------------------------------------------------------------
 # Matrix: every backend x every dispatch function.

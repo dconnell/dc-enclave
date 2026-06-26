@@ -718,7 +718,52 @@ backend_remove_volume() {
       container volume rm "$volume_name" >/dev/null 2>&1
       ;;
     docker|orbstack|colima|podman)
-      "$(backend_cli)" volume rm "$volume_name" >/dev/null
+      "$(backend_cli)" volume rm "$volume_name" >/dev/null 2>&1
+      ;;
+  esac
+}
+
+# Copy the full contents of <src_volume> into <dst_volume>, preserving
+# ownership and permissions. Used by `dce snapshot --include-volumes` to clone a
+# hidden volume into a snapshot-specific volume isolated from the live original.
+#
+# Safety contract:
+#   - The SOURCE is mounted READ-ONLY. The copy helper runs as root (uid 0) to
+#     read every file; a read-only source makes it structurally impossible for a
+#     copy-recipe bug to corrupt the LIVE volume a normal rebuild depends on.
+#     "The source container is stopped" only blocks app writes, not helper
+#     writes, so RO is the meaningful guarantee.
+#   - The helper image is dce-base:latest (guaranteed present when a dce project
+#     exists; ships tar/coreutils). The recipe is a pure-reader tar pipe; tar -p
+#     preserves dev:dev (and any root:root) ownership, so no re-chown is needed.
+#   - Named volumes are auto-created on reference, so <dst_volume> exists after
+#     this call even on failure (as an empty volume) -- the desired degraded
+#     state when a copy fails.
+#
+# Returns the helper's exit code (non-zero on copy failure). apple/container has
+# no native volume-to-volume copy (`container cp` is container<->host only), so
+# every backend uses the same temp-container recipe; only the mount flag differs
+# (apple's `-v` documents no `:ro` suffix, so `--mount ... readonly` is used).
+backend_volume_copy() {
+  local src="$1"
+  local dst="$2"
+
+  local backend=""
+  backend="$(backend_name)" || return 1
+
+  local recipe='tar -C /from -cf - . | tar -C /to -xf -'
+
+  case "$backend" in
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" run --rm -u 0 \
+        -v "$src":/from:ro -v "$dst":/to \
+        dce-base:latest sh -c "$recipe" >/dev/null
+      ;;
+    apple)
+      container run --rm --uid 0 \
+        --mount type=volume,source="$src",target=/from,readonly \
+        --mount type=volume,source="$dst",target=/to \
+        dce-base:latest sh -c "$recipe" >/dev/null
       ;;
   esac
 }

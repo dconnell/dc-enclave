@@ -1,24 +1,100 @@
 # Snapshot and roll back a container
 
-A **snapshot** commits a container's filesystem to a tagged image, saving a
-state you can return to later. It's an independent operation you can run at any
-time — before a risky change, before a `dce rebuild-container`, or simply to
-preserve a state you want to keep around — without touching your host repos.
-Restoring one is opt-in (`dce rebuild-container --from-snap`); snapshots are
-otherwise inert until you reclaim them.
+A **snapshot** commits a container's filesystem (and, by default, its hidden
+volumes) to a tagged image, saving a state you can return to later. It's an
+independent operation you can run at any time — before a risky change, before a
+`dce rebuild-container`, or simply to preserve a state you want to keep around —
+without touching your host repos. Restoring one is opt-in
+(`dce rebuild-container --from-snap`); snapshots are otherwise inert until you
+reclaim them.
 
 ## What a snapshot captures (and doesn't)
 
-A snapshot is **filesystem-layer only**: the image plus the container's writable
-layer. It never captures:
+A snapshot captures:
 
-- **named (hidden) volumes** — e.g. `node_modules`, build caches. Those are
-  governed by the existing `--keep-hidden-volumes` rebuild logic.
+- the **filesystem image** (the container's image plus its writable layer), and
+- each **hidden volume** (`node_modules`, caches) by default — cloned into a
+  snapshot-specific volume so a restore brings back dependency/cache state too.
+
+It never captures:
+
 - **the bind-mounted repo** — your host working tree was never at risk anyway.
 
-So `--from-snap` restores the filesystem layer; hidden-volume state follows
-whatever `--keep-hidden-volumes` (or its absence) decides. Snapshots live in the
-active backend's local image store only — they are not pushed to a registry.
+So `--from-snap` restores the filesystem and the captured volumes, leaving the
+live originals untouched. (Use `--exclude-volumes` to skip volume capture — see
+below.) Snapshots live in the active backend's local image store only — they are
+not pushed to a registry.
+
+## Hidden volumes are captured by default
+
+A snapshot is a complete restore point: it captures the filesystem image AND
+each hidden volume (`node_modules`, caches) — so a restore brings back your
+dependency/cache state too, not just the filesystem. You don't need a flag:
+
+```
+dce snapshot myapp before-rust-upgrade
+```
+
+This clones each hidden volume into a snapshot-specific volume
+(`dce-snapvol-*`), in the same stop window as the filesystem commit. Two
+guarantees:
+
+- **The source is mounted read-only during the copy.** The copy runs as root; a
+  read-only source makes it structurally impossible for a copy bug to corrupt
+  the live volume your normal rebuilds depend on.
+- **A restore always isolates volumes.** `dce rebuild-container --from-snap
+  <label>` mounts the captured volumes (populated) and leaves the live originals
+  untouched. It reports each volume as **populated** or **empty**. A volume is
+  empty with a warning if it was excluded (below), the copy failed, or the path
+  was added after the snapshot — it is never silently reused from the live
+  volumes, and restore never fails fast over a missing volume.
+
+A failed volume copy does **not** abort the snapshot: the filesystem image still
+succeeds, the failed volume is left empty, and a WARNING names the path to
+reinstall. `dce snapshots list` shows `captured N` (and any failures/excluded)
+per snapshot.
+
+Because copying volumes is slow and uses disk proportional to their size, the
+command lists the volumes it will copy and asks for confirmation first:
+
+```
+This snapshot will copy 2 hidden volume(s):
+  - node_modules
+  - .cache
+Copying is proportional to their size and may be slow / use significant disk.
+Type 'yes' to continue:
+```
+
+`--yes`/`-y` skips the prompt (for scripting). The prompt only appears when
+volumes will actually be copied.
+
+### When you don't need the volumes: `--exclude-volumes`
+
+Volume capture copies the full contents of every hidden volume, so it costs time
+and disk proportional to your deps. For a fast, small snapshot where you only
+care about the filesystem, exclude volumes:
+
+```
+dce snapshot myapp quick-config --exclude-volumes
+```
+
+Excluded volumes come back EMPTY on restore (with a note) — they are not reused
+from the live volumes, and no confirmation prompt appears (nothing to copy).
+
+To exclude just **some** volumes (everything except the giant `node_modules`),
+use `--exclude-volume`, which is repeatable and accepts a comma-separated list:
+
+```
+dce snapshot myapp deps-but-no-nm --exclude-volume node_modules
+dce snapshot myapp --exclude-volume node_modules,.cache
+```
+
+Capture is the default precisely because a snapshot that doesn't capture your
+actual working state isn't a full restore point.
+
+Snapshot volumes are full copies, not deltas — reclaim them with `dce clean
+--snapshots` (the default `dce clean` and `dce clean --hidden-volumes` ignore
+them).
 
 ## Two workflows, one mechanism
 
@@ -63,13 +139,12 @@ does **not** rewrite `CONTAINER_IMAGE`. Afterward the container reads "stale" in
 `dce list` / `dce status` until the next normal rebuild — this is correct (the
 container genuinely diverges from its configured image), not an error.
 
-Restore is filesystem-layer only. To keep `node_modules` and other hidden-volume
-state across the restore, add `--keep-hidden-volumes` (independent of the
-snapshot):
-
-```
-dce rebuild-container myapp --from-snap before-rust-upgrade --keep-hidden-volumes
-```
+Restore always isolates hidden volumes: each comes back **populated** (if the
+snapshot captured it) or **empty** with a warning (if it was excluded, the copy
+failed, or the path was added after the snapshot). The live originals are never
+reused and never touched — `--keep-hidden-volumes` does not apply to a snapshot
+restore. The restore prints each volume's disposition so you know which need a
+reinstall.
 
 ## Reclaim disk
 

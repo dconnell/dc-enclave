@@ -47,7 +47,7 @@ _show_summary() {
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-container <name> --from-snap <label>     Recreate from a snapshot"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
-  echo "  snapshot <name> [<label>]                         Snapshot container FS to a tagged image"
+  echo "  snapshot <name> [<label>] [--exclude-volumes] [--yes]   Snapshot container FS + hidden volumes"
   echo "  snapshots list [<name>]                           List snapshots (with sizes)"
   echo "  provenance <name> [--history|--all]               Show image provenance (overlay commits + build state)"
   echo "  clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]"
@@ -525,8 +525,12 @@ Options:
                 Recreate from the snapshot `dce-snap-<name>-<label>:latest`
                 instead of the scope-derived image. Bypasses scope derivation
                 and does NOT rewrite CONTAINER_IMAGE. The snapshot must exist
-                (run `dce snapshots list <name>`). Restores the filesystem
-                layer only; hidden-volume state follows --keep-hidden-volumes.
+                (run `dce snapshots list <name>`). Hidden volumes are ALWAYS
+                isolated from the live originals: each comes back populated (if
+                the snapshot captured it) or EMPTY with a warning (if the
+                snapshot used --exclude-volumes, a copy failed, or the path was
+                added after the snapshot). Restore reports each volume
+                populated/empty and never reuses the live volumes.
 
    --yes, -y    Skip the confirmation prompt. Use this for scripted
                 incident-response flows. The destruction/recreation still
@@ -848,17 +852,37 @@ Description:
 Subcommands:
   snapshot <project> [<label>]
               Stop -> commit -> restart the project container, producing
-              dce-snap-<project>-<label>:latest. <label> defaults to a sortable
+              dce-snap-<project>-<label>:latest, AND clone each hidden volume
+              (node_modules, caches) into dce-snapvol-<project>-<label>-<hash>.
+              The source volume is mounted READ-ONLY during the copy, so the
+              live volume can never be corrupted. <label> defaults to a sortable
               timestamp (YYYYmmdd-HHMMSS). Refuses to overwrite an existing
-              label. Label charset: [A-Za-z0-9_.-].
+              label. Label charset: [A-Za-z0-9_.-]. A failed volume copy does
+              NOT abort the snapshot: the path is restored empty with a WARNING.
+
+              Because copying volumes is slow / disk-heavy, the command lists
+              the volumes to copy and asks for confirmation first.
+
+  snapshot <project> <label> --exclude-volumes
+              Skip ALL volume capture (filesystem image only). Excluded volumes
+              come back EMPTY on restore -- never silently reused from the live
+              volumes. No confirmation prompt.
+
+  snapshot <project> <label> --exclude-volume <path[,path...]>
+              Exclude specific hidden volumes only (repeatable, comma-separated);
+              the rest are captured. Useful for "everything except the huge
+              node_modules". Unknown paths are warned and ignored.
+
+  --yes, -y   Skip the confirmation prompt (for scripting). The snapshot still
+              proceeds exactly as in the interactive path.
 
   snapshot rm <project> <label>
-              Remove one snapshot image (convenience for `dce clean --snapshots`).
+              Remove one snapshot image, its captured volumes, and its manifest.
 
   snapshots list [<project>]
-              List snapshots newest-first with project, size, UTC time, and the
-              base image the container was running. Optional <project> scopes to
-              that project.
+              List snapshots newest-first with project, size, volumes captured,
+              UTC time, and the base image the container was running. Optional
+              <project> scopes to that project.
 
 Arguments:
   <project>   Project/container name. Must already exist (and for `snapshot`,
@@ -867,8 +891,10 @@ Arguments:
   [<label>]   Optional snapshot label. Defaults to a sortable UTC timestamp.
 
 Examples:
-  dce snapshot myapp                         # label defaults to a timestamp
-  dce snapshot myapp before-rust-upgrade
+  dce snapshot myapp                                    # prompt, then capture all
+  dce snapshot myapp before-rust-upgrade --yes
+  dce snapshot myapp quick-config --exclude-volumes
+  dce snapshot myapp deps-but-no-nm --exclude-volume node_modules
   dce snapshots list
   dce snapshots list myapp
   dce snapshot rm myapp before-rust-upgrade
@@ -881,8 +907,12 @@ Notes:
   - Snapshots live in the active backend's local image store only; they are not
     pushed to a registry.
   - `--from-snap` is a one-off restore: it never rewrites CONTAINER_IMAGE.
+  - A restore ALWAYS isolates hidden volumes: each comes back populated (if
+    captured) or EMPTY with a warning (if excluded, a copy failed, or the path
+    was added after the snapshot). The live originals are never reused and never
+    touched. Restore reports each volume populated/empty.
   - Reclaim disk with `dce clean --snapshots [<project>]` (default `dce clean`
-    ignores snapshots).
+    ignores snapshots and snapshot volumes).
 EOF
 }
 

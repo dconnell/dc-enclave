@@ -141,6 +141,10 @@ if [[ -n "$FROM_SNAP" ]]; then
     echo "Run: dce snapshots list $PROJECT"
     exit 1
   fi
+  # Under --from-snap, hidden volumes are ALWAYS isolated from the live
+  # originals: each is mounted from a snapshot volume (populated if the snapshot
+  # captured it, EMPTY otherwise), and the originals are left untouched. This
+  # never fails fast over a missing volume and never reuses the live volume.
   # Deliberately do NOT call dce_load_global_config / dce_image_ref_from_scopes
   # and do NOT write CONTAINER_IMAGE back to config: a snapshot is a one-off
   # restore source, not the project's configured image.
@@ -207,6 +211,8 @@ echo "  Container:  ${CONTAINER_PROJECT}"
 echo "  Image:      ${CONTAINER_IMAGE:-unknown}"
 if [[ -n "$FROM_SNAP" ]]; then
   echo "  Source:     snapshot '$FROM_SNAP' (CONTAINER_IMAGE is NOT rewritten)"
+  echo "  Volumes:    snapshot volumes (populated where captured, empty otherwise;"
+  echo "              originals left untouched)"
 else
   echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
 fi
@@ -277,7 +283,12 @@ else
   echo "  (already gone)"
 fi
 
-if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+if [[ -n "$FROM_SNAP" ]]; then
+  # Snapshot restore: hidden volumes are mounted from snapshot volumes at create
+  # (populated or empty), so leave the live originals intact -- they are the
+  # operator's pre-restore state to keep. Dispositions are reported after create.
+  echo "  -> Snapshot restore: preserving original hidden volumes."
+elif [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   if ! dce_rebuild_handle_hidden_volumes "$PROJECT" "$KEEP_HIDDEN_VOLUMES" "${CONTAINER_HIDDEN_PATHS[@]}"; then
     exit 1
   fi
@@ -320,7 +331,14 @@ if [[ -n "${NPMRC_PATH:-}" ]]; then
 fi
 for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]:-}"; do
   [[ -z "$hidden_path" ]] && continue
-  hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
+  if [[ -n "$FROM_SNAP" ]]; then
+    # Snapshot restore: mount the deterministic snapshot volume (populated if
+    # captured; auto-created empty otherwise). Never the live original, never a
+    # hard failure -- dispositions are reported after create.
+    hidden_volume="$(dce_snapshot_volume_name "$PROJECT" "$FROM_SNAP" "$hidden_path")"
+  else
+    hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
+  fi
   VOLUME_ARGS+=(--volume "$hidden_volume:/workspace/$hidden_path")
 done
 
@@ -351,6 +369,23 @@ fi
 
 backend_create "$PROJECT" "$CONTAINER_IMAGE" "${TZ_ARGS[@]}" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
 echo "  ✓ Container created"
+
+# Under a snapshot restore, report each hidden volume's disposition so the
+# operator knows which are populated vs empty (excluded / copy failed / added
+# after the snapshot). All come from snapshot volumes, never the live originals.
+if [[ -n "$FROM_SNAP" ]] && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+  echo "  -> Hidden volume dispositions:"
+  for _hp in "${CONTAINER_HIDDEN_PATHS[@]}"; do
+    [[ -z "$_hp" ]] && continue
+    _state="$(dce_snapshot_volume_state "$PROJECT" "$FROM_SNAP" "$_hp")"
+    case "$_state" in
+      captured) echo "     ✓ populated: $_hp" ;;
+      failed)   echo "     ! empty (copy failed): $_hp  -- reinstall deps here" ;;
+      excluded) echo "     ~ empty (excluded from snapshot): $_hp" ;;
+      *)        echo "     ~ empty (not in snapshot): $_hp" ;;
+    esac
+  done
+fi
 
 # Re-attach every network beyond the primary so the rebuilt container lands on
 # the same private networks (with the same static IPs) as before.

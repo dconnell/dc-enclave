@@ -70,6 +70,7 @@ run_check "compose layering checks" "$ROOT_DIR/tests/compose-layering.sh"
 run_check "backend dispatch matrix" "$ROOT_DIR/tests/backend-dispatch.sh"
 run_check "new/rebuild lifecycle checks" "$ROOT_DIR/tests/new-container-lifecycle.sh"
 run_check "snapshot checks" "$ROOT_DIR/tests/snapshots.sh"
+run_check "snapshot-volume checks" "$ROOT_DIR/tests/snapshot-volumes.sh"
 run_check "internal-networking checks" "$ROOT_DIR/tests/networks.sh"
 
 echo ""

@@ -180,6 +180,33 @@ if $BACKEND_OK; then
       fi
     done
   fi
+
+  # Reclaim any snapshot images + snapshot volumes + manifests this project
+  # owns (dce-snap-<slug>-* / dce-snapvol-<slug>-*). These leak otherwise until
+  # a manual `dce clean --snapshots`; removing the project should take them too.
+  # (--keep-volumes preserves HIDDEN volumes; snapshots are a separate concern
+  # and are still swept, matching how `dce rm` already removes images by effect
+  # of removing the project. If KEEP_VOLUMES should also spare snapshots, that's
+  # a separate decision; today they are reclaimed.)
+  if ! $KEEP_VOLUMES; then
+    proj_slug="$(dce_project_slug "$PROJECT")"
+    snapvol_prefix="dce-snapvol-$proj_slug-"
+    snapimg_prefix="dce-snap-$proj_slug-"
+    swept=0
+    while IFS= read -r listed_obj; do
+      [[ -z "$listed_obj" ]] && continue
+      [[ "$listed_obj" == "$snapvol_prefix"* ]] || continue
+      backend_remove_volume "$listed_obj" 2>/dev/null && swept=$((swept + 1)) || true
+    done < <(backend_list_volumes 2>/dev/null)
+    while IFS=$'\t' read -r img_repo img_tag _; do
+      [[ -z "$img_repo" ]] && continue
+      [[ "$img_repo" == "$snapimg_prefix"* ]] || continue
+      backend_remove_image "$img_repo:$img_tag" 2>/dev/null && swept=$((swept + 1)) || true
+    done < <(backend_list_images 2>/dev/null)
+    if [[ $swept -gt 0 ]]; then
+      echo "==> Removed $swept snapshot image(s)/volume(s) for '$PROJECT'."
+    fi
+  fi
 fi
 
 if ! $KEEP_CONFIG; then

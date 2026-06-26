@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
 # =============================================================================
 # scripts/snapshot.sh - `dce snapshot` / `dce snapshots`: save a project
-# container's filesystem to a tagged image so you can get back to that state
-# later.
+# container's filesystem AND hidden volumes to a tagged image so you can get
+# back to that state later.
 #
-# A snapshot commits a project container's filesystem (image + writable layer;
-# never named volumes or the bind-mounted repo) to a tagged image. It is an
-# independent operation you can run at any time -- before a risky change, before
-# a rebuild, or simply to preserve a state -- and snapshots live in the active
-# backend's local image store only. Restoring one is opt-in via
+# A snapshot is a complete restore point: it commits the container's filesystem
+# (image + writable layer) to dce-snap-<slug>-<label>:latest AND, by default,
+# clones each hidden volume into dce-snapvol-<slug>-<label>-<hash> (source
+# mounted read-only). It never captures the bind-mounted repo (host state). It
+# is an independent operation you can run at any time -- before a risky change,
+# before a rebuild, or simply to preserve a state -- and snapshots live in the
+# active backend's local image store only. Restoring one is opt-in via
 # `dce rebuild-container --from-snap`.
 #
 # Surface (one dispatcher, three modes):
-#   dce snapshot  <project> [<label>]         commit the container FS to
+#   dce snapshot  <project> [<label>] [--exclude-volumes]
+#                                             commit the container FS (+ hidden
+#                                             volumes by default) to
 #                                             dce-snap-<slug>-<label>:latest
 #   dce snapshot  rm <project> <label>        remove one snapshot image
 #   dce snapshots list [<project>]            list snapshots (with sizes)
 #
-# Semantics are filesystem-layer only. A snapshot is stop -> commit -> start
-# (export / a clean commit require a stopped container on every backend).
-# Restore is via `dce rebuild-container <project> --from-snap <label>`, which
-# recreates from the snapshot without rewriting CONTAINER_IMAGE. Reclamation is
+# A snapshot is stop -> commit -> start (export / a clean commit require a
+# stopped container on every backend); volume copies run in the same stop
+# window. Restore is via `dce rebuild-container <project> --from-snap <label>`,
+# which always isolates hidden volumes (populated where captured, empty
+# otherwise) without rewriting CONTAINER_IMAGE. Reclamation is
 # manual via `dce clean --snapshots [<project>]`; the default `dce clean` sweep
 # already ignores dce-snap-* repos.
 # =============================================================================
@@ -43,30 +48,54 @@ source "$ROOT_DIR/lib/container-backend.sh"
 
 USAGE() {
   cat <<'EOF'
-Usage: dce snapshot <project> [<label>]
+Usage: dce snapshot <project> [<label>] [--exclude-volumes] [--exclude-volume <path>...] [--yes|-y]
        dce snapshot rm <project> <label>
        dce snapshots list [<project>]
 
-Commit a project container's filesystem to a tagged image, saving a state you
-can return to later -- before a risky change, before a rebuild, or any time you
-want a save point. Filesystem-layer only: the image plus the writable layer.
-Named volumes (node_modules, caches) and the bind-mounted repo are NEVER
-captured.
+Commit a project container's filesystem AND hidden volumes to a tagged image,
+saving a state you can return to later -- before a risky change, before a
+rebuild, or any time you want a save point. A snapshot is a complete restore
+point: the image plus each hidden volume (node_modules, caches) cloned into a
+snapshot-specific volume. The bind-mounted repo is NEVER captured (it is host
+state).
 
   snapshot <project> [<label>]
           Stop -> commit -> restart the container, producing
-          dce-snap-<project>-<label>:latest. <label> defaults to a sortable
-          timestamp (YYYYmmdd-HHMMSS). Refuses to overwrite an existing label.
+          dce-snap-<project>-<label>:latest, and clone each hidden volume into
+          dce-snapvol-<project>-<label>-<hash> with the source mounted READ-ONLY
+          (a copy bug can never corrupt the live volume). <label> defaults to a
+          sortable timestamp (YYYYmmdd-HHMMSS). Refuses to overwrite an existing
+          label. A failed volume copy does NOT abort the snapshot: the path is
+          recorded failed and restored empty with a WARNING.
+
+          Because volume capture copies each volume (slow / disk-heavy), the
+          command lists the volumes it will copy and asks for confirmation
+          first. --yes/-y skips the prompt.
+
+  snapshot <project> <label> --exclude-volumes
+          Skip ALL volume capture (filesystem image only). Excluded volumes come
+          back EMPTY on restore -- never silently reused from the live volumes.
+          No confirmation prompt (nothing to copy).
+
+  snapshot <project> <label> --exclude-volume <path[,path...]>
+          Exclude specific hidden volumes only (repeatable; comma-separated).
+          The rest are captured. Useful for "everything except the huge
+          node_modules". Unknown paths are warned and ignored.
 
   snapshot rm <project> <label>
-          Remove one snapshot image. Convenience for `dce clean --snapshots`.
+          Remove one snapshot image, its captured volumes, and its manifest.
 
   snapshots list [<project>]
-          List snapshots (newest-first), with project, base image, time, and
-          size. Optional <project> scopes to that project.
+          List snapshots (newest-first), with project, size, volumes captured,
+          time, and base image. Optional <project> scopes to that project.
 
 Restore a snapshot with:
   dce rebuild-container <project> --from-snap <label>
+
+A restore always isolates hidden volumes: each comes back populated (if
+captured) or EMPTY with a warning (if excluded, the copy failed, or the path was
+added after the snapshot). The live originals are left untouched. Restore never
+reuses the live volumes and never fails fast over a missing volume.
 
 Reclaim snapshots with:
   dce clean --snapshots [<project>] [--dry-run]
@@ -89,19 +118,80 @@ _fmt_size() {
   fi
 }
 
+# One-line volume summary for a snapshot, read from its manifest: "captured N"
+# (+ " (M failed)" / " (E excluded)" as relevant), or "" when there are no
+# hidden paths (filesystem image only, no manifest).
+_vol_summary() {
+  local project="$1" label="$2"
+  local manifest=""
+  manifest="$(dce_snapshot_volumes_manifest "$project" "$label")"
+  [[ -f "$manifest" ]] || { printf ''; return 0; }
+  local cap=0 fail=0 exc=0 p="" state=""
+  while IFS=$'\t' read -r p _ state || [[ -n "$p" ]]; do
+    case "$state" in
+      captured) cap=$((cap + 1)) ;;
+      failed)   fail=$((fail + 1)) ;;
+      excluded) exc=$((exc + 1)) ;;
+    esac
+  done < "$manifest"
+  [[ $cap -gt 0 || $fail -gt 0 || $exc -gt 0 ]] || return 0
+  local out="captured $cap"
+  [[ $fail -gt 0 ]] && out+=" ($fail failed)"
+  [[ $exc  -gt 0 ]] && out+=" ($exc excluded)"
+  printf '%s' "$out"
+}
+
 # --- create -------------------------------------------------------------------
 do_create() {
   local project="" label=""
-  project="${1:-}"
-  label="${2:-}"
+  local exclude_volumes=false
+  local assume_yes=false
+  local -a exclude_volume_args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --exclude-volumes)
+        exclude_volumes=true
+        shift
+        ;;
+      --exclude-volume)
+        [[ $# -ge 2 && "$2" != --* ]] || {
+          echo "ERROR: --exclude-volume requires a path (or comma-separated list)." >&2
+          USAGE >&2
+          exit 1
+        }
+        exclude_volume_args+=("$2")
+        shift 2
+        ;;
+      --yes|-y)
+        assume_yes=true
+        shift
+        ;;
+      --help|-h)
+        USAGE
+        exit 0
+        ;;
+      --*)
+        echo "ERROR: Unknown option: $1" >&2
+        USAGE >&2
+        exit 1
+        ;;
+      *)
+        if [[ -z "$project" ]]; then
+          project="$1"
+        elif [[ -z "$label" ]]; then
+          label="$1"
+        else
+          echo "ERROR: Unexpected argument: $1" >&2
+          USAGE >&2
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
 
   [[ -n "$project" ]] || { echo "ERROR: snapshot requires a <project>." >&2; USAGE >&2; exit 1; }
-
-  if [[ $# -gt 2 ]]; then
-    echo "ERROR: Unexpected argument(s): ${*:3}" >&2
-    USAGE >&2
-    exit 1
-  fi
 
   if [[ -z "$label" ]]; then
     label="$(date -u +%Y%m%d-%H%M%S)"
@@ -146,13 +236,80 @@ do_create() {
     exit 1
   fi
 
+  # Resolve the per-path exclusion set from --exclude-volume args. Each must be a
+  # configured hidden path; an unknown one is warned and ignored (no-op). Bare
+  # --exclude-volumes excludes all (handled separately via $exclude_volumes).
+  declare -A exclude_set=()
+  if [[ ${#exclude_volume_args[@]} -gt 0 ]]; then
+    declare -A known_hidden=()
+    local _hp=""
+    for _hp in "${CONTAINER_HIDDEN_PATHS[@]:-}"; do
+      [[ -n "$_hp" ]] && known_hidden["$_hp"]=1
+    done
+    local _arg="" _part=""
+    for _arg in "${exclude_volume_args[@]}"; do
+      IFS=',' read -r -a _parts <<< "$_arg"
+      for _part in "${_parts[@]}"; do
+        # trim surrounding whitespace
+        _part="${_part#"${_part%%[![:space:]]*}"}"
+        _part="${_part%"${_part##*[![:space:]]}"}"
+        [[ -z "$_part" ]] && continue
+        if [[ -n "${known_hidden[$_part]:-}" ]]; then
+          exclude_set["$_part"]=1
+        else
+          echo "WARN: --exclude-volume '$_part' is not a configured hidden path; ignoring." >&2
+        fi
+      done
+    done
+  fi
+
+  # The set of hidden volumes that will actually be copied (drives the
+  # confirmation prompt and the copy loop). Empty when --exclude-volumes or when
+  # every path is selectively excluded.
+  local -a copy_paths=()
+  if ! $exclude_volumes; then
+    local _cp=""
+    for _cp in "${CONTAINER_HIDDEN_PATHS[@]:-}"; do
+      [[ -z "$_cp" ]] && continue
+      [[ -n "${exclude_set[$_cp]:-}" ]] && continue
+      copy_paths+=("$_cp")
+    done
+  fi
+
+  # Confirmation gate: only when volumes will actually be copied (the expensive
+  # part). Skipped for --exclude-volumes / no hidden paths / all selectively
+  # excluded, and with --yes/-y. Mirrors rebuild-container / dce rm.
+  if [[ ${#copy_paths[@]} -gt 0 ]] && ! $assume_yes; then
+    echo "This snapshot will copy ${#copy_paths[@]} hidden volume(s):"
+    local _vp=""
+    for _vp in "${copy_paths[@]}"; do
+      echo "  - $_vp"
+    done
+    echo "Copying is proportional to their size and may be slow / use significant disk."
+    echo "(Use --exclude-volumes or --exclude-volume <path> to skip volumes;"
+    echo " --yes/-y skips this prompt.)"
+    read -r -p "Type 'yes' to continue: " _confirm
+    if [[ "$_confirm" != "yes" ]]; then
+      echo "Aborted."
+      exit 0
+    fi
+  fi
+
   local was_running=false
   if backend_is_running "$project"; then
     was_running=true
   fi
 
   echo "==> Snapshotting '$project' -> $snap_ref (backend: $backend)"
-  echo "    Filesystem-layer only (named volumes and the repo are not captured)."
+  if [[ ${#copy_paths[@]} -eq 0 ]]; then
+    if $exclude_volumes || [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+      echo "    Filesystem image only (hidden volumes excluded; restored empty)."
+    else
+      echo "    Filesystem image (no hidden volumes to capture)."
+    fi
+  else
+    echo "    Filesystem image + hidden volumes."
+  fi
 
   if $was_running; then
     echo "==> Stopping container (a clean commit requires a stopped container)..."
@@ -179,6 +336,76 @@ do_create() {
     exit 1
   fi
 
+  # --- Hidden-volume capture (DEFAULT; --exclude-volumes / --exclude-volume) -
+  # Volumes are part of an overall snapshot: by default each hidden volume is
+  # cloned into a snapshot-specific volume with the source mounted READ-ONLY, in
+  # the SAME stop window as the FS commit (no second stop). The filesystem image
+  # is the primary artifact and already succeeded, so volume capture is
+  # best-effort: a copy failure does NOT abort -- it records the path as
+  # `failed` (restore mounts an empty volume + WARNING). Excluded paths
+  # (--exclude-volumes for all, or --exclude-volume for specific ones) are
+  # recorded `excluded` (no copy; restore mounts empty + note). The manifest is
+  # the COMPLETE per-path disposition so a restore never silently reuses the
+  # live originals and can report populated vs empty per path.
+  local vol_captured=0 vol_failed=0 vol_excluded=0
+  if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+    local manifest_dir="" manifest_file=""
+    manifest_dir="$(dce_snapshot_volumes_dir "$project")"
+    manifest_file="$(dce_snapshot_volumes_manifest "$project" "$label")"
+    mkdir -p "$manifest_dir"
+
+    if [[ ${#copy_paths[@]} -eq 0 ]]; then
+      echo ""
+      echo "==> Skipping hidden volumes (excluded; restored empty)..."
+    else
+      echo ""
+      echo "==> Capturing hidden volumes (source mounted read-only)..."
+    fi
+    local manifest_tmp=""
+    manifest_tmp="$(mktemp)"
+    local hp="" src_vol="" dst_vol=""
+    for hp in "${CONTAINER_HIDDEN_PATHS[@]}"; do
+      [[ -z "$hp" ]] && continue
+      dst_vol="$(dce_snapshot_volume_name "$project" "$label" "$hp")"
+
+      # Excluded (all via --exclude-volumes, or selectively via --exclude-volume).
+      if $exclude_volumes || [[ -n "${exclude_set[$hp]:-}" ]]; then
+        printf '%s\t%s\t%s\n' "$hp" "$dst_vol" "excluded" >> "$manifest_tmp"
+        vol_excluded=$((vol_excluded + 1))
+        echo "  ~ Excluded: $hp (restored empty)"
+        continue
+      fi
+
+      src_vol="$(dce_hidden_volume_name "$project" "$hp")"
+      if ! dce_hidden_volume_exists "$src_vol"; then
+        # Source absent: record failed. Restore mounts dst (auto-created empty
+        # on reference) -- isolated, never the original.
+        printf '%s\t%s\t%s\n' "$hp" "$dst_vol" "failed" >> "$manifest_tmp"
+        vol_failed=$((vol_failed + 1))
+        echo "  WARNING: hidden volume '$src_vol' not present for '$hp';"
+        echo "           restored with an empty volume (reinstall deps there)."
+        continue
+      fi
+
+      if backend_volume_copy "$src_vol" "$dst_vol"; then
+        printf '%s\t%s\t%s\n' "$hp" "$dst_vol" "captured" >> "$manifest_tmp"
+        vol_captured=$((vol_captured + 1))
+        echo "  ✓ Captured: $hp -> $dst_vol"
+      else
+        # dst was auto-created (empty) on reference; record failed and continue.
+        printf '%s\t%s\t%s\n' "$hp" "$dst_vol" "failed" >> "$manifest_tmp"
+        vol_failed=$((vol_failed + 1))
+        echo "  WARNING: volume copy failed for '$hp';"
+        echo "           restored with an empty volume (reinstall deps there)."
+        echo "           (source was mounted read-only; the live volume is unchanged.)"
+      fi
+    done
+
+    # Atomic install of the manifest, owner-only (parity with project config).
+    mv "$manifest_tmp" "$manifest_file"
+    chmod 600 "$manifest_file"
+  fi
+
   if $was_running; then
     echo "==> Restarting container..."
     backend_start "$project"
@@ -194,6 +421,14 @@ do_create() {
 
   echo ""
   echo "  ✓ Snapshot created: $snap_ref"
+  if [[ $vol_captured -gt 0 || $vol_failed -gt 0 || $vol_excluded -gt 0 ]]; then
+    local vol_note="Volumes: captured $vol_captured"
+    [[ $vol_failed -gt 0 ]] && vol_note+=" ($vol_failed failed -> empty)"
+    [[ $vol_excluded -gt 0 ]] && vol_note+=" ($vol_excluded excluded -> empty)"
+    echo "  $vol_note"
+    echo "  Restore mounts snapshot volumes, leaving the originals untouched;"
+    echo "  dce rebuild-container $project --from-snap $label reports each as populated/empty."
+  fi
   echo ""
   echo "Restore with:"
   echo "    dce rebuild-container $project --from-snap $label"
@@ -233,6 +468,27 @@ do_rm() {
 
   backend_remove_image "$snap_ref"
   echo "Removed snapshot: $snap_ref"
+
+  # Reclaim any snapshot volumes this label captured (dce-snapvol-<slug>-<label>-*)
+  # and the manifest. Prefix is constructed from known slug+label, so internal
+  # dashes in the label don't matter.
+  local slug=""
+  slug="$(dce_project_slug "$project")"
+  local vol_prefix="dce-snapvol-$slug-$label-"
+  local listed_vol="" removed_vols=0
+  while IFS= read -r listed_vol; do
+    [[ -z "$listed_vol" ]] && continue
+    [[ "$listed_vol" == "$vol_prefix"* ]] || continue
+    if backend_remove_volume "$listed_vol" 2>/dev/null; then
+      removed_vols=$((removed_vols + 1))
+    fi
+  done < <(backend_list_volumes 2>/dev/null)
+  [[ $removed_vols -gt 0 ]] && echo "Removed $removed_vols snapshot volume(s)."
+
+  local manifest_file=""
+  manifest_file="$(dce_snapshot_volumes_manifest "$project" "$label")"
+  # rm -f tolerates a missing manifest (filesystem-only snapshot has none).
+  rm -f "$manifest_file"
 }
 
 # --- list ---------------------------------------------------------------------
@@ -312,12 +568,15 @@ do_list() {
     fi
 
     local ref="$repo:$tag"
-    local size="" base="" utc=""
+    local size="" base="" utc="" vols=""
     size="$(backend_image_size "$ref" 2>/dev/null || true)"
     base="$(backend_image_label "$ref" "dce.snapshot.base" 2>/dev/null || true)"
     utc="$(backend_image_label "$ref" "dce.snapshot.utc" 2>/dev/null || true)"
+    if [[ -n "$matched_project" && "$matched_project" != "(orphan)" ]]; then
+      vols="$(_vol_summary "$matched_project" "$label")"
+    fi
 
-    rows+=("$(printf '%s\t%s\t%s\t%s\t%s' "$label" "$matched_project" "$base" "$utc" "$size")")
+    rows+=("$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$label" "$matched_project" "$base" "$utc" "$size" "$vols")")
   done < <(backend_list_images 2>/dev/null)
 
   echo "Snapshots (backend: $backend):"
@@ -333,16 +592,17 @@ do_list() {
   fi
 
   echo ""
-  printf '  %-20s %-18s %-10s %-22s %s\n' "LABEL" "PROJECT" "SIZE" "UTC" "BASE"
+  printf '  %-20s %-18s %-10s %-22s %-16s %s\n' "LABEL" "PROJECT" "SIZE" "UTC" "VOLUMES" "BASE"
   # Newest-first: sort by label descending (the default timestamp label is sortable).
   local row=""
   while IFS= read -r row; do
     [[ -z "$row" ]] && continue
-    local rlabel="" rproj="" rbase="" rutc="" rsize=""
-    IFS=$'\t' read -r rlabel rproj rbase rutc rsize <<< "$row"
+    local rlabel="" rproj="" rbase="" rutc="" rsize="" rvols=""
+    IFS=$'\t' read -r rlabel rproj rbase rutc rsize rvols <<< "$row"
     [[ -z "$rbase" ]] && rbase="-"
     [[ -z "$rutc" ]] && rutc="-"
-    printf '  %-20s %-18s %-10s %-22s %s\n' "$rlabel" "$rproj" "$(_fmt_size "$rsize")" "$rutc" "$rbase"
+    [[ -z "$rvols" ]] && rvols="-"
+    printf '  %-20s %-18s %-10s %-22s %-16s %s\n' "$rlabel" "$rproj" "$(_fmt_size "$rsize")" "$rutc" "$rvols" "$rbase"
   done < <(printf '%s\n' "${rows[@]}" | sort -t$'\t' -k1,1r)
 
   echo ""
@@ -364,12 +624,8 @@ case "${1:-}" in
     USAGE
     ;;
   *)
-    # create: $1 is the project (treat a leading unknown --flag as an error).
-    if [[ "${1:-}" == --* ]]; then
-      echo "ERROR: Unknown option: $1" >&2
-      USAGE >&2
-      exit 1
-    fi
+    # create: $1 is the project (or a leading --exclude-volumes/--help). Flags
+    # are parsed by do_create, so don't pre-reject them here.
     do_create "$@"
     ;;
 esac

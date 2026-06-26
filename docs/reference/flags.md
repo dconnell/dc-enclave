@@ -81,9 +81,12 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 
 | Form / arg | Description |
 |---|---|
-| `snapshot <name> [<label>]` | Stop → commit → restart the container, producing `dce-snap-<name>-<label>:latest`. `<label>` defaults to a sortable UTC timestamp (`YYYYmmdd-HHMMSS`); charset `[A-Za-z0-9_.-]`. Refuses to overwrite an existing label. Filesystem-layer only (image + writable layer; never named volumes or the repo). |
-| `snapshot rm <name> <label>` | Remove one snapshot image. |
-| `snapshots list [<name>]` | List snapshots newest-first with project, size, UTC time, and base image. Optional `<name>` scopes to one project. |
+| `snapshot <name> [<label>]` | Stop → commit → restart the container, producing `dce-snap-<name>-<label>:latest`, AND clone each hidden volume into `dce-snapvol-<name>-<label>-<hash>`. `<label>` defaults to a sortable UTC timestamp (`YYYYmmdd-HHMMSS`); charset `[A-Za-z0-9_.-]`. Refuses to overwrite an existing label. The source volume is mounted **read-only** during the copy, so the live volume can't be corrupted. A failed copy does NOT abort — the path is restored empty with a WARNING. Because copying is slow/disk-heavy, the command lists the volumes to copy and **prompts for confirmation** first. |
+| `--exclude-volumes` | Skip ALL hidden-volume capture (filesystem image only). Excluded volumes come back EMPTY on restore — never silently reused from the live volumes. No confirmation prompt (nothing to copy). |
+| `--exclude-volume <path[,path...]>` | Exclude specific hidden volumes only (repeatable, comma-separated); the rest are captured. Useful for "everything except the huge `node_modules`". Unknown paths are warned and ignored. |
+| `--yes`, `-y` | Skip the confirmation prompt (for scripting). |
+| `snapshot rm <name> <label>` | Remove one snapshot image, its captured volumes, and its manifest. |
+| `snapshots list [<name>]` | List snapshots newest-first with project, size, volumes captured, UTC time, and base image. Optional `<name>` scopes to one project. |
 
 Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never rewrites `CONTAINER_IMAGE`). See [snapshots & rollback](../how-to/snapshot-and-rollback.md).
 

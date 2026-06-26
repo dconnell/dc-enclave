@@ -240,7 +240,20 @@ if $CLEAN_SNAPSHOTS; then
     fi
   done < <(backend_list_images)
 
-  if [[ ${#REMOVE_SNAPS[@]} -eq 0 ]]; then
+  # Snapshot volumes (dce-snapvol-*) are reclaimed alongside images. They are
+  # named dce-snapvol-<slug>-<label>-<hash>; scope by the same project slug.
+  vol_prefix="dce-snapvol-"
+  if [[ -n "$TARGET_PROJECT" ]]; then
+    vol_prefix="dce-snapvol-$(dce_project_slug "$TARGET_PROJECT")-"
+  fi
+  REMOVE_SNAPVOLS=()
+  while IFS= read -r vol_name; do
+    [[ -z "$vol_name" ]] && continue
+    [[ "$vol_name" == "$vol_prefix"* ]] || continue
+    REMOVE_SNAPVOLS+=("$vol_name")
+  done < <(backend_list_volumes 2>/dev/null)
+
+  if [[ ${#REMOVE_SNAPS[@]} -eq 0 && ${#REMOVE_SNAPVOLS[@]:-0} -eq 0 ]]; then
     if [[ -n "$TARGET_PROJECT" ]]; then
       echo "No snapshots found for project '$TARGET_PROJECT'."
     else
@@ -260,6 +273,12 @@ if $CLEAN_SNAPSHOTS; then
       printf '  - %s\n' "$ref"
     fi
   done
+  if [[ ${#REMOVE_SNAPVOLS[@]} -gt 0 ]]; then
+    echo "The following snapshot volumes will be removed:"
+    for vol_name in "${REMOVE_SNAPVOLS[@]}"; do
+      printf '  - %s\n' "$vol_name"
+    done
+  fi
 
   if $DRY_RUN; then
     echo ""
@@ -278,10 +297,22 @@ if $CLEAN_SNAPSHOTS; then
     fi
   done
 
+  vol_removed=0
+  vol_failed=0
+  for vol_name in "${REMOVE_SNAPVOLS[@]}"; do
+    if backend_remove_volume "$vol_name" 2>/dev/null; then
+      vol_removed=$((vol_removed + 1))
+    else
+      vol_failed=$((vol_failed + 1))
+    fi
+  done
+
   echo ""
-  echo "Snapshot cleanup complete. Removed: $removed"
-  if [[ $failed -gt 0 ]]; then
-    echo "Could not remove: $failed"
+  echo "Snapshot cleanup complete. Images removed: $removed"
+  [[ $failed -gt 0 ]] && echo "Could not remove (images): $failed"
+  if [[ ${#REMOVE_SNAPVOLS[@]} -gt 0 ]]; then
+    echo "Volumes removed: $vol_removed"
+    [[ $vol_failed -gt 0 ]] && echo "Could not remove (volumes, may be in use): $vol_failed"
   fi
   exit 0
 fi

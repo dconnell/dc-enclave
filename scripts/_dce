@@ -229,11 +229,15 @@ _dce_clean() {
   fi
 }
 
-# `dce snapshot <project> [<label>]` (create) or `dce snapshot rm <project>
-# <label>` (remove). Position 1 offers `rm` plus project names; beyond it,
-# labels are free-form (no completion).
+# `dce snapshot <project> [<label>] [--exclude-volumes] [--exclude-volume <p>]
+# [--yes|-y]` (create) or `dce snapshot rm <project> <label>` (remove).
 _dce_snapshot() {
-  _arguments '1:project or rm: _dce_snapshot_first'
+  _arguments \
+    '1:project or rm: _dce_snapshot_first' \
+    '--exclude-volumes[skip ALL hidden-volume capture]' \
+    '*--exclude-volume[exclude specific hidden volume(s)]:path:' \
+    '--yes[skip the confirmation prompt]' \
+    '-y[skip the confirmation prompt]'
 }
 _dce_snapshot_first() {
   compadd rm

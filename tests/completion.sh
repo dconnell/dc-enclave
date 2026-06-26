@@ -226,6 +226,11 @@ drive 4 dce clean --snapshots alpha "--"; assert_reply "clean --snapshots alpha 
 # snapshot / snapshots: position 1 offers rm/list + projects; labels are free.
 drive 2 dce snapshot ""; assert_reply "snapshot <TAB>" rm alpha beta gamma
 drive 3 dce snapshot rm ""; assert_reply "snapshot rm <project> <TAB>" alpha beta gamma
+# --exclude-volumes / --exclude-volume / --yes are offered once a project is present.
+drive 3 dce snapshot alpha "--exc"; assert_reply "snapshot alpha --exc <TAB>" --exclude-volume --exclude-volumes
+drive 3 dce snapshot alpha "--yes"; assert_reply "snapshot alpha --yes <TAB>" --yes
+# empty prefix offers all create flags, including the -y short form.
+drive 3 dce snapshot alpha ""; assert_reply "snapshot alpha <TAB>" --exclude-volume --exclude-volumes --yes -y
 drive 2 dce snapshots ""; assert_reply "snapshots <TAB>" list alpha beta gamma
 drive 3 dce snapshots list ""; assert_reply "snapshots list <project> <TAB>" alpha beta gamma
 
@@ -430,6 +435,9 @@ if command -v zsh >/dev/null 2>&1; then
     chk new              "--ip+["
     chk rebuild-container "--from-snap+[recreate from snapshot"
     chk snapshot         "1:project or rm:"
+    chk snapshot         "--exclude-volumes[skip ALL hidden-volume capture]"
+    chk snapshot         "*--exclude-volume[exclude specific hidden volume"
+    chk snapshot         "--yes[skip the confirmation prompt]"
     chk snapshots        "1:list or project:"
     print "PASS: zsh per-subcommand dispatch specs"
   ' || fail "zsh completion logic/spec test failed"

@@ -238,9 +238,10 @@ _dce_complete_clean() {
   COMPREPLY=("${reply[@]}")
 }
 
-# `dce snapshot <project> [<label>]` (create) or `dce snapshot rm <project>
-# <label>` (remove). Position 2 offers `rm` and project names; after `rm`,
-# position 3 is a project and position 4 a free-form label.
+# `dce snapshot <project> [<label>] [--exclude-volumes]` (create) or `dce
+# snapshot rm <project> <label>` (remove). Position 2 offers `rm` and project
+# names; --exclude-volumes is offered on the create path; after `rm`, position 3
+# is a project and position 4 a free-form label.
 _dce_complete_snapshot() {
   local cur="$1" prev="$2"
 
@@ -273,7 +274,17 @@ _dce_complete_snapshot() {
     return 0
   fi
 
-  # create with a second positional: label is free-form.
+  # create path: offer the create flags once a project is present.
+  local -a sflags=()
+  [[ -z "$cur" || "--exclude-volumes" == "$cur"* ]] && sflags+=("--exclude-volumes")
+  [[ -z "$cur" || "--exclude-volume" == "$cur"* ]] && sflags+=("--exclude-volume")
+  [[ -z "$cur" || "--yes" == "$cur"* ]] && sflags+=("--yes")
+  [[ -z "$cur" || "-y" == "$cur"* ]] && sflags+=("-y")
+  # --exclude-volume consumes a value (a hidden path); don't complete more flags
+  # immediately after it.
+  if [[ "$prev" != "--exclude-volume" ]]; then
+    COMPREPLY+=("${sflags[@]}")
+  fi
   return 0
 }
 

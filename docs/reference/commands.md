@@ -18,7 +18,7 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes]` | Destroy and recreate container from selected image |
 | `dce rebuild-container <name> --from-snap <label>` | Recreate container from a saved snapshot (one-off restore; does not rewrite the configured image) |
 | `dce rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
-| `dce snapshot <name> [<label>]` | Snapshot a container's filesystem to a tagged image (`dce-snap-<name>-<label>:latest`); filesystem-layer only — see [snapshots & rollback](../how-to/snapshot-and-rollback.md) |
+| `dce snapshot <name> [<label>] [--exclude-volumes] [--exclude-volume <path>] [--yes]` | Snapshot a container's filesystem AND hidden volumes to a tagged image (`dce-snap-<name>-<label>:latest` + `dce-snapvol-*`); source volumes are copied read-only; prompts before copying unless `--yes`; `--exclude-volumes`/`--exclude-volume` skip volumes — see [snapshots & rollback](../how-to/snapshot-and-rollback.md) |
 | `dce snapshot rm <name> <label>` | Remove one snapshot image |
 | `dce snapshots list [<name>]` | List snapshots (with project, size, time, base image); optional project scope |
 | `dce provenance <name> [--history\|--all]` | Show image provenance: team/user overlay commits + content fingerprints + base id + build time for the project's image |
