@@ -1304,6 +1304,27 @@ dce_path_is_group_or_other_writable() {
   [[ -n "$(find "$path" -maxdepth 0 \( -perm -020 -o -perm -002 \) -print 2>/dev/null)" ]]
 }
 
+# Echo the octal permission bits of a file (e.g. "600") for portable re-application.
+# Tries GNU `stat -c %a` then BSD/macOS `stat -f %Lp` (same fallback-chain idiom as
+# dce_sha256_hex), so the same call works on Linux, macOS, and WSL2. Returns 1 if
+# neither stat dialect is available; callers should fall back to 600 (the canonical
+# project-config mode written by new-container.sh).
+dce_file_mode_octal() {
+  local file="$1"
+  local mode=""
+  mode="$(stat -c %a "$file" 2>/dev/null || true)"
+  if [[ -n "$mode" ]]; then
+    printf '%s' "$mode"
+    return 0
+  fi
+  mode="$(stat -f %Lp "$file" 2>/dev/null || true)"
+  if [[ -n "$mode" ]]; then
+    printf '%s' "$mode"
+    return 0
+  fi
+  return 1
+}
+
 # Scan the content of a double-quoted value and return 0 if an UNESCAPED command
 # substitution token ($ or backtick) is present. Escaped forms (\$, \`) are
 # treated as literal data and ignored, since the serializer emits those for any
@@ -1618,7 +1639,8 @@ dce_config_extract_scalar() {
 # Rewrites via a temp file and atomic mv, serializing the value through the shared
 # dce_escape_config_value helper (escapes backslash/quote/$/backtick, rejects
 # control characters) so the value round-trips inertly through dce_load_project_config.
-# Appends the key if absent.
+# Appends the key if absent. Preserves the original file's permission bits (mv does
+# not, so without this the rewrite would relax 600 -> umask default).
 dce_set_config_key() {
   local config_file="$1"
   local key="$2"
@@ -1626,6 +1648,9 @@ dce_set_config_key() {
 
   local escaped=""
   escaped="$(dce_escape_config_value "$value")" || return 1
+
+  local orig_mode=""
+  orig_mode="$(dce_file_mode_octal "$config_file" 2>/dev/null || true)"
 
   local tmp_file="${config_file}.tmp.$$"
   local updated=0
@@ -1646,6 +1671,7 @@ dce_set_config_key() {
     printf '%s="%s"\n' "$key" "$escaped" >> "$tmp_file"
   fi
 
+  chmod "${orig_mode:-600}" "$tmp_file"
   mv "$tmp_file" "$config_file"
 }
 
@@ -1653,11 +1679,15 @@ dce_set_config_key() {
 # Elements are serialized with `printf '%q'` exactly as new-container.sh emits
 # them, so the result round-trips inertly through dce_load_project_config. An empty
 # element list writes `KEY=()`. Uses mktemp (not a PID-based name) for the atomic
-# rewrite. Returns non-zero if the temp file cannot be created.
+# rewrite. Preserves the original file's permission bits (see dce_set_config_key).
+# Returns non-zero if the temp file cannot be created.
 dce_set_config_array() {
   local config_file="$1"
   local key="$2"
   shift 2
+
+  local orig_mode=""
+  orig_mode="$(dce_file_mode_octal "$config_file" 2>/dev/null || true)"
 
   local tmp_file=""
   tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")" || return 1
@@ -1688,5 +1718,6 @@ dce_set_config_array() {
     fi
   } > "$tmp_file"
 
+  chmod "${orig_mode:-600}" "$tmp_file"
   mv "$tmp_file" "$config_file"
 }
