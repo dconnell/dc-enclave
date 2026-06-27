@@ -5,13 +5,16 @@
 #
 # Covers the lib/devcontainer.sh API (expected/recorded canonical state,
 # detect_drift, render, sync) at the unit level with crafted JSON fixtures,
-# plus end-to-end behavior of the `dce config sync-vscode` subcommand and the
-# drift notice emitted by `dce rebuild-container`. No real backend is contacted:
-# rebuild uses the same stubbed-CLI harness as tests/new-container-lifecycle.sh.
+# plus end-to-end behavior of the `dce config sync-vscode` subcommand and drift
+# notices emitted by both `dce rebuild-container` and `dce new` (pre-existing
+# devcontainer.json branch). No real backend is contacted: rebuild/new use the
+# same stubbed-CLI harness style as tests/new-container-lifecycle.sh.
 #
 # jq policy: detection is jq-optional (grep fallback); sync REQUIRES jq. The
-# sync subtests skip-with-reason when jq is absent, and a dedicated subtest
-# forces the grep fallback by shadowing jq with a failing stub.
+# sync subtests skip-with-reason when jq is absent, and dedicated subtests
+# force both branches in jq-present environments:
+#   - grep fallback for detection by shadowing jq with a failing stub;
+#   - hard missing-jq rejection for sync-vscode by masking `command -v jq`.
 # =============================================================================
 set -euo pipefail
 
@@ -356,8 +359,16 @@ run_config() {
 }
 
 if ! command -v jq >/dev/null 2>&1; then
-  echo "SKIP: config sync-vscode subtests require jq (not installed)"
-  pass "dce config sync-vscode (skipped — jq not installed)"
+  # Native no-jq environment: sync-vscode must fail with a clear dependency
+  # message (this branch is real in minimal host installs).
+  if run_config sync-vscode "$PROJ2" >/dev/null 2>"$WORK/nojq-native.err"; then
+    fail "config sync-vscode: missing jq must be rejected when jq is absent"
+  fi
+  grep -Fqi 'requires jq' "$WORK/nojq-native.err" \
+    || fail "config sync-vscode: missing-jq error must mention jq"
+  grep -Fqi 'optional everywhere else' "$WORK/nojq-native.err" \
+    || fail "config sync-vscode: missing-jq error should mention optional-everywhere-else policy"
+  pass "dce config sync-vscode: missing-jq guard (native no-jq env)"
 else
   # (F1) sync-vscode updates managed fields + preserves user extensions.
   run_config sync-vscode "$PROJ2" >"$WORK/c.out" 2>"$WORK/c.err" \
@@ -376,18 +387,46 @@ else
   [[ "$(dce_sha256_file "$DC2")" == "$before" ]] \
     || fail "config sync-vscode --dry-run modified the file"
 
-  # (F3) apple backend is rejected.
-  sed -i 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$SECRET2/config" 2>/dev/null \
-    || printf 'CONTAINER_BACKEND="apple"\n' >> "$SECRET2/config"
+  # (F3) missing jq is rejected (forced branch even when jq is installed).
+  NOJQ_ENV="$WORK/nojq.bashenv"
+  cat > "$NOJQ_ENV" <<'NOJQ'
+command() {
+  if [[ "$1" == "-v" && "${2:-}" == "jq" ]]; then
+    return 1
+  fi
+  builtin command "$@"
+}
+NOJQ
+  if HOME="$WORK/home" BASH_ENV="$NOJQ_ENV" bash "$ROOT_DIR/scripts/config.sh" \
+      sync-vscode "$PROJ2" >/dev/null 2>"$WORK/nojq.err"; then
+    fail "config sync-vscode: missing jq must be rejected"
+  fi
+  grep -Fqi 'requires jq' "$WORK/nojq.err" \
+    || fail "config sync-vscode: missing-jq error must mention jq"
+  grep -Fqi 'optional everywhere else' "$WORK/nojq.err" \
+    || fail "config sync-vscode: missing-jq error should mention optional-everywhere-else policy"
+
+  # (F4) apple backend is rejected.
+  dce_set_config_key "$SECRET2/config" CONTAINER_BACKEND "apple"
   if run_config sync-vscode "$PROJ2" >/dev/null 2>"$WORK/apple.err"; then
     fail "config sync-vscode: apple backend must be rejected"
   fi
   grep -Fqi 'docker-compatible' "$WORK/apple.err" \
     || fail "config sync-vscode: apple rejection message must mention docker-compatible"
-  sed -i 's/CONTAINER_BACKEND="apple"/CONTAINER_BACKEND="docker"/' "$SECRET2/config" 2>/dev/null \
-    || true
+  dce_set_config_key "$SECRET2/config" CONTAINER_BACKEND "docker"
 
-  # (F4) missing devcontainer.json is rejected with guidance.
+  # (F5) malformed JSON is rejected without mutating the input file.
+  printf '{ "forwardPorts": [1111 }\n' > "$DC2"
+  bad_before="$(dce_sha256_file "$DC2")"
+  if run_config sync-vscode "$PROJ2" >/dev/null 2>"$WORK/badjson.err"; then
+    fail "config sync-vscode: malformed devcontainer.json must error"
+  fi
+  grep -Fqi 'valid JSON' "$WORK/badjson.err" \
+    || fail "config sync-vscode: malformed-json error should mention valid JSON"
+  [[ "$(dce_sha256_file "$DC2")" == "$bad_before" ]] \
+    || fail "config sync-vscode: malformed JSON input must remain unchanged"
+
+  # (F6) missing devcontainer.json is rejected with guidance.
   rm -f "$DC2"
   if run_config sync-vscode "$PROJ2" >/dev/null 2>"$WORK/miss.err"; then
     fail "config sync-vscode: missing devcontainer.json must error"
@@ -395,7 +434,7 @@ else
   grep -Fqi 'devcontainer.json' "$WORK/miss.err" \
     || fail "config sync-vscode: missing-file error must mention devcontainer.json"
 
-  pass "dce config sync-vscode: sync/dry-run/apple-guard/missing-file"
+  pass "dce config sync-vscode: sync/dry-run/nojq/apple-guard/malformed-json/missing-file"
 fi
 
 # =============================================================================
@@ -455,6 +494,81 @@ run_dce "$ROOT_DIR/scripts/rebuild-container.sh" "$RB_PROJ" --yes \
 grep -Fqi 'drift' "$WORK/rb.err" || fail "rebuild: drift notice missing from stderr"
 grep -Eqi 'port' "$WORK/rb.err" || fail "rebuild: drift notice must mention ports"
 pass "dce rebuild-container: emits drift notice (ports) after config change, exit 0"
+
+# =============================================================================
+# H. `dce new` pre-existing devcontainer.json: preserve file + emit drift notice
+# =============================================================================
+PRE_PROJ="preexistproj"
+PRE_REPO="$WORK/home/repos/$PRE_PROJ"
+PRE_DC="$PRE_REPO/.devcontainer/devcontainer.json"
+mkdir -p "$PRE_REPO/.devcontainer"
+cat > "$PRE_DC" <<EOF
+{
+  "name": "dce-$PRE_PROJ",
+  "build": { "dockerfile": "$ROOT_DIR/Containerfiles/Containerfile.base", "context": "$ROOT_DIR" },
+  "workspaceFolder": "/workspace",
+  "remoteUser": "dev",
+  "forwardPorts": [1111]
+}
+EOF
+pre_sha="$(dce_sha256_file "$PRE_DC")"
+
+: > "$RLOG"
+run_dce "$ROOT_DIR/scripts/new-container.sh" "$PRE_PROJ" 3000:3000 \
+  >"$WORK/pre.stdout" 2>"$WORK/pre.stderr" \
+  || fail "new (pre-existing devcontainer) exited non-zero ($(cat "$WORK/pre.stderr"))"
+grep -Fq 'already exists - not overwritten' "$WORK/pre.stdout" \
+  || fail "new: pre-existing devcontainer notice missing"
+grep -Fqi 'sync-vscode' "$WORK/pre.stdout" \
+  || fail "new: pre-existing branch should point at sync-vscode"
+grep -Fqi 'drift' "$WORK/pre.stderr" \
+  || fail "new: pre-existing stale file should emit a drift notice"
+grep -Eqi 'port' "$WORK/pre.stderr" \
+  || fail "new: drift notice should mention ports"
+[[ "$(dce_sha256_file "$PRE_DC")" == "$pre_sha" ]] \
+  || fail "new: pre-existing devcontainer.json must not be rewritten"
+pass "dce new: pre-existing devcontainer.json stays untouched and emits drift notice"
+
+# =============================================================================
+# I. `dce rebuild-container --from-snap`: fallback drift detection branch
+# (global config unavailable -> scopes omitted, ports drift still reported)
+# =============================================================================
+SNAP_PROJ="fromsnapdrift"
+: > "$RLOG"
+run_dce "$ROOT_DIR/scripts/new-container.sh" "$SNAP_PROJ" \
+  >"$WORK/fs.new.out" 2>"$WORK/fs.new.err" \
+  || fail "new (from-snap fixture) exited non-zero ($(cat "$WORK/fs.new.err"))"
+SNAP_DC="$WORK/home/repos/$SNAP_PROJ/.devcontainer/devcontainer.json"
+[[ -f "$SNAP_DC" ]] || fail "from-snap fixture: devcontainer.json missing"
+
+# Canonical drift trigger: mutate config ports only.
+run_dce "$ROOT_DIR/scripts/config.sh" set "$SNAP_PROJ" ports=5000:5000 >/dev/null 2>&1 \
+  || fail "from-snap fixture: config set ports exited non-zero"
+
+# Snapshot image presence gate.
+SNAP_REF="$(dce_snapshot_ref "$SNAP_PROJ" pre)"
+printf '%s\n' "$SNAP_REF" >> "$RIMAGES"
+
+# Force the --from-snap fallback branch in rebuild's drift hook: deriving scopes
+# from global config now fails, so detection should skip scopes but still surface
+# ports drift and remain non-fatal.
+rm -f "$DC_ROOT/config"
+
+: > "$RLOG"
+run_dce "$ROOT_DIR/scripts/rebuild-container.sh" "$SNAP_PROJ" --from-snap pre --yes \
+  </dev/null >"$WORK/fs.rb.out" 2>"$WORK/fs.rb.err" \
+  || fail "rebuild --from-snap (fallback) exited non-zero ($(cat "$WORK/fs.rb.err"))"
+FS_CREATE="$(grep -E "create --name $SNAP_PROJ" "$RLOG" | head -n1)"
+grep -Fq "$SNAP_REF" <<<"$FS_CREATE" \
+  || fail "rebuild --from-snap: create must use snapshot ref (got: $FS_CREATE)"
+grep -Fqi 'drift' "$WORK/fs.rb.err" \
+  || fail "rebuild --from-snap: fallback branch should still emit drift notice"
+grep -Eqi 'port' "$WORK/fs.rb.err" \
+  || fail "rebuild --from-snap: fallback drift notice should mention ports"
+if grep -Fqi 'Global config not found' "$WORK/fs.rb.err"; then
+  fail "rebuild --from-snap: fallback drift detection must not hard-fail on missing global config"
+fi
+pass "dce rebuild-container --from-snap: fallback drift detection remains non-fatal and reports ports"
 
 echo ""
 echo "All devcontainer-sync checks passed."
