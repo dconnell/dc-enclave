@@ -55,7 +55,7 @@ _show_summary() {
   echo "  doctor [backend|project]                          Run preflight checks and report pass/fail"
   echo "  network <create|ls|members|rm|add|remove> ...     Manage private networks between containers"
   echo "  install <name> <path>                             Install dotfiles"
-  echo "  config <show|get|set|ls> ...                      Inspect/edit a project's config (validating wrapper)"
+  echo "  config <show|get|set|sync-vscode|ls> ...         Inspect/edit config; sync devcontainer managed fields"
   echo "  version                                           Print version (aliases: --version, -v)"
   echo "  help [command]                                    Show this help or detailed help"
   echo ""
@@ -161,6 +161,9 @@ Notes:
     with restrictive permissions (chmod 600/700).
   - For Docker-compatible backends, a .devcontainer/devcontainer.json is
     generated for VS Code Dev Containers integration.
+  - Existing devcontainer.json is preserved (never overwritten). If an existing
+    file's managed fields drift from current config, `dce new` prints a notice;
+    reconcile with `dce config sync-vscode <name>`.
 EOF
 }
 
@@ -556,6 +559,9 @@ Notes:
   - Your code on the host ($REPOS_DIR) is safe - it is a bind mount.
   - Hidden volumes are removed by default unless --keep-hidden-volumes is set.
   - Re-apply dotfiles after rebuild with 'dce install <name> <path>'.
+  - Existing .devcontainer/devcontainer.json is preserved. Rebuild prints a
+    non-fatal drift notice when its managed fields diverge from config; run
+    `dce config sync-vscode <name>` to reconcile on demand.
   - You will be prompted to type 'yes' to confirm before destruction
     (use --yes/-y to skip, e.g. for automation).
   - Snapshots capture the image plus the container's writable layer, and by
@@ -710,13 +716,19 @@ Usage: dce config <subcommand> [args]
        dce config get  <name> <key>
        dce config set  <name> <key>=<value>
        dce config set  <name> <key> <value>
+       dce config sync-vscode <name> [--dry-run]
        dce config ls
 
 Description:
   Inspect and edit a project's config file
   (~/.config/dce-enclave/<name>/config) without leaving the CLI. The file stays
-  the source of truth; this is a thin, validating wrapper. It needs NO container
-  backend, so it works even when no runtime is running.
+  the source of truth; this is a thin, validating wrapper. show/get/set/ls need
+  NO container backend, so they work even when no runtime is running.
+
+  `sync-vscode` is the one carved-out subcommand: it rewrites the MANAGED fields
+  in the project's `.devcontainer/devcontainer.json` (outside the config file),
+  preserving user edits. It still makes NO backend call, but requires jq and
+  loads global config to re-derive the managed dockerfile path.
 
   Only user-input keys are writable. Identity/derived/path keys (project,
   backend, image, repos) are read-only: `set` rejects them so this surface can
@@ -734,8 +746,12 @@ Subcommands:
                             unset); arrays print one element per line. Exit 0
                             even when unset, so it is scriptable.
   set  <name> <key>=<value> Validate, atomically write, then reload to prove the
-                            file still loads. Arrays take a comma-separated
-                            value. Both `key=value` and `key value` forms work.
+                             file still loads. Arrays take a comma-separated
+                             value. Both `key=value` and `key value` forms work.
+  sync-vscode <name>         Rewrite MANAGED devcontainer fields (build,
+                             mounts/runArgs/forwardPorts, TZ) to match current
+                             config, preserving user keys. `--dry-run` previews
+                             drift without writing.
   ls                        List projects that have a config (no backend needed).
 
 Keys:
@@ -756,12 +772,18 @@ Examples:
   dce config set myapp scopes=nodejs,golang
   dce config set myapp ports=3000:3000,8080
   dce config set myapp cpus=                     # clear -> backend default
+  dce config sync-vscode myapp
+  dce config sync-vscode myapp --dry-run
   dce config ls
 
 Notes:
   - Changes to cpus, memory, scopes, ports, hide, or networks take effect only
     after `dce rebuild-container <name>` (resource limits and mounts are applied
     at container creation time). A successful `set` prints a reminder.
+  - `dce new` / `dce rebuild-container` never overwrite an existing
+    `.devcontainer/devcontainer.json`; they print a drift notice when its managed
+    fields (scopes/hide/networks/ports) diverge from current config. Use
+    `dce config sync-vscode <name>` to reconcile on demand.
   - To create or remove a project (rather than edit its config), use `dce new`
     or `dce rm`. To change the image or backend, recreate the project.
   - The config file permissions (mode 600) are preserved across every edit.

@@ -28,6 +28,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/devcontainer.sh"
 
 # --- friendly-key vocabulary -------------------------------------------------
 # Mutable keys map a short name to the real config key + kind. Read-only keys
@@ -77,8 +79,12 @@ Subcommands:
   get  <name> <key>                 Print one value (scalars: the value; arrays:
                                     one element per line). Empty = unset.
   set  <name> <key>=<value>         Validate, atomically write, then reload to
-       dce config set <name> <key> <value>   prove the file still loads.
+        dce config set <name> <key> <value>   prove the file still loads.
                                     Arrays take a comma-separated value.
+  sync-vscode <name> [--dry-run]    Rewrite the MANAGED fields of the project's
+                                    .devcontainer/devcontainer.json to match the
+                                    current config, preserving user edits.
+                                    Requires jq + a docker-compatible backend.
   ls                                List projects that have a config (no backend).
 
 Mutable keys (set/get): $(_cfg_all_keys_multiline)
@@ -362,15 +368,96 @@ do_ls() {
   done < <(find "$base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 }
 
+# --- sync-vscode -------------------------------------------------------------
+# Carved-out exception to config's "never edits other state / needs no backend"
+# invariant: this subcommand rewrites the project's .devcontainer/devcontainer.json
+# (outside the config file) and loads global config (to re-derive the managed
+# dockerfile path). It still performs NO container-backend call. Requires jq.
+do_sync_vscode() {
+  local project="${1:-}"
+  local dry_run="false"
+
+  if [[ -z "$project" ]]; then
+    echo "ERROR: 'dce config sync-vscode' requires <name>" >&2
+    USAGE >&2
+    exit 1
+  fi
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry_run="true"; shift ;;
+      -h|--help|help)
+        sed -n '/sync-vscode/,/Requires jq/p' "$0" 2>/dev/null || true
+        return 0
+        ;;
+      *)
+        echo "ERROR: Unknown option for sync-vscode: $1" >&2
+        echo "  Usage: dce config sync-vscode <name> [--dry-run]" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  local config=""
+  config="$(_cfg_require_config "$project")"
+  dce_load_project_config "$config"
+
+  if [[ "${CONTAINER_BACKEND:-}" == "apple" ]]; then
+    dce_die "sync-vscode applies to docker-compatible backends; project '$project' uses apple (no devcontainer.json)."
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    dce_die "sync-vscode requires jq (it is optional everywhere else).
+  Install jq, then rerun."
+  fi
+  if [[ -z "${REPOS_DIR:-}" ]]; then
+    dce_die "Project '$project' config has no REPOS_DIR; cannot locate devcontainer.json."
+  fi
+
+  # Re-derive the managed dockerfile (needs the overlay dirs -> global config).
+  dce_load_global_config
+
+  local scopes="${CONTAINER_OVERLAY_SCOPES:-}"
+  local build_file=""
+  build_file="$(dce_devcontainer_build_file "$ROOT_DIR" "$scopes")" \
+    || dce_die "Could not derive the managed Containerfile path for scopes '$scopes'."
+
+  local dc_file="$REPOS_DIR/.devcontainer/devcontainer.json"
+  if [[ ! -f "$dc_file" ]]; then
+    dce_die "No devcontainer.json to sync at: $dc_file
+  Run 'dce new $project' first (sync-vscode reconciles an existing file)."
+  fi
+
+  local hidden_csv nets_csv ports_csv
+  hidden_csv="$(dce_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]:-}")" || hidden_csv=""
+  if declare -p CONTAINER_NETWORKS >/dev/null 2>&1 && [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+    nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
+  else
+    nets_csv=""
+  fi
+  if declare -p PORTS >/dev/null 2>&1 && [[ ${#PORTS[@]} -gt 0 ]]; then
+    ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
+  else
+    ports_csv=""
+  fi
+  local tz=""
+  tz="$(dce_host_timezone)" || tz=""
+
+  # shellcheck disable=SC2153
+  # SECRET_DIR is a global populated by dce_load_project_config (not a typo).
+  dce_devcontainer_sync "$project" "$dc_file" "$build_file" "$ROOT_DIR" "$SECRET_DIR" \
+    "$hidden_csv" "$nets_csv" "$ports_csv" "$tz" "$dry_run"
+}
+
 # --- dispatch ----------------------------------------------------------------
 SUBACTION="${1:-}"
 [[ $# -gt 0 ]] && shift
 
 case "$SUBACTION" in
-  show) do_show "$@" ;;
-  get)  do_get "$@" ;;
-  set)  do_set "$@" ;;
-  ls)   do_ls "$@" ;;
+  show)        do_show "$@" ;;
+  get)         do_get "$@" ;;
+  set)         do_set "$@" ;;
+  sync-vscode) do_sync_vscode "$@" ;;
+  ls)          do_ls "$@" ;;
   ""|-h|--help|help) USAGE ;;
   *)
     echo "Unknown config subcommand: $SUBACTION" >&2

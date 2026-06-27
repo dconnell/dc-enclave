@@ -194,13 +194,14 @@ dce_complete_network_subactions() {
     "remove"
 }
 
-# Print the subactions of `dce config` (show/get/set/ls). Mirrors the dispatch
+# Print the subactions of `dce config` (show/get/set/sync-vscode/ls). Mirrors the dispatch
 # table in scripts/config.sh.
 dce_complete_config_subactions() {
   printf '%s\n' \
     "show" \
     "get" \
     "set" \
+    "sync-vscode" \
     "ls"
 }
 

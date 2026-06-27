@@ -28,6 +28,16 @@ dce rebuild-container myapp-monorepo --yes
 
 For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. When the project has hidden paths configured, combining `--rotate-keys` with `--keep-hidden-volumes` triggers a loud warning (key rotation implies incident response, where preserving volumes may be unsafe).
 
+On Docker-compatible backends, rebuild preserves any existing
+`.devcontainer/devcontainer.json` (never overwritten). If managed fields in that
+file drift from current config (scopes/hide/networks/ports), rebuild prints a
+non-fatal notice; reconcile on demand with:
+
+```
+dce config sync-vscode <name>
+dce config sync-vscode <name> --dry-run
+```
+
 
 ## Rebuilding after Containerfile changes
 
@@ -112,4 +122,3 @@ Safety notes:
 - The project name is validated and the secrets directory's real path is checked to reside under the DC Enclave config root, so a symlinked project directory cannot redirect deletion elsewhere.
 - If the backend is unreachable, container/volume removal is skipped with a warning, but the config + secrets are still removed (unless `--keep-config`).
 - To wipe only the container filesystem while keeping config and code, use `dce rebuild-container <name>` instead.
-

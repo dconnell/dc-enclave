@@ -62,6 +62,18 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 |---|---|
 | `[all\|base]` | `all` (default): rebuild `dce-base:latest` and every configured derived image. `base`: rebuild `dce-base:latest` only. |
 
+## `dce config` — inspect/edit config + sync managed devcontainer fields
+
+| Form / arg | Description |
+|---|---|
+| `show <name>` | Print a grouped, human-readable view of the project config. |
+| `get <name> <key>` | Print one value (`cpus`, `memory`, `scopes`, `ports`, `hide`, `networks`, and read-only `project`, `backend`, `image`, `repos`). |
+| `set <name> <key>=<value>` | Validate + atomically write one mutable key (`cpus`, `memory`, `scopes`, `ports`, `hide`, `networks`). Empty clears a key back to default. |
+| `set <name> <key> <value>` | Space-separated equivalent of `key=value`. |
+| `sync-vscode <name>` | Rewrite MANAGED fields in `<repos>/.devcontainer/devcontainer.json` to match current config while preserving user keys/mounts. Docker-compatible projects only. Requires `jq`. |
+| `--dry-run` *(with `sync-vscode`)* | Preview drift + planned managed-field rewrites without writing the file. |
+| `ls` | List projects that have a config file. |
+
 ## `dce provenance` — image provenance
 
 | Flag / arg | Description |

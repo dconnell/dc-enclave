@@ -78,7 +78,7 @@ pass "subcommands list"
 
 # config data layer: subactions + writable keys.
 expect_sorted "config subactions" \
-  "$(dce_complete_config_subactions)" get ls set show
+  "$(dce_complete_config_subactions)" get ls set show sync-vscode
 expect_sorted "config keys" \
   "$(dce_complete_config_keys)" cpus hide memory networks ports scopes
 
@@ -192,8 +192,9 @@ drive 3 dce provenance alpha "--";      assert_reply "provenance alpha --<TAB>" 
 drive 2 dce network ""; assert_reply "network <TAB>" \
   add create list ls members remove rm
 
-# config: subactions at position 2; project at 3; key at 4 (get/set).
-drive 2 dce config ""; assert_reply "config <TAB>" get ls set show
+# config: subactions at position 2; project at 3; key at 4 (get/set);
+# sync-vscode offers --dry-run at position 4.
+drive 2 dce config ""; assert_reply "config <TAB>" get ls set show sync-vscode
 drive 3 dce config show ""; assert_reply "config show <TAB>" alpha beta gamma
 drive 3 dce config get "";  assert_reply "config get <project> <TAB>" alpha beta gamma
 drive 4 dce config get alpha ""; assert_reply "config get alpha <key> <TAB>" \
@@ -202,6 +203,9 @@ drive 4 dce config set alpha ""; assert_reply "config set alpha <key> <TAB>" \
   cpus hide memory networks ports scopes
 # set's value (position 5) is free-form -> no completion.
 drive 5 dce config set alpha cpus ""; assert_empty "config set alpha cpus <val> (free-form)"
+# sync-vscode: project at slot 3; --dry-run at slot 4.
+drive 3 dce config sync-vscode ""; assert_reply "config sync-vscode <TAB>" alpha beta gamma
+drive 4 dce config sync-vscode alpha ""; assert_reply "config sync-vscode alpha <TAB>" --dry-run
 # ls takes no further args.
 drive 3 dce config ls ""; assert_empty "config ls <TAB> (no further args)"
 

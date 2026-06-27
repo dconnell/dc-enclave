@@ -29,7 +29,7 @@ dce new monorepo nodejs,golang \
 - After container start, dce ensures the hidden mount points are writable by the `dev` user (root `mkdir`/`chown` fallback applied across all backends).
 - Hidden paths are persisted in the project config (`CONTAINER_HIDDEN_PATHS`) and automatically remounted on `dce rebuild-container`.
 - **`dce rebuild-container` removes hidden volumes by default** for a clean slate (fresh dependency install, no stale caches). Use `--keep-hidden-volumes` to preserve them.
-- For Docker-compatible backends, hidden mounts are also added to the generated `devcontainer.json` so VS Code Dev Containers uses the same layout.
+- For Docker-compatible backends, hidden mounts are also added to the generated `devcontainer.json` so VS Code Dev Containers uses the same layout. Existing files are preserved; if managed fields drift, `dce new` / `dce rebuild-container` print a notice and you can reconcile with `dce config sync-vscode <name>` (`--dry-run` previews only).
 
 ### Cleaning up hidden volumes
 
@@ -47,4 +47,3 @@ Only `dce-hide-*` managed volumes that no longer correspond to an active project
 
 - [Overlays: install-on-start behavior](../reference/overlays.md#install-on-start-behavior) — how overlays auto-sync dependencies (e.g. `npm ci`) into hidden volumes on container start, including the trusted-vs-untrusted matrix.
 - [Example overlays](../../Containerfiles/example/README.md) — per-language `--hide` paths and sync commands.
-

@@ -169,6 +169,8 @@ source "$ROOT_DIR/lib/network.sh"
 source "$ROOT_DIR/lib/recipe.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/vscode.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/devcontainer.sh"
 
 dce_load_global_config
 
@@ -655,88 +657,31 @@ if $DOCKER_COMPATIBLE; then
 
   if [[ -f "$DEVCONTAINER_FILE" ]]; then
     echo "  ✓ $DEVCONTAINER_FILE already exists - not overwritten."
-    echo "  Update it manually if you want to use this container recipe:"
-    echo "    Containerfile: $DEVCONTAINER_BUILD_FILE"
+    echo "  Update it manually, or reconcile it with:"
+    echo "    dce config sync-vscode $PROJECT"
+    echo "  (Containerfile for this recipe: $DEVCONTAINER_BUILD_FILE)"
+    # Read-only drift notice: if the managed fields in the existing file no
+    # longer match what `dce new` would generate, point the operator at the diff
+    # and the sync command. Non-fatal; safe under --yes / non-interactive use.
+    _new_nets_csv=""
+    [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]] && _new_nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
+    _new_ports_csv=""
+    [[ ${#PORTS[@]} -gt 0 ]] && _new_ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
+    dce_devcontainer_detect_drift "$PROJECT" "$DEVCONTAINER_FILE" "$DEVCONTAINER_BUILD_FILE" \
+      "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" >&2 || true
   else
     mkdir -p "$DEVCONTAINER_DIR"
 
-    FORWARD_PORTS_BLOCK=""
-    if [[ ${#FORWARD_PORTS[@]} -gt 0 ]]; then
-      FORWARD_PORTS_CSV=""
-      for forward_port in "${FORWARD_PORTS[@]}"; do
-        if [[ -n "$FORWARD_PORTS_CSV" ]]; then
-          FORWARD_PORTS_CSV+=", "
-        fi
-        FORWARD_PORTS_CSV+="$forward_port"
-      done
-      FORWARD_PORTS_BLOCK=$',\n  "forwardPorts": ['"$FORWARD_PORTS_CSV"$']'
-    fi
+    _new_nets_csv=""
+    [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]] && _new_nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
+    _new_ports_csv=""
+    [[ ${#PORTS[@]} -gt 0 ]] && _new_ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
 
-    MOUNTS_BLOCK=""
-    MOUNTS_ENTRIES=()
-    MOUNTS_ENTRIES+=("source=$SECRET_DIR/.npmrc,target=/home/dev/.npmrc,type=bind,readonly")
-    for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
-      hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
-      MOUNTS_ENTRIES+=("source=$hidden_volume,target=/workspace/$hidden_path,type=volume")
-    done
-
-    if [[ ${#MOUNTS_ENTRIES[@]} -gt 0 ]]; then
-      MOUNTS_BLOCK=$',\n  "mounts": [\n'
-      first_entry=true
-      for mount_entry in "${MOUNTS_ENTRIES[@]}"; do
-        if ! $first_entry; then
-          MOUNTS_BLOCK+=$',\n'
-        fi
-        MOUNTS_BLOCK+="    \"$mount_entry\""
-        first_entry=false
-      done
-      MOUNTS_BLOCK+=$'\n  ]'
-    fi
-
-    # runArgs carries the network membership so a VS Code "Reopen in Container"
-    # build attaches to the same private network(s) as `dce new` did. The primary
-    # network is listed first (with its optional static IP), extras after.
-    RUNARGS_BLOCK=""
-    if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
-      _ra_primary="${CONTAINER_NETWORKS[0]}"
-      _ra_name="$(dce_network_entry_name "$_ra_primary")"
-      _ra_ip="$(dce_network_entry_ip "$_ra_primary")"
-      RUNARGS_ENTRIES=("--network" "$_ra_name")
-      [[ -n "$_ra_ip" ]] && RUNARGS_ENTRIES+=("--ip" "$_ra_ip")
-      for ((_ra_i = 1; _ra_i < ${#CONTAINER_NETWORKS[@]}; _ra_i++)); do
-        RUNARGS_ENTRIES+=("--network" "$(dce_network_entry_name "${CONTAINER_NETWORKS[$_ra_i]}")")
-      done
-      RUNARGS_BLOCK=$',\n  "runArgs": ['
-      _ra_first=true
-      for _ra_e in "${RUNARGS_ENTRIES[@]}"; do
-        $_ra_first || RUNARGS_BLOCK+=", "
-        RUNARGS_BLOCK+="\"$_ra_e\""
-        _ra_first=false
-      done
-      RUNARGS_BLOCK+="]"
-    fi
-
-    # containerEnv carries the detected host TZ so a VS Code "Reopen in
-    # Container" build lands on the same timezone as the dce-created container.
-    # HOST_TZ is charset-validated (no quotes/backslashes), so it is JSON-safe.
-    CONTAINERENV_BLOCK=""
-    if [[ -n "$HOST_TZ" ]]; then
-      CONTAINERENV_BLOCK=$',\n  "containerEnv": {\n    "TZ": "'"$HOST_TZ"$'"\n  }'
-    fi
-
-    cat > "$DEVCONTAINER_FILE" <<EOF
-{
-  "name": "dce-$PROJECT",
-  "build": {
-    "dockerfile": "$DEVCONTAINER_BUILD_FILE",
-    "context": "$ROOT_DIR"
-  },
-  "workspaceMount": "source=\${localWorkspaceFolder},target=/workspace,type=bind",
-  "workspaceFolder": "/workspace",
-  "remoteUser": "dev",
-  "postCreateCommand": "true"$FORWARD_PORTS_BLOCK$MOUNTS_BLOCK$RUNARGS_BLOCK$CONTAINERENV_BLOCK
-}
-EOF
+    # The seeded JSON is produced by the single shared renderer so `dce new`,
+    # drift detection, and `dce config sync-vscode` all agree on managed state.
+    dce_devcontainer_render "$PROJECT" "$DEVCONTAINER_BUILD_FILE" "$ROOT_DIR" \
+      "$SECRET_DIR" "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" "$HOST_TZ" \
+      > "$DEVCONTAINER_FILE"
 
     echo "  ✓ Created $DEVCONTAINER_FILE"
     echo "  For a new Dev Container instance: Dev Containers: Reopen in Container"

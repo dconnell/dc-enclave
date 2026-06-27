@@ -90,6 +90,8 @@ source "$ROOT_DIR/lib/container-backend.sh"
 source "$ROOT_DIR/lib/network.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/vscode.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/devcontainer.sh"
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
@@ -444,6 +446,37 @@ if $DOCKER_COMPATIBLE; then
 
   if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
     echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
+  fi
+fi
+
+# Drift notice: the seeded .devcontainer/devcontainer.json is never rewritten by
+# a rebuild, so a prior `dce config set` (scopes/hide/networks/ports) can leave
+# VS Code desynced from the freshly-rebuilt container. Detection is read-only
+# and non-fatal (safe under --yes); it just points at the diff + sync-vscode.
+# Docker-compatible only (apple has no devcontainer.json).
+if $DOCKER_COMPATIBLE && [[ -n "${REPOS_DIR:-}" ]]; then
+  _rb_dc_file="$REPOS_DIR/.devcontainer/devcontainer.json"
+  if [[ -f "$_rb_dc_file" ]]; then
+    _rb_nets_csv=""
+    if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
+      _rb_nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
+    fi
+    _rb_ports_csv=""
+    if declare -p PORTS >/dev/null 2>&1 && [[ ${#PORTS[@]} -gt 0 ]]; then
+      _rb_ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
+    fi
+    # Expected managed dockerfile. Normal path has global config loaded; under
+    # --from-snap derive best-effort from the persisted scopes in a subshell so
+    # a missing global config degrades to skipping the scopes field, not abort.
+    _rb_build_df=""
+    if [[ -z "$FROM_SNAP" ]]; then
+      _rb_build_df="$(dce_devcontainer_build_file "$ROOT_DIR" "$OVERLAY_SCOPES_CSV")" || _rb_build_df=""
+    else
+      _rb_build_df="$( { dce_load_global_config 2>/dev/null && \
+        dce_devcontainer_build_file "$ROOT_DIR" "${CONTAINER_OVERLAY_SCOPES:-}"; } 2>/dev/null )" || _rb_build_df=""
+    fi
+    dce_devcontainer_detect_drift "$PROJECT" "$_rb_dc_file" "$_rb_build_df" \
+      "$HIDDEN_PATHS_CSV" "$_rb_nets_csv" "$_rb_ports_csv" >&2 || true
   fi
 fi
 

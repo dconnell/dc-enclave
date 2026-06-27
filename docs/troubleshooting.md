@@ -44,7 +44,14 @@ colima status
 devcontainer.json or settings.json not overwritten:
 
 - expected behavior to avoid clobbering local config
-- update file manually if needed
+- on Docker-compatible projects, `dce new` / `dce rebuild-container` print a
+  drift notice when managed fields diverge from config (scopes/hide/networks/ports)
+- reconcile on demand with:
+
+```
+dce config sync-vscode <name>
+dce config sync-vscode <name> --dry-run   # preview only
+```
 
 Changed ports or resource limits:
 
@@ -61,4 +68,3 @@ Podman on macOS not starting:
 ```
 podman machine start
 ```
-

@@ -365,9 +365,10 @@ _dce_complete_network() {
   return 0
 }
 
-# `dce config <show|get|set|ls> <project> [key] [value]`: position 2 is the
-# subaction; position 3 a project; position 4 (get/set) a key name; the value
-# (set position 5+) is free-form. `ls` and `show` take no further completion.
+# `dce config <show|get|set|sync-vscode|ls> ...`: position 2 is the subaction.
+# show/get/set/sync-vscode take a project at position 3; get/set take a key at
+# position 4; sync-vscode offers --dry-run as an optional flag at position 4.
+# set's value (position 5+) is free-form. ls/show take no further completion.
 _dce_complete_config() {
   local cur="$1" prev="$2"
 
@@ -401,6 +402,14 @@ _dce_complete_config() {
       elif [[ $COMP_CWORD -eq 4 ]]; then
         # Offer bare key names; the value (incl. key=value) is free-form.
         mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_config_keys)" -- "$cur")
+      fi
+      return 0
+      ;;
+    sync-vscode)
+      if [[ $COMP_CWORD -eq 3 ]]; then
+        _dce_reply_projects "$cur"
+      elif [[ $COMP_CWORD -eq 4 ]]; then
+        mapfile -t COMPREPLY < <(compgen -W "--dry-run" -- "$cur")
       fi
       return 0
       ;;

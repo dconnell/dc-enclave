@@ -55,6 +55,11 @@ docker/orbstack/colima/podman backends:
 - `dce new` generates `${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json`
 - For multi-scope and/or overlay projects, it points to a generated composed Containerfile
 - Existing `devcontainer.json` is not overwritten
+- `dce new` / `dce rebuild-container` detect drift in managed fields
+  (scopes/hidden-paths/networks/ports) and print a one-line notice with the
+  diff when an existing file diverges
+- `dce config sync-vscode <name>` rewrites those managed fields on demand
+  (use `--dry-run` to preview); user fields are preserved
 - `dce new` and `dce rebuild-container` also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
 
 apple backend:
@@ -64,4 +69,3 @@ apple backend:
 - Existing settings.json is not overwritten
 
 VS Code is optional. Alias-based shell workflow is always supported.
-

@@ -303,9 +303,9 @@ _dce_network() {
   _describe 'network subcommand' subs
 }
 
-# `dce config <show|get|set|ls> <project> [key] [value]`. Position 1 is the
-# subaction; show/get/set take a project next, get/set take a key after that.
-# The value for set is free-form. ls takes no further args.
+# `dce config <show|get|set|sync-vscode|ls> ...`. Position 1 is the subaction;
+# show/get/set/sync-vscode take a project next, get/set take a key after that,
+# sync-vscode optionally takes --dry-run, and set's value is free-form.
 _dce_config() {
   if ! _dce_load_complete_data; then
     _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
@@ -333,6 +333,12 @@ _dce_config() {
         '1:subcommand: _dce_config_subactions' \
         '2:project:_dce_projects_simple' \
         '3:key: _dce_config_keys'
+      ;;
+    sync-vscode)
+      _arguments \
+        '1:subcommand: _dce_config_subactions' \
+        '2:project:_dce_projects_simple' \
+        '*:flag:(--dry-run)'
       ;;
     *)
       _arguments '1:subcommand: _dce_config_subactions'
