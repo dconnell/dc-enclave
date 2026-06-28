@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/completion.sh - Tab-completion regression and behavior coverage.
+# tests/unit/completion.sh - Tab-completion regression and behavior coverage.
 #
 # Covers:
 #   - Shared discovery (lib/complete-data.sh): project names, scope dedup/order,

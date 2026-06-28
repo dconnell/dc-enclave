@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/provenance.sh - Unit + behavior coverage for image provenance.
+# tests/unit/provenance.sh - Unit + behavior coverage for image provenance.
 #
 # Implements the verification checklist of plans/versioning.md: per-directory
 # provenance detection (content hash always + git commit when under git),

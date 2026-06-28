@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/doctor.sh - `dce doctor` preflight diagnostics coverage.
+# tests/contract/doctor.sh - `dce doctor` preflight diagnostics coverage.
 #
 # doctor runs read-only probes across the host environment and each detected
 # backend CLI (and optionally a single backend or project). This test installs

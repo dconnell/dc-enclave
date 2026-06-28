@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/shellcheck.sh - Static analysis pass over every Bash script in the repo.
+# tests/lint/shellcheck.sh - Static analysis pass over every Bash script in the repo.
 #
 # Auto-discovered by tests/run-all.sh alongside the functional tests, so the
 # same invocation that runs the behavioral suite also surfaces ShellCheck

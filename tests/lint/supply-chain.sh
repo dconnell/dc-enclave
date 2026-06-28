@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/supply-chain.sh - M2 build supply-chain regression guard.
+# tests/lint/supply-chain.sh - M2 build supply-chain regression guard.
 #
 # Keeps repo-owned Containerfile templates free of remote-script execution and
 # ensures the base image is pinned by digest. These are build-time supply-chain

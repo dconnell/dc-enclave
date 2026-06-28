@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/new-container-lifecycle.sh - End-to-end characterization of the
+# tests/contract/new-container-lifecycle.sh - End-to-end characterization of the
 # `dce new` -> `dce rebuild-container` lifecycle against stubbed backends.
 #
 # This is where the "actually-hard" regressions hide (image derivation,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/rm-lifecycle.sh - End-to-end characterization of `dce rm` against a
+# tests/contract/rm-lifecycle.sh - End-to-end characterization of `dce rm` against a
 # stubbed docker backend.
 #
 # `dce rm` is the only command that deletes a project outright, so this pins

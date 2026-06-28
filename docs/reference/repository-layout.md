@@ -44,6 +44,13 @@ dce-enclave/
 │   └── list.sh
 ├── templates/
 │   └── dotfiles/                       # starter dotfiles repo (fork for personal config)
+├── tests/
+│   ├── unit/                           # pure host-side helper unit tests (lib/*.sh, in-process)
+│   ├── contract/                       # stubbed-backend functional/contract tests (fake docker/container/podman)
+│   ├── lint/                           # static analysis + policy guards (shellcheck, supply-chain, overlays)
+│   ├── integration/                    # real-backend end-to-end suite
+│   ├── run-all.sh                      # aggregator over the three fast tiers (unit + contract + lint)
+│   └── smoke.sh                        # lightweight command-surface smoke checks
 ```
 
 Host-side paths:

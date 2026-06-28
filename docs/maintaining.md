@@ -1,27 +1,31 @@
 # Running the test suite
 
-The suite is split into a fast **unit** suite (stubbed runtimes, deterministic)
-and a real-backend **integration** suite. They are invoked separately so the
-fast suite stays safe to run anywhere, anytime.
+The suite is split into three **fast** tiers (deterministic, no real daemon) and
+a real-backend **integration** tier. They are invoked separately so the fast
+suite stays safe to run anywhere, anytime.
 
-## Unit suite (fast, stubbed)
+| Tier | Directory | What it covers |
+|------|-----------|----------------|
+| unit | `tests/unit/` | Pure host-side helper unit tests — `lib/*.sh` functions exercised in-process, no backend, no subprocess. |
+| contract | `tests/contract/` | Stubbed-backend functional / contract tests — the real `dce` CLI driven through fakes of docker/container/podman across multi-step workflows. `tests/integration/` is what validates that the backend contract assumed here is actually correct. |
+| lint | `tests/lint/` | Static analysis / policy guards — shellcheck plus supply-chain and convention greps over committed sources. |
+| integration | `tests/integration/` | Real-backend end-to-end (see below). |
 
-Runs every contract/unit test in `tests/unit/` with a single pass/fail summary
-(no fail-fast, so you see every failure in one run):
+## Fast suite (unit + contract + lint)
+
+`tests/run-all.sh` is the aggregator: it runs the three fast tiers in turn with
+a per-tier pass/fail summary (no fail-fast, so you see every failure in one run):
 
 ```
-tests/unit/run-all.sh
-tests/unit/run-all.sh -v   # stream each file's output live
+tests/run-all.sh                 # all three fast tiers
+tests/run-all.sh -v              # verbose: stream each file's output live
+tests/run-all.sh contract        # a single tier: unit | contract | lint
 ```
 
-`tests/run-all.sh` is a thin compatibility wrapper around the unit suite, kept
-for one release so existing invocations keep working:
+Each tier also has its own discovery runner (`tests/<tier>/run-all.sh`) for
+running it in isolation, e.g. `tests/unit/run-all.sh` or `tests/contract/run-all.sh`.
 
-```
-tests/run-all.sh            # -> tests/unit/run-all.sh
-```
-
-The unit suite includes `tests/unit/shellcheck.sh`, a static-analysis pass over
+The lint tier includes `tests/lint/shellcheck.sh`, a static-analysis pass over
 every Bash script in the repo. ShellCheck is optional at runtime: when
 installed, any finding fails the suite; when absent, the run still passes but
 prints one `WARN:` line per script (surfaced under the `-> PASS:` line) with the
@@ -42,12 +46,13 @@ checks run when a backend is reachable and are otherwise skipped:
 tests/smoke.sh
 ```
 
-Optional backend override (unit + smoke):
+Optional backend override (matters for the contract tier and smoke):
 
 ```
-CONTAINER_BACKEND=podman tests/unit/run-all.sh
+CONTAINER_BACKEND=podman tests/contract/run-all.sh
 CONTAINER_BACKEND=colima tests/smoke.sh
 ```
+
 
 ## Integration suite (real backends, end-to-end)
 

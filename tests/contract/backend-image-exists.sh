@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/backend-image-exists.sh - Reproduce and guard the backend_image_exists
+# tests/contract/backend-image-exists.sh - Reproduce and guard the backend_image_exists
 # false-negative under `set -o pipefail`.
 #
 # backend_image_exists uses a `<list> | grep -Fxq "$tag"` pipeline. Under

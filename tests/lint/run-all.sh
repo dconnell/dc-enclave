@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/unit/run-all.sh - Pure host-side helper unit tests.
+# tests/lint/run-all.sh - Static analysis / policy guards.
 #
-# Single entrypoint that runs every test file in tests/unit/. These exercise
-# individual lib/*.sh helpers in-process: no container runtime, no scripts/*.sh
-# subprocess, no fake backend. Fast and deterministic.
+# Single entrypoint that runs every file in tests/lint/. These do not test
+# runtime behavior; they run a linter (shellcheck) or grep committed sources to
+# enforce build-time / supply-chain conventions (no curl|bash, digest pinning,
+# overlay structural shape, SSH host-trust pin integrity).
 #
-# The stubbed-backend functional/contract tests live under tests/contract/ and
-# the static-analysis/policy guards under tests/lint/, each with their own
-# runner; tests/run-all.sh aggregates all three tiers. Real-backend end-to-end
-# coverage lives separately under tests/integration/ and is never run from here.
+# Some guards degrade gracefully when an optional tool is absent: for example,
+# the static-analysis guard for shell scripts emits WARN: lines and exits 0.
+# The runner surfaces those WARN lines even in quiet mode so the gap stays
+# visible.
 #
 # `smoke.sh` is intentionally excluded (it chains selected files AND adds the
 # `dce` command-surface checks).
 #
 # Usage:
-#   tests/unit/run-all.sh          # quiet: one line per file; dump failing output
-#   tests/unit/run-all.sh -v       # verbose: stream each file's output live
-#   CONTAINER_BACKEND=podman tests/unit/run-all.sh   # passed through to test files
+#   tests/lint/run-all.sh          # quiet: one line per file; dump failing output
+#   tests/lint/run-all.sh -v       # verbose: stream each file's output live
 # =============================================================================
 set -uo pipefail
 
 if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]]; then
-  echo "ERROR: tests/unit/run-all.sh requires Bash 4+ (current: ${BASH_VERSION:-unknown})" >&2
+  echo "ERROR: tests/lint/run-all.sh requires Bash 4+ (current: ${BASH_VERSION:-unknown})" >&2
   echo "  macOS: brew install bash" >&2
   exit 1
 fi
@@ -33,7 +33,7 @@ VERBOSE=false
 case "${1:-}" in
   -v|--verbose) VERBOSE=true ;;
   -h|--help)
-    sed -n '2,20p' "$0"
+    sed -n '2,18p' "$0"
     exit 0
     ;;
   "") : ;;
@@ -41,7 +41,7 @@ case "${1:-}" in
 esac
 
 # Deterministic, sorted discovery of this directory's tests. Exclude this script
-# itself and smoke.sh (which lives one level up, but guard anyway).
+# itself and smoke.sh (which lives two levels up, but guard anyway).
 mapfile -t FILES < <(
   for f in "$TESTS_DIR"/*.sh; do
     [[ -e "$f" ]] || continue

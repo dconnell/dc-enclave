@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/unit/apple-build-fallback.sh - apple/container's builder runs in a
+# tests/contract/apple-build-fallback.sh - apple/container's builder runs in a
 # vmnet-NAT'd namespace that cannot traverse a host VPN, so every apt/apk RUN
 # fails with "Temporary failure resolving" / "no installation candidate". That
 # is a build-environment problem (no outbound network), not a Containerfile bug,

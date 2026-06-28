@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/overlays.sh - Guards for the per-language example overlays and their
+# tests/lint/overlays.sh - Guards for the per-language example overlays and their
 # install-on-start trust and safe-mode conventions.
 #
 # These are static, build-time conventions enforced on the repo-owned example
-# overlays in Containerfiles/example/. They complement tests/supply-chain.sh
+# overlays in Containerfiles/example/. They complement tests/lint/supply-chain.sh
 # (which guards against curl|bash and base-image tag drift) by asserting the
 # structural shape that the example overlays require:
 #

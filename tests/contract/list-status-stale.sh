@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/list-status-stale.sh - Stale-container surfacing in `dce list`/`dce status`.
+# tests/contract/list-status-stale.sh - Stale-container surfacing in `dce list`/`dce status`.
 #
 # A container is stale when the image id it is bound to differs from the id its
 # configured CONTAINER_IMAGE tag currently resolves to. This typically happens

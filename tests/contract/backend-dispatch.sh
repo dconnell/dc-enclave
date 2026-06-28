@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/backend-dispatch.sh - Dispatch matrix for lib/container-backend.sh.
+# tests/contract/backend-dispatch.sh - Dispatch matrix for lib/container-backend.sh.
 #
 # Every backend_* function is a `case` over {apple, docker, orbstack, colima,
 # podman}. The per-backend argv divergences (apple `container exec --uid 0` vs

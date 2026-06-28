@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/security-ssh-host-trust.sh - M4 regression: GitHub SSH host verification
+# tests/lint/security-ssh-host-trust.sh - M4 regression: GitHub SSH host verification
 # must use pinned keys, never runtime TOFU.
 #
 # GitHub host trust is established at image-build time from a pinned, reviewed

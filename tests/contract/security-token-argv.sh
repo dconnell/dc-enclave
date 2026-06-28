@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/security-token-argv.sh - M3 regression: GITHUB_TOKEN must not appear in
+# tests/contract/security-token-argv.sh - M3 regression: GITHUB_TOKEN must not appear in
 # host process argv during `dce shell` (one-shot or interactive).
 #
 # Host process args are readable via `ps` and /proc/<pid>/cmdline while a shell

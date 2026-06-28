@@ -9,7 +9,7 @@
 #   dce new <project> shellcheck [ports...]
 #   dce new <project> nodejs,shellcheck [ports...]
 #
-# ShellCheck is the static analyzer the project's tests/shellcheck.sh harness
+# ShellCheck is the static analyzer the project's tests/lint/shellcheck.sh harness
 # runs (see the "Smoke tests" section of the README). Installing it in the
 # container lets contributors run the full tests/run-all.sh suite -- including
 # the ShellCheck pass -- without a host install.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/compose-layering.sh - Characterize scripts/compose-containerfile.sh.
+# tests/contract/compose-layering.sh - Characterize scripts/compose-containerfile.sh.
 #
 # The compose helper implements the documented canonical layering contract
 # (docs/explanation/overlay-model.md "Canonical layering order"; plans/layering.md). This locks it down so

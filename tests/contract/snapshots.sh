@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/snapshots.sh - Container snapshot create/list/rm/restore/clean coverage.
+# tests/contract/snapshots.sh - Container snapshot create/list/rm/restore/clean coverage.
 #
 # Stubbed-backend characterization of the snapshot feature (plans/snapshots.md):
 #   - backend_container_commit dispatch: native `commit` on docker-family, and

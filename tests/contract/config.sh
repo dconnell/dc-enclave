@@ -3,7 +3,7 @@
 # This file deliberately writes literal $(...) payloads to prove they are
 # rejected as data, never executed.
 # =============================================================================
-# tests/config.sh - `dce config` command family behavior.
+# tests/contract/config.sh - `dce config` command family behavior.
 #
 # Exercises the thin validating wrapper over the per-project config file:
 #   show / get / set / ls. Verifies round-trips, per-key validation rejection,

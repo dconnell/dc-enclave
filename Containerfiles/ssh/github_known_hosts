@@ -12,7 +12,7 @@
 #
 # All three channels agreed on the fingerprints below. Do NOT edit a key without
 # re-running the three-channel check and updating the FP_* constants in
-# tests/security-ssh-host-trust.sh in the same change.
+# tests/lint/security-ssh-host-trust.sh in the same change.
 #
 # Verified fingerprints (SHA256):
 #   ed25519: +DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU

@@ -3,7 +3,7 @@
 # This file deliberately writes literal $/backtick command-substitution payloads
 # into configs to prove they are treated as data, never executed.
 # =============================================================================
-# tests/config-security.sh - M1 regression coverage.
+# tests/unit/config-security.sh - M1 regression coverage.
 #
 # Proves that config content is treated as data, not an execution surface:
 #   - cpus/memory input validation,

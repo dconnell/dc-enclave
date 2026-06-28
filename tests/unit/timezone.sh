@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/timezone.sh - Unit coverage for the host-timezone helpers in
+# tests/unit/timezone.sh - Unit coverage for the host-timezone helpers in
 # lib/common.sh that bridge `dce new` and `dce rebuild-container`.
 #
 # Each developer's container must match their host timezone, so the zone is

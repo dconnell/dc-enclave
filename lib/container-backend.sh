@@ -1337,7 +1337,7 @@ backend_exec_interactive() {
 # apple/container via `container network` (macOS 26+). The CLI shapes diverge
 # (apple uses `delete` not `rm`; apple resolves peers as `<name>.test`; apple
 # cannot live-attach a network to an existing container), so every divergence
-# is pinned in tests/backend-dispatch.sh.
+# is pinned in tests/contract/backend-dispatch.sh.
 # =============================================================================
 
 # Create a user-defined network. Extra args (e.g. --subnet <cidr>) are appended

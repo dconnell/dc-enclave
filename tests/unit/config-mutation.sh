@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/config-mutation.sh - Atomic-rewrite invariants for the config mutators.
+# tests/unit/config-mutation.sh - Atomic-rewrite invariants for the config mutators.
 #
 # dce_set_config_key / dce_set_config_array rewrite the project config via a
 # temp file + mv. mv does NOT preserve the target's mode, so a naive rewrite

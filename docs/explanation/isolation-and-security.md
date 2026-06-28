@@ -17,8 +17,8 @@ GitHub's SSH host keys are **pinned in the base image** (`Containerfiles/ssh/git
 Rotating the pin (e.g. when GitHub changes a key) is a deliberate, reviewed change:
 
 1. Re-verify the new keys against three independent channels — see `plans/security/m4.md` ("Verification channels").
-2. Update `Containerfiles/ssh/github_known_hosts` **and** the `FP_*` constants in `tests/security-ssh-host-trust.sh` in the same change.
+2. Update `Containerfiles/ssh/github_known_hosts` **and** the `FP_*` constants in `tests/lint/security-ssh-host-trust.sh` in the same change.
 3. `dce rebuild-image base` then `dce rebuild-container <name>` to pick up the new pin.
 
-The `tests/security-ssh-host-trust.sh` guard blocks a wrong/poisoned pin (it asserts the pinned fingerprints match GitHub's published values) and fails if `accept-new` or runtime `ssh-keyscan github.com` is reintroduced.
+The `tests/lint/security-ssh-host-trust.sh` guard blocks a wrong/poisoned pin (it asserts the pinned fingerprints match GitHub's published values) and fails if `accept-new` or runtime `ssh-keyscan github.com` is reintroduced.
 

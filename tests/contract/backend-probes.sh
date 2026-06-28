@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/unit/backend-probes.sh - Regression coverage for two backend reachability
+# tests/contract/backend-probes.sh - Regression coverage for two backend reachability
 # probes that broke against current runtime versions:
 #   * _backend_colima_runtime must parse MODERN colima's logrus-formatted
 #     `colima status` output (msg="runtime: docker"), not just the legacy
@@ -8,7 +8,7 @@
 #   * backend_system_info (apple) must call a subcommand that actually exists
 #     on apple/container (`container system status`), not the non-existent
 #     `container system info`.
-# Uses stub CLIs on a private PATH (same style as tests/backend-dispatch.sh).
+# Uses stub CLIs on a private PATH (same style as tests/contract/backend-dispatch.sh).
 # =============================================================================
 set -euo pipefail
 

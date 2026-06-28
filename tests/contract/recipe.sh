@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/recipe.sh - Container recipe loading/merge coverage for `dce new`.
+# tests/contract/recipe.sh - Container recipe loading/merge coverage for `dce new`.
 #
 # Covers plans/container-recipe.md phase 2 behavior:
 #   - magic lookup by project name under team/user container-recipes/

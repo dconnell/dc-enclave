@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/snapshot-volumes.sh - `dce snapshot` (volumes by default) + selective
+# tests/contract/snapshot-volumes.sh - `dce snapshot` (volumes by default) + selective
 # exclusion + confirmation prompt + isolated restore + reclamation.
 #
 # Stubbed-backend characterization:

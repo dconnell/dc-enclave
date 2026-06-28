@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# tests/scopes-image-ref.sh - Unit coverage for the scope/image-ref helpers in
+# tests/unit/scopes-image-ref.sh - Unit coverage for the scope/image-ref helpers in
 # lib/common.sh that bridge `dce new` and `dce rebuild-container`.
 #
 # These helpers decide which overlay fragments compose and which derived image

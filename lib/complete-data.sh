@@ -7,7 +7,7 @@
 # overlay scopes, subcommands, and rebuild-image targets, so the two
 # completion front-ends never duplicate logic -- in particular the hardened,
 # no-source global-config parsers (_dce_read_team_dir / _dce_read_user_dir),
-# which are a security boundary (see tests/config-security.sh).
+# which are a security boundary (see tests/unit/config-security.sh).
 #
 # Portability: written to source cleanly under bash 4+ and zsh 5+. Uses only
 # `[[ ]]`, `=~`, `$'...'`, and printf -- no associative arrays and no arrays
