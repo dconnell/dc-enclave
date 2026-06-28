@@ -46,8 +46,6 @@
 # than pin a release, replace the RUN block below with:
 #   RUN apt-get update && apt-get install -y shellcheck && rm -rf /var/lib/apt/lists/*
 
-FROM dce-base:latest
-
 USER root
 
 # TARGETARCH is injected by BuildKit (arm64/amd64) and falls back to the host
