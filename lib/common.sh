@@ -670,9 +670,17 @@ dce_git_auth_method() {
 # configured credential:
 #   pat  -> url."https://github.com/".insteadOf "git@github.com:"
 #           + credential.helper store + ~/.git-credentials (re-injected if missing)
+#           + VS Code machine setting github.gitAuthentication=false
 #   ssh  -> url."git@github.com:".insteadOf "https://github.com/"  (legacy default)
 #   none -> no insteadOf; any stale credential state is cleared
 # The opposite-direction rule is always unset so the two can never coexist.
+#
+# For PAT auth, the VS Code machine setting is also written to the container's
+# ~/.vscode-server/data/Machine/settings.json so the Source Control panel (pull/
+# push/sync) defers to git's credential helper (the PAT in ~/.git-credentials)
+# instead of routing through the GitHub extension's OAuth prompt. This complements
+# the devcontainer.json customizations approach (which is only read on (re)attach);
+# the machine settings file is always read by the VS Code Server on connect.
 #
 # The PAT crosses the host/container boundary via a stdin pipe into a short-lived
 # sh -c -- never via argv -- preserving the invariant enforced by
@@ -689,9 +697,14 @@ dce_ensure_git_credentials() {
     pat)
       # HTTPS + PAT: route any SSH GitHub URL through HTTPS and enable the file
       # credential store, then seed ~/.git-credentials if the container lost it
-      # (mirroring the SSH deploy-key re-inject in dce start).
+      # (mirroring the SSH deploy-key re-inject in dce start). VS Code may also
+      # inject a credential.helper at /etc/gitconfig; reset inherited helpers
+      # with an empty helper entry before adding `store` so PAT auth always wins
+      # (and terminal git avoids the username/password askpass popup).
       backend_exec "$project" git config --global url."https://github.com/".insteadOf "git@github.com:"
-      backend_exec "$project" git config --global credential.helper store
+      backend_exec "$project" git config --global --unset-all credential.helper 2>/dev/null || true
+      backend_exec "$project" git config --global --add credential.helper ""
+      backend_exec "$project" git config --global --add credential.helper store
       backend_exec "$project" git config --global --unset-all url."git@github.com:".insteadOf 2>/dev/null || true
       if ! backend_exec "$project" sh -c 'test -f ~/.git-credentials'; then
         # shellcheck disable=SC2016
@@ -699,6 +712,7 @@ dce_ensure_git_credentials() {
         printf 'https://x-access-token:%s@github.com\n' "$(dce_read_github_token)" \
           | backend_exec_stdin "$project" sh -c 'cat > ~/.git-credentials && chmod 600 ~/.git-credentials'
       fi
+      _dce_ensure_vscode_git_auth "$project" true
       ;;
     ssh)
       # SSH deploy key: route any HTTPS GitHub URL through SSH (legacy default).
@@ -706,6 +720,7 @@ dce_ensure_git_credentials() {
       backend_exec "$project" git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true
       backend_exec "$project" git config --global --unset-all credential.helper 2>/dev/null || true
       backend_exec "$project" sh -c 'rm -f ~/.git-credentials' 2>/dev/null || true
+      _dce_ensure_vscode_git_auth "$project" false
       ;;
     none)
       # No GitHub credential configured: clear any stale auth state so git falls
@@ -714,8 +729,47 @@ dce_ensure_git_credentials() {
       backend_exec "$project" git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true
       backend_exec "$project" git config --global --unset-all credential.helper 2>/dev/null || true
       backend_exec "$project" sh -c 'rm -f ~/.git-credentials' 2>/dev/null || true
+      _dce_ensure_vscode_git_auth "$project" false
       ;;
   esac
+}
+
+# Best-effort: write/remove the VS Code machine setting github.gitAuthentication
+# inside the container's vscode-server so VS Code's Source Control panel uses
+# git's credential helper (PAT) instead of the GitHub extension OAuth prompt.
+# jq-on-host is required; absence is silently tolerated (best-effort).  The
+# setting is merged into the existing machine settings JSON, preserving any user
+# preferences.  When enable="false", the key is removed so VS Code's default
+# (true) is restored for ssh/none auth.
+_dce_ensure_vscode_git_auth() {
+  local project="$1"
+  local enable="$2"
+
+  command -v jq >/dev/null 2>&1 || return 0
+
+  local existing="{}"
+  # shellcheck disable=SC2016
+  # sh -c runs in the container; ~ expands to dev's home there.
+  existing="$(backend_exec "$project" sh -c 'cat ~/.vscode-server/data/Machine/settings.json 2>/dev/null' 2>/dev/null || printf '{}')"
+  printf '%s' "$existing" | jq -e . >/dev/null 2>&1 || existing='{}'
+
+  local existing_normalized=""
+  existing_normalized="$(printf '%s' "$existing" | jq -c . 2>/dev/null)" || existing_normalized='{}'
+
+  local merged=""
+  if [[ "$enable" == "true" ]]; then
+    merged="$(printf '%s' "$existing" | jq -c '. + {"github.gitAuthentication": false}' 2>/dev/null)" || return 0
+  else
+    merged="$(printf '%s' "$existing" | jq -c 'del(.["github.gitAuthentication"])' 2>/dev/null)" || return 0
+  fi
+
+  # Skip the write if nothing changed (avoids creating an empty file for no reason).
+  [[ "$merged" == "$existing_normalized" ]] && return 0
+
+  # shellcheck disable=SC2016
+  # sh -c runs in the container; ~ expands to dev's home there.
+  printf '%s' "$merged" \
+    | backend_exec_stdin "$project" sh -c 'mkdir -p ~/.vscode-server/data/Machine && cat > ~/.vscode-server/data/Machine/settings.json' 2>/dev/null || true
 }
 
 # Derive a filesystem-safe slug from a project name (lowercased, non-alnum

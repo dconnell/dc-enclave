@@ -5,9 +5,10 @@
 # The devcontainer.json that `dce new` seeds (Docker-compatible backends) embeds
 # several fields derived from dce-managed state: build.dockerfile (from scopes),
 # mounts (the .npmrc bind + one hidden volume per hidden path), runArgs (network
-# membership), forwardPorts (ports), and containerEnv.TZ. The file is seed-only
-# -- never overwritten -- so once a user edits config (scopes/hide/networks/
-# ports) and rebuilds, VS Code silently desyncs.
+# membership), forwardPorts (ports), containerEnv.TZ, and (when a GitHub PAT is
+# configured) customizations.vscode.settings."github.gitAuthentication": false.
+# The file is seed-only -- never overwritten -- so once a user edits config
+# (scopes/hide/networks/ports) and rebuilds, VS Code silently desyncs.
 #
 # This lib is the single source of truth for that managed state:
 #   - dce_devcontainer_expected_state / _recorded_state : canonical comparable
@@ -390,6 +391,12 @@ _dce_dc_json_number_array() {
 
 # Full JSON for a from-scratch seed. Byte-compatible with the heredoc `dce new`
 # historically emitted, so existing lifecycle assertions still hold.
+#
+# The optional auth_method argument ("pat"/"ssh"/"none", from
+# dce_git_auth_method) controls whether the VS Code git-auth setting is emitted:
+# only "pat" needs github.gitAuthentication=false so VS Code's Source Control
+# panel defers to git's credential helper (the PAT-backed ~/.git-credentials)
+# instead of prompting via the GitHub extension's OAuth flow.
 dce_devcontainer_render() {
   local project="$1"
   local build_dockerfile="$2"
@@ -399,6 +406,7 @@ dce_devcontainer_render() {
   local networks_csv="$6"
   local ports_csv="$7"
   local host_tz="$8"
+  local auth_method="${9:-}"
 
   local forward_ports_block=""
   local -a container_ports=()
@@ -457,6 +465,17 @@ dce_devcontainer_render() {
     containerenv_block=$',\n  "containerEnv": {\n    "TZ": "'"$host_tz"$'"\n  }'
   fi
 
+  # Only emit the VS Code git-auth override for PAT auth. With the PAT in
+  # ~/.git-credentials, VS Code's Source Control panel must defer to git's
+  # credential helper instead of routing through the GitHub extension's OAuth
+  # prompt. For ssh/none, the VS Code default (true) is left untouched: ssh
+  # auth bypasses HTTPS credentials entirely, and "none" benefits from the
+  # GitHub extension's interactive OAuth as the only available auth path.
+  local customizations_block=""
+  if [[ "$auth_method" == "pat" ]]; then
+    customizations_block=$',\n  "customizations": {\n    "vscode": {\n      "settings": {\n        "github.gitAuthentication": false\n      }\n    }\n  }'
+  fi
+
   cat <<EOF
 {
   "name": "dce-$project",
@@ -467,7 +486,7 @@ dce_devcontainer_render() {
   "workspaceMount": "source=\${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
   "remoteUser": "dev",
-  "postCreateCommand": "true"$forward_ports_block$mounts_block$runargs_block$containerenv_block
+  "postCreateCommand": "true"$forward_ports_block$mounts_block$runargs_block$containerenv_block$customizations_block
 }
 EOF
 }
@@ -475,6 +494,12 @@ EOF
 # On-demand rewrite of the managed fields, preserving user-authored keys/mounts.
 # REQUIRES jq. dry_run="true" previews without writing. Atomic write; preserves
 # the original file mode. Returns 0 on success (1 + stderr message on failure).
+#
+# The auth_method argument ("pat"/"ssh"/"none") controls the managed VS Code
+# git-auth setting: "pat" injects customizations.vscode.settings."github.
+# gitAuthentication": false (so VS Code uses the PAT-backed credential store);
+# any other value removes it so VS Code falls back to its default. User
+# customizations (other settings, extensions) are always preserved.
 dce_devcontainer_sync() {
   local project="$1"
   local file="$2"
@@ -486,6 +511,7 @@ dce_devcontainer_sync() {
   local ports_csv="$8"
   local host_tz="$9"
   local dry_run="${10:-false}"
+  local auth_method="${11:-}"
 
   if ! command -v jq >/dev/null 2>&1; then
     printf 'ERROR: sync-vscode requires jq (it is optional everywhere else).\n' >&2
@@ -536,12 +562,13 @@ dce_devcontainer_sync() {
   local user_keys="0"
   user_keys="$(jq -r '
       (keys - ["name","build","workspaceMount","workspaceFolder","remoteUser",
-               "postCreateCommand","forwardPorts","runArgs","mounts","containerEnv"]
+               "postCreateCommand","forwardPorts","runArgs","mounts","containerEnv",
+               "customizations"]
       ) | length' "$file" 2>/dev/null || printf '0')"
 
   if [[ "$dry_run" == "true" ]]; then
     printf 'Dry run: would rewrite managed fields (build, mounts, runArgs,\n' >&2
-    printf 'forwardPorts, containerEnv.TZ) in %s.\n' "$file" >&2
+    printf 'forwardPorts, containerEnv.TZ, VS Code git-auth) in %s.\n' "$file" >&2
     printf 'Preserved (untouched): %s user top-level key(s) + user mounts.\n' "$user_keys" >&2
     dce_devcontainer_detect_drift "$project" "$file" "$build_dockerfile" \
       "$hidden_csv" "$networks_csv" "$ports_csv" >&2 || true
@@ -562,7 +589,8 @@ dce_devcontainer_sync() {
       --argjson add_mounts "$mounts_json" \
       --arg slug "$slug" \
       --argjson runargs "$runargs_json" \
-      --arg tz "$host_tz" '
+      --arg tz "$host_tz" \
+      --arg auth "$auth_method" '
       .name = $name
       | .build = {"dockerfile": $df, "context": $ctx}
       | .workspaceMount = "source=${localWorkspaceFolder},target=/workspace,type=bind"
@@ -581,6 +609,14 @@ dce_devcontainer_sync() {
         ) ) + $add_mounts
       | (if $tz == "" then .
          else (.containerEnv = ((.containerEnv // {}) + {"TZ": $tz})) end)
+      | (if $auth == "pat" then
+          .customizations = ((.customizations // {})
+            | .vscode = ((.vscode // {})
+              | .settings = ((.settings // {})
+                + {"github.gitAuthentication": false})))
+        elif ((.customizations // {}) | (.vscode.settings // {}) | has("github.gitAuthentication")) then
+          del(.customizations.vscode.settings["github.gitAuthentication"])
+        else . end)
     ' "$file" > "$tmp_file" 2>/dev/null; then
     rm -f "$tmp_file"
     printf 'ERROR: failed to rewrite devcontainer.json (is it valid JSON?).\n' >&2

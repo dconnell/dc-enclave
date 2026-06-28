@@ -224,6 +224,12 @@ grep -Fq "source=$hidden_vol" "$dce_json" || fail "devcontainer.json: hidden vol
 # from VS Code matches a dce-created container.
 grep -Fq '"containerEnv"' "$dce_json" || fail "devcontainer.json: containerEnv block missing"
 grep -Fq '"TZ": "America/New_York"' "$dce_json" || fail "devcontainer.json: TZ not set in containerEnv"
+# At dce-new time, no PAT is configured (placeholder token file; SSH key
+# generated), so the VS Code git-auth setting must NOT be present -- VS Code's
+# default (GitHub extension OAuth) should remain for ssh/none auth.
+grep -Fq '"github.gitAuthentication"' "$dce_json" \
+  && fail "devcontainer.json: git-auth setting must be absent when no PAT is configured" \
+  || true
 
 pass "dce new (docker): config, secrets, layer order, create argv, devcontainer.json"
 

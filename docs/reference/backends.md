@@ -60,6 +60,12 @@ docker/orbstack/colima/podman backends:
   diff when an existing file diverges
 - `dce config sync-vscode <name>` rewrites those managed fields on demand
   (use `--dry-run` to preview); user fields are preserved
+- When a GitHub PAT is configured, the generated `devcontainer.json` also sets
+  `customizations.vscode.settings."github.gitAuthentication": false` so VS Code's
+  Source Control panel (pull/push/sync) uses the PAT in `~/.git-credentials`
+  instead of prompting via the GitHub extension's OAuth flow. The setting is
+  omitted for ssh/none auth; run `dce config sync-vscode <name>` after filling
+  in the token to update an existing file.
 - `dce new` and `dce rebuild-container` also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
 
 apple backend:

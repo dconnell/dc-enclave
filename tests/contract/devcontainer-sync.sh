@@ -92,6 +92,26 @@ else
     || fail "config sync-vscode: hidden mount not synced"
   echo "$RDC" | jq -e '.extensions==["x"]' >/dev/null || fail "config sync-vscode: user extensions lost"
 
+  # (F1b) With a PAT configured, sync must inject github.gitAuthentication=false
+  # so VS Code's git ops defer to the PAT-backed credential store.
+  printf 'ghp_testtoken_for_sync\n' > "$SECRET2/github-token"
+  chmod 600 "$SECRET2/github-token"
+  dce_set_config_key "$SECRET2/config" TOKEN_FILE "$SECRET2/github-token"
+  run_config sync-vscode "$PROJ2" >"$WORK/c2.out" 2>"$WORK/c2.err" \
+    || fail "config sync-vscode (pat) exited non-zero ($(cat "$WORK/c2.err"))"
+  RDC2="$(cat "$DC2")"
+  echo "$RDC2" | jq -e '.customizations.vscode.settings["github.gitAuthentication"] == false' >/dev/null \
+    || fail "config sync-vscode (pat): github.gitAuthentication must be false"
+  # user extensions still preserved.
+  echo "$RDC2" | jq -e '.extensions==["x"]' >/dev/null || fail "config sync-vscode (pat): user extensions lost"
+  # Remove PAT -> next sync must strip the managed setting (back to ssh/none).
+  dce_set_config_key "$SECRET2/config" TOKEN_FILE "$SECRET2/github-token-NONEXISTENT"
+  run_config sync-vscode "$PROJ2" >"$WORK/c3.out" 2>"$WORK/c3.err" \
+    || fail "config sync-vscode (no-pat) exited non-zero ($(cat "$WORK/c3.err"))"
+  RDC3="$(cat "$DC2")"
+  echo "$RDC3" | jq -e '.customizations.vscode.settings["github.gitAuthentication"] == null' >/dev/null \
+    || fail "config sync-vscode (no-pat): github.gitAuthentication must be removed"
+
   # (F2) --dry-run writes nothing.
   printf '{ "forwardPorts": [1111] }\n' > "$DC2"
   before="$(dce_sha256_file "$DC2")"

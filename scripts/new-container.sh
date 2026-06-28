@@ -685,8 +685,11 @@ if $DOCKER_COMPATIBLE; then
 
     # The seeded JSON is produced by the single shared renderer so `dce new`,
     # drift detection, and `dce config sync-vscode` all agree on managed state.
+    # Pass the current git auth method so the renderer can emit the VS Code
+    # git-auth override only when a PAT is configured (see dce_devcontainer_render).
     dce_devcontainer_render "$PROJECT" "$DEVCONTAINER_BUILD_FILE" "$ROOT_DIR" \
       "$SECRET_DIR" "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" "$HOST_TZ" \
+      "$(dce_git_auth_method)" \
       > "$DEVCONTAINER_FILE"
 
     echo "  ✓ Created $DEVCONTAINER_FILE"

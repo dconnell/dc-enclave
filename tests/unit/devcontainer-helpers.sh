@@ -229,7 +229,7 @@ fi
 # =============================================================================
 if command -v jq >/dev/null 2>&1; then
   RENDERED="$(dce_devcontainer_render "$PROJECT" "$DERIVED_DF" "$ROOT_DIR" "$WORK/sec" \
-    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "America/New_York")"
+    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "America/New_York" "pat")"
   printf '%s' "$RENDERED" | jq -e '.name=="dce-myapp" and .build.dockerfile=="'"$DERIVED_DF"'" and .build.context=="'"$ROOT_DIR"'" and .workspaceFolder=="/workspace" and .remoteUser=="dev" and .postCreateCommand=="true"' >/dev/null \
     || fail "render: core fields wrong/invalid JSON"
   printf '%s' "$RENDERED" | jq -e '.forwardPorts==[3000,8080]' >/dev/null || fail "render: forwardPorts"
@@ -240,7 +240,24 @@ if command -v jq >/dev/null 2>&1; then
     || fail "render: managed hidden mount missing"
   printf '%s' "$RENDERED" | jq -e '[.mounts[] | capture("source=(?<s>[^,]+)").s] | index("'"$WORK"'/sec/.npmrc") != null' >/dev/null \
     || fail "render: managed npmrc mount missing"
-  pass "dce_devcontainer_render: valid JSON with all managed fields"
+  # PAT auth: VS Code must defer git ops to git's credential helper so the PAT
+  # in ~/.git-credentials is used instead of the GitHub extension's OAuth.
+  printf '%s' "$RENDERED" | jq -e '.customizations.vscode.settings["github.gitAuthentication"] == false' >/dev/null \
+    || fail "render (pat): github.gitAuthentication must be false"
+  pass "dce_devcontainer_render: valid JSON with all managed fields (pat auth)"
+
+  # With non-PAT auth (ssh or none), the setting must NOT be emitted so VS Code
+  # falls back to its default (GitHub extension OAuth prompt) -- the only way to
+  # authenticate when no dce-managed PAT is available.
+  RENDERED_SSH="$(dce_devcontainer_render "$PROJECT" "$DERIVED_DF" "$ROOT_DIR" "$WORK/sec" \
+    "node_modules" "mynet" "3000" "" "ssh")"
+  printf '%s' "$RENDERED_SSH" | jq -e '.customizations.vscode.settings["github.gitAuthentication"] == null' >/dev/null \
+    || fail "render (ssh): github.gitAuthentication must be absent"
+  RENDERED_NONE="$(dce_devcontainer_render "$PROJECT" "$DERIVED_DF" "$ROOT_DIR" "$WORK/sec" \
+    "" "" "" "" "none")"
+  printf '%s' "$RENDERED_NONE" | jq -e '.customizations.vscode.settings["github.gitAuthentication"] == null' >/dev/null \
+    || fail "render (none): github.gitAuthentication must be absent"
+  pass "dce_devcontainer_render: no git auth setting for ssh/none (VS Code default preserved)"
 else
   pass "dce_devcontainer_render (skipped — jq not installed)"
 fi
@@ -269,12 +286,18 @@ else
     \"runArgs\": [\"--network\", \"oldnet\"],
     \"containerEnv\": { \"TZ\": \"UTC\", \"USERKEY\": \"keepme\" },
     \"extensions\": [\"ms-python.python\"],
-    \"settings\": { \"editor\": { \"formatOnSave\": true } }
+    \"settings\": { \"editor\": { \"formatOnSave\": true } },
+    \"customizations\": {
+      \"vscode\": {
+        \"extensions\": [\"github.copilot\"],
+        \"settings\": { \"files.autoSave\": \"onFocusChange\" }
+      }
+    }
   }")"
   chmod 600 "$DC_SYNC_TARGET"
 
   dce_devcontainer_sync "$PROJECT" "$DC_SYNC_TARGET" "$DERIVED_DF" "$ROOT_DIR" "$SECRET" \
-    "node_modules,.cache" "mynet:10.0.0.5,obs" "3000:3000,8080" "America/New_York" "false" \
+    "node_modules,.cache" "mynet:10.0.0.5,obs" "3000:3000,8080" "America/New_York" "false" "pat" \
     >"$WORK/sync.out" 2>"$WORK/sync.err" || fail "sync exited non-zero ($(cat "$WORK/sync.err"))"
 
   AFTER="$(cat "$DC_SYNC_TARGET")"
@@ -290,6 +313,16 @@ else
   echo "$AFTER" | jq -e '.extensions==["ms-python.python"]' >/dev/null || fail "sync: user extensions lost"
   echo "$AFTER" | jq -e '.settings.editor.formatOnSave==true' >/dev/null || fail "sync: user settings lost"
   echo "$AFTER" | jq -e '.containerEnv.USERKEY=="keepme"' >/dev/null || fail "sync: user containerEnv key lost"
+  # managed VS Code setting injected so VS Code git ops defer to git's
+  # credential helper (PAT-backed ~/.git-credentials) instead of the GitHub
+  # extension's OAuth prompt.
+  echo "$AFTER" | jq -e '.customizations.vscode.settings["github.gitAuthentication"] == false' >/dev/null \
+    || fail "sync: github.gitAuthentication not set to false"
+  # user VS Code customizations preserved alongside the managed setting.
+  echo "$AFTER" | jq -e '.customizations.vscode.settings["files.autoSave"] == "onFocusChange"' >/dev/null \
+    || fail "sync: user vscode settings lost"
+  echo "$AFTER" | jq -e '.customizations.vscode.extensions == ["github.copilot"]' >/dev/null \
+    || fail "sync: user vscode extensions lost"
   # mounts merged: stale npmrc + stale single hidden vol dropped; new managed
   # (npmrc + node_modules + .cache) added; user bind mount preserved.
   echo "$AFTER" | jq -e '[.mounts[] | capture("source=(?<s>[^,]+)").s] | index("'"$SECRET"'/.npmrc") != null' >/dev/null \
@@ -309,11 +342,35 @@ else
     || fail "sync: post-sync detection still reports drift"
   pass "dce_devcontainer_sync: rewrites managed fields, preserves user fields, keeps mode 600"
 
+  # Non-PAT auth (ssh/none): the managed setting must be REMOVED so VS Code
+  # falls back to its default (GitHub extension OAuth). Starting fixture has
+  # the setting present (stale from a previous PAT-configured sync).
+  DC_NOPAT="$(write_dc nopat "{
+    \"name\": \"dce-$PROJECT\",
+    \"customizations\": {
+      \"vscode\": {
+        \"extensions\": [\"github.copilot\"],
+        \"settings\": { \"github.gitAuthentication\": false, \"files.autoSave\": \"afterDelay\" }
+      }
+    }
+  }")"
+  dce_devcontainer_sync "$PROJECT" "$DC_NOPAT" "$DERIVED_DF" "$ROOT_DIR" "$SECRET" \
+    "node_modules" "mynet" "3000" "" "false" "ssh" \
+    >"$WORK/nopat.out" 2>"$WORK/nopat.err" || fail "sync (ssh) exited non-zero ($(cat "$WORK/nopat.err"))"
+  NOPAT_AFTER="$(cat "$DC_NOPAT")"
+  echo "$NOPAT_AFTER" | jq -e '.customizations.vscode.settings["github.gitAuthentication"] == null' >/dev/null \
+    || fail "sync (ssh): github.gitAuthentication must be removed"
+  echo "$NOPAT_AFTER" | jq -e '.customizations.vscode.settings["files.autoSave"] == "afterDelay"' >/dev/null \
+    || fail "sync (ssh): user vscode settings must survive the managed-key removal"
+  echo "$NOPAT_AFTER" | jq -e '.customizations.vscode.extensions == ["github.copilot"]' >/dev/null \
+    || fail "sync (ssh): user vscode extensions lost"
+  pass "dce_devcontainer_sync (ssh): removes managed git-auth setting, preserves user customizations"
+
   # --dry-run writes nothing.
   DC_DRY="$(write_dc dry "{ \"forwardPorts\": [1111] }")"
   SHA_BEFORE="$(dce_sha256_file "$DC_DRY")"
   dce_devcontainer_sync "$PROJECT" "$DC_DRY" "$DERIVED_DF" "$ROOT_DIR" "$SECRET" \
-    "node_modules" "mynet" "3000" "" "true" >"$WORK/dry.out" 2>&1 || fail "sync --dry-run exited non-zero"
+    "node_modules" "mynet" "3000" "" "true" "pat" >"$WORK/dry.out" 2>&1 || fail "sync --dry-run exited non-zero"
   [[ "$(dce_sha256_file "$DC_DRY")" == "$SHA_BEFORE" ]] \
     || fail "sync --dry-run must not modify the file"
   pass "dce_devcontainer_sync: --dry-run leaves the file untouched"

@@ -6,6 +6,7 @@
 # the PAT never crosses the host/container boundary via argv (only stdin):
 #   - PAT present        -> HTTPS insteadOf + credential.helper store +
 #                           ~/.git-credentials (x-access-token line, via stdin)
+#                           + VS Code machine setting github.gitAuthentication=false
 #   - SSH key only       -> SSH insteadOf (legacy), no credential store/file
 #   - placeholder token  -> treated as SSH (when key present) / none otherwise
 #   - neither            -> no insteadOf; any stale auth state cleared
@@ -93,9 +94,13 @@ grep -Fq 'config --global --unset-all url.git@github.com:.insteadOf' "$ARGV_LOG"
   || fail "pat: stale SSH insteadOf not unset"
 pass "pat: HTTPS insteadOf set, SSH insteadOf unset"
 
-grep -Fq 'config --global credential.helper store' "$ARGV_LOG" \
+grep -Fq 'config --global --unset-all credential.helper' "$ARGV_LOG" \
+  || fail "pat: stale credential.helper entries not cleared"
+grep -Fq 'config --global --add credential.helper ' "$ARGV_LOG" \
+  || fail "pat: credential.helper reset entry (empty) not set"
+grep -Fq 'config --global --add credential.helper store' "$ARGV_LOG" \
   || fail "pat: credential.helper store not set"
-pass "pat: credential.helper store set"
+pass "pat: credential.helper chain reset + store set"
 
 # ~/.git-credentials seeded via stdin (not argv), x-access-token form.
 grep -Fq "https://x-access-token:$SENTINEL@github.com" "$STDIN_CAP" \
@@ -104,18 +109,30 @@ grep -Fq 'cat > ~/.git-credentials' "$ARGV_LOG" \
   || fail "pat: credential write wrapper missing"
 pass "pat: ~/.git-credentials seeded via stdin"
 
+# VS Code machine setting github.gitAuthentication=false is written to the
+# container's vscode-server so the Source Control panel uses the PAT-backed
+# credential store instead of the GitHub extension OAuth prompt.
+grep -Fq 'cat > ~/.vscode-server/data/Machine/settings.json' "$ARGV_LOG" \
+  || fail "pat: VS Code machine settings write missing"
+grep -Fq '"github.gitAuthentication":false' "$STDIN_CAP" \
+  || fail "pat: github.gitAuthentication=false not delivered via stdin"
+pass "pat: VS Code machine setting github.gitAuthentication=false written"
+
 # --- SSH branch: SSH insteadOf, no PAT credential wiring ----------------------
 write_token "ghp_REPLACE_ME"; write_ssh_key
 reset_state
 dce_ensure_git_credentials "$PROJECT"
 grep -Fq 'config --global url.git@github.com:.insteadOf https://github.com/' "$ARGV_LOG" \
   || fail "ssh: SSH insteadOf not set"
-grep -Fq 'config --global credential.helper store' "$ARGV_LOG" \
+grep -Fq 'config --global --add credential.helper store' "$ARGV_LOG" \
   && fail "ssh: credential.helper store must not be set"
 grep -Fq 'cat > ~/.git-credentials' "$ARGV_LOG" \
   && fail "ssh: must not seed ~/.git-credentials"
 grep -Fq "$SENTINEL" "$ARGV_LOG" && fail "ssh: no sentinel expected in argv"
-pass "ssh: SSH insteadOf set, no PAT credential wiring"
+# No VS Code machine settings write needed (no existing setting to remove).
+grep -Fq 'cat > ~/.vscode-server/data/Machine/settings.json' "$ARGV_LOG" \
+  && fail "ssh: VS Code machine settings write must not happen when no existing setting"
+pass "ssh: SSH insteadOf set, no PAT credential wiring, no VS Code write"
 
 # --- none branch: clears stale state -----------------------------------------
 write_token "ghp_REPLACE_ME"; rm -f "$SSH_KEY_PATH"
@@ -127,6 +144,9 @@ grep -Fq 'config --global --unset-all url.https://github.com/.insteadOf' "$ARGV_
   || fail "none: stale HTTPS insteadOf not unset"
 grep -Fq 'config --global --unset-all credential.helper' "$ARGV_LOG" \
   || fail "none: stale credential.helper not unset"
+# No VS Code machine settings write needed (no existing setting to remove).
+grep -Fq 'cat > ~/.vscode-server/data/Machine/settings.json' "$ARGV_LOG" \
+  && fail "none: VS Code machine settings write must not happen when no existing setting"
 pass "none: stale credential state cleared"
 
 echo ""

@@ -445,7 +445,7 @@ do_sync_vscode() {
   # shellcheck disable=SC2153
   # SECRET_DIR is a global populated by dce_load_project_config (not a typo).
   dce_devcontainer_sync "$project" "$dc_file" "$build_file" "$ROOT_DIR" "$SECRET_DIR" \
-    "$hidden_csv" "$nets_csv" "$ports_csv" "$tz" "$dry_run"
+    "$hidden_csv" "$nets_csv" "$ports_csv" "$tz" "$dry_run" "$(dce_git_auth_method)"
 }
 
 # --- dispatch ----------------------------------------------------------------
