@@ -1,0 +1,28 @@
+command	alias	needs_project	notes
+# tests/integration/matrix/commands.tsv - Command inventory + alias map.
+# Tab-separated. `needs_project` = 1 if the command takes a project name
+# positionally (so the command-surface alias check creates a fixture project
+# first). Aliases are exercised by cases/command-surface.sh to confirm each
+# alias dispatches to the same script as its canonical command.
+new		0	create a project
+start		1	start one project
+stop		1	stop one project
+restart		1	restart one project
+status	s	0	state checks
+list	ls	0	list projects
+shell		1	non-interactive command mode
+logs		1	tail/follow
+exec		1	one-shot
+rm		1	remove a project
+rebuild-container		1	destroy + recreate
+rebuild-image		0	rebuild managed images
+snapshot		1	commit + capture volumes
+snapshots		0	list snapshots (alias of snapshot)
+provenance		1	image provenance
+clean		0	reclaim space
+config		1	inspect/edit config
+doctor		0	preflight diagnostics
+network	net	0	private networks
+install		1	install dotfiles
+version		0	version (also --version, -v)
+help		0	help (also --help, -h)

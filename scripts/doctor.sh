@@ -316,22 +316,11 @@ doctor_backend() {  # <backend>
   fi
 }
 
-# Enumerate every backend whose CLI is detectable on PATH. Each of the five is
-# independent: a machine with Docker Desktop + Colima + Podman genuinely has
-# three docker-family/podman backends, and each gets its own section. The docker
-# entry shows its active context in the header so an OrbStack/Colima-pinned
-# default context is never ambiguous.
+# Enumerate every backend whose CLI is detectable on PATH. Thin delegate to the
+# shared lib/container-backend.sh source of truth (backend_detect_available) so
+# doctor and the integration harness report the same set of available backends.
 detect_backends() {
-  if command -v container >/dev/null 2>&1; then printf 'apple\n'; fi
-  if command -v docker   >/dev/null 2>&1; then printf 'docker\n'; fi
-  if command -v docker >/dev/null 2>&1 \
-     && docker context ls --format '{{.Name}}' 2>/dev/null | grep -iq orbstack; then
-    printf 'orbstack\n'
-  fi
-  if command -v colima >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
-    printf 'colima\n'
-  fi
-  if command -v podman >/dev/null 2>&1; then printf 'podman\n'; fi
+  backend_detect_available
 }
 
 # --- project probes -----------------------------------------------------------

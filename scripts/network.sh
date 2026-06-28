@@ -66,6 +66,7 @@ do_create() {
   local name=""
   local create_failed=0
   local -a subnet_args=()
+  local subnet_v6=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -77,7 +78,9 @@ do_create() {
         ;;
       --subnet-v6)
         [[ $# -ge 2 && "$2" != --* ]] || { echo "ERROR: --subnet-v6 requires a CIDR argument" >&2; exit 1; }
-        subnet_args+=(--subnet-v6 "$2")
+        # Validated/translated per-backend below (docker-family has no --subnet-v6
+        # flag; dce_validate_subnet_value is IPv4-only so it is not applied here).
+        subnet_v6="$2"
         shift 2
         ;;
       --*)
@@ -99,6 +102,18 @@ do_create() {
 
   backend_use "${CONTAINER_BACKEND:-}"
   local backend; backend="$(backend_name)"
+
+  # Translate --subnet-v6 for the active backend. docker-family has no
+  # --subnet-v6 flag (IPv6 uses `--ipv6` plus a v6 `--subnet`), so emit that
+  # pair; apple/container's v6 flag surface is unverified, so pass it through
+  # unchanged (apple network support is create-time-only either way).
+  if [[ -n "$subnet_v6" ]]; then
+    if [[ "$backend" == "apple" ]]; then
+      subnet_args+=(--subnet-v6 "$subnet_v6")
+    else
+      subnet_args+=(--ipv6 --subnet "$subnet_v6")
+    fi
+  fi
 
   if backend_network_exists "$name"; then
     echo "Network '$name' already exists on backend '$backend'."

@@ -1,0 +1,75 @@
+case_id	backend_scope	command	args	expected_exit	assertions
+# =============================================================================
+# tests/integration/matrix/flags.tsv - Flag matrix source of truth.
+#
+# Tab-separated. Tokens substituted by lib/matrix.sh:
+#   $PROJECT  case project name (also the `new` positional)
+#   $NET      a unique private network name (only created when referenced)
+#   $LABEL    a unique snapshot label
+# backend_scope: all | docker_family | apple | docker | orbstack | colima | podman
+#                | comma-list. expected_exit: 0 = success, non-zero = expected fail.
+# assertions: ;-separated substrings that must appear in combined output;
+#             prefix with ! to assert absence. Empty = exit-code-only.
+#
+# Fixture-heavy / interactive / prompt-gated flows (snapshot restore, --rotate-
+# keys, --config recipe, --repo-path, --network/--ip, network subcommands,
+# `logs --follow`, rebuild-image, install) live in cases/*.sh (the coverage
+# guard scans BOTH this file and cases/*.sh). --save-team / --save-user are
+# deferred to phase 2 (DCE_CONFIG_ROOT isolation); see cases/flag-coverage.sh.
+# =============================================================================
+
+# --- dce new: independent + pairwise (non-fixture flags) ---
+new-baseline	all	new	$PROJECT	0	
+new-cpus	all	new	$PROJECT --cpus 2	0	
+new-memory	all	new	$PROJECT --memory 512m	0	
+new-hide	all	new	$PROJECT --hide node_modules	0	
+new-ports	all	new	$PROJECT 3000:3000	0	
+new-cpus-memory	all	new	$PROJECT --cpus 2 --memory 512m	0	
+new-hide-ports	all	new	$PROJECT --hide node_modules 3000:3000	0	
+
+# --- dce logs (follow modes covered in cases/lifecycle.sh with a timeout) ---
+logs-tail	all	logs	$PROJECT --tail 5	0	
+logs-tail-eq	all	logs	$PROJECT --tail=5	0	
+
+# --- dce exec (--root MUST precede the project name: dce exec [--root] <name> <cmd>) ---
+exec-default	all	exec	$PROJECT id	0	
+exec-root	all	exec	--root $PROJECT id	0	uid=0
+
+# --- dce rm (independent + combined keep flags) ---
+rm-yes	all	rm	$PROJECT --yes	0	
+rm-keep-config	all	rm	$PROJECT --keep-config --yes	0	
+rm-keep-volumes	all	rm	$PROJECT --keep-volumes --yes	0	
+rm-keep-both	all	rm	$PROJECT --keep-config --keep-volumes --yes	0	
+
+# --- dce rebuild-container (--rotate-keys / --from-snap in cases/lifecycle.sh) ---
+rb-yes	all	rebuild-container	$PROJECT --yes	0	
+rb-keep-hv	all	rebuild-container	$PROJECT --keep-hidden-volumes --yes	0	
+
+# --- dce provenance (current + history/all) ---
+prov-current	all	provenance	$PROJECT	0	
+prov-history	all	provenance	$PROJECT --history	0	
+prov-all	all	provenance	$PROJECT --all	0	
+
+# --- dce clean (dry-run variants + mutually-exclusive expected failure) ---
+clean-dry	all	clean	--dry-run	0	
+clean-hv-dry	all	clean	--hidden-volumes $PROJECT --dry-run	0	
+clean-snap-dry	all	clean	--snapshots $PROJECT --dry-run	0	
+clean-bad-combo	all	clean	--hidden-volumes --snapshots $PROJECT	1	
+
+# --- dce config (show/get/set/ls + sync-vscode incl. backend restriction) ---
+config-show	all	config	show $PROJECT	0	
+config-get-cpus	all	config	get $PROJECT cpus	0	
+config-set-mem	all	config	set $PROJECT memory=256m	0	
+config-ls	all	config	ls	0	
+config-sync-dry	docker_family	config	sync-vscode $PROJECT --dry-run	0	
+config-sync	docker_family	config	sync-vscode $PROJECT	0	
+config-sync-apple	apple	config	sync-vscode $PROJECT	1	no devcontainer.json
+
+# --- dce snapshot (rm + restore in cases/lifecycle.sh) ---
+snap-exclude-volumes	all	snapshot	$PROJECT --exclude-volumes --yes	0	
+snap-yes	all	snapshot	$PROJECT $LABEL --yes	0	
+snap-exclude-volume	all	snapshot	$PROJECT --exclude-volume node_modules --yes	0	
+
+# --- dce snapshots list ---
+snaps-list	all	snapshots	list	0	
+snaps-list-proj	all	snapshots	list $PROJECT	0	

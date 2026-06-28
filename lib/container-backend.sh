@@ -170,21 +170,25 @@ _backend_use_colima_context() {
 # Read Colima's active runtime (docker/containerd/...) from `colima status`.
 _backend_colima_runtime() {
   local status=""
-  status="$(colima status 2>/dev/null || true)"
+  # `colima status` writes its output to STDERR on current colima versions, so
+  # capture both streams (and tolerate the non-zero exit colima returns when the
+  # VM is down -- an empty result is handled below as "unknown runtime").
+  status="$(colima status 2>&1 || true)"
   [[ -n "$status" ]] || return 1
 
   local runtime=""
-  runtime="$(printf '%s\n' "$status" | awk -F':' '
-    tolower($1) ~ /runtime/ {
-      value=$2
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-      print tolower(value)
-      exit
-    }
-  ')"
+  # `colima status` renders the runtime two ways across versions:
+  #   legacy:  `runtime: docker`
+  #   modern:  `time=".." level=info msg="runtime: docker"`  (logrus format)
+  # Splitting on ':' and matching the first field (the old approach) breaks on
+  # the modern form, where field $1 is the timestamp. Match the literal
+  # `runtime:` token anywhere in the line and capture the following word.
+  runtime="$(printf '%s\n' "$status" \
+    | sed -nE 's/.*runtime:[[:space:]]*([A-Za-z0-9._-]+).*/\1/p' \
+    | head -n1)"
 
   [[ -n "$runtime" ]] || return 1
-  printf '%s\n' "$runtime"
+  printf '%s\n' "${runtime,,}"
 }
 
 # Auto-detect the backend when CONTAINER_BACKEND is unset.
@@ -226,6 +230,29 @@ _backend_detect_auto() {
   echo "ERROR: No supported container backend found." >&2
   echo "  Install apple/container, Docker Desktop, OrbStack, Colima, or Podman." >&2
   return 1
+}
+
+# Emit every backend whose CLI(s) are detectable on PATH, one per line, in a
+# stable order: apple, docker, orbstack, colima, podman. This is CLI-presence
+# detection ONLY -- no daemon reachability probe, no backend selection/pinning,
+# no mutation of DEV_CONTAINERS_BACKEND. It is the single shared source of truth
+# for "which backends count as available on this host", consumed by both
+# `dce doctor` and the integration test harness so the two can never drift.
+#
+# OrbStack is reported only when a Docker context referencing it exists
+# (otherwise it is indistinguishable from plain docker); Colima requires both
+# the colima and docker CLIs. Always returns 0 (empty output = none available).
+backend_detect_available() {
+  if command -v container >/dev/null 2>&1; then printf 'apple\n'; fi
+  if command -v docker >/dev/null 2>&1; then printf 'docker\n'; fi
+  if command -v docker >/dev/null 2>&1 \
+     && docker context ls --format '{{.Name}}' 2>/dev/null | grep -iq orbstack; then
+    printf 'orbstack\n'
+  fi
+  if command -v colima >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
+    printf 'colima\n'
+  fi
+  if command -v podman >/dev/null 2>&1; then printf 'podman\n'; fi
 }
 
 # Map a canonical backend name to the CLI binary used to drive it.
@@ -492,7 +519,10 @@ backend_system_start() {
 backend_system_info() {
   case "$(backend_name)" in
     apple)
-      container system info
+      # apple/container has no `system info` subcommand; `system status` prints
+      # the status table and exits 0 when services are running (reachability
+      # probe for doctor + the integration suite).
+      container system status
       ;;
     docker|orbstack)
       docker info
@@ -509,6 +539,118 @@ backend_system_info() {
   esac
 }
 
+# True if a captured apple/container build log shows the native builder CANNOT
+# complete the build in the current host environment -- independent of the
+# Containerfile itself. Two known classes, both caused by the apple builder
+# running in a vmnet-NAT'd namespace that a host VPN (or this host's networking)
+# breaks:
+#   * no outbound network -> apt/apk cannot resolve or reach any repo
+#     ("Temporary failure resolving", "Unable to locate package", etc.)
+#   * no build-context transfer -> COPY/ADD of a local file fails because the
+#     builder receives an empty context ("failed to calculate checksum").
+# Both persist until host networking is fixed; neither is a Containerfile bug.
+# This is the trigger for _backend_apple_build_image's peer-backend fallback,
+# which is safe because a genuine Containerfile error also fails on the peer.
+# Used as:  if _backend_apple_native_build_blocked "$log"; then ...; fi
+_backend_apple_native_build_blocked() {  # <build-log>
+  [[ -n "$1" ]] || return 1
+  printf '%s' "$1" | grep -Eq \
+    'Temporary failure resolving|Temporary failure in name resolution|Unable to locate package|no installation candidate|Failed to fetch|failed to calculate checksum'
+}
+
+# Pick a reachable peer backend whose build network CAN reach the internet, for
+# sourcing an image when apple/container's own builder has no egress. The docker
+# family (docker/orbstack/colima) all drive the `docker` CLI and share its build
+# network, so one `docker info` reachability check covers all three; podman is
+# the fallback. Echoes the CLI binary name (docker|podman), or returns non-zero
+# if none is reachable.
+_backend_apple_peer_cli() {
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    printf 'docker\n'
+    return 0
+  fi
+  if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
+    printf 'podman\n'
+    return 0
+  fi
+  return 1
+}
+
+# Build <tag> on a peer CLI and load the resulting OCI archive into
+# apple/container's store under the same tag. Returns non-zero on any failure;
+# the caller decides how to surface it. <peer-cli> is "docker" or "podman".
+#
+# docker emits an OCI archive directly via `build --output type=oci,dest=` and
+# preserves the -t ref, so `container image load` lands it under the clean tag.
+# podman has no --output on build, so it builds OCI then exports via
+# `save --format oci-archive`; podman stores unqualified tags under localhost/,
+# which the archive preserves, so the loaded image must be re-tagged to the name
+# apple-side lookups (backend_image_exists) expect.
+_backend_apple_build_via_peer() {  # <peer-cli> <tag> <file> <context> [build-args...]
+  local peer="$1" tag="$2" file="$3" context="$4"; shift 4
+  local oci_tar ok=1
+  oci_tar="$(mktemp "${TMPDIR:-/tmp}/dce-apple-peer.XXXXXX.tar")" || return 1
+
+  if [[ "$peer" == "docker" ]]; then
+    docker build --output "type=oci,dest=$oci_tar" --tag "$tag" --file "$file" "$@" "$context" \
+      && container image load --input "$oci_tar" >/dev/null \
+      || ok=0
+  else  # podman
+    podman build --format oci --tag "$tag" --file "$file" "$@" "$context" \
+      && podman save --format oci-archive -o "$oci_tar" "$tag" \
+      && container image load --input "$oci_tar" >/dev/null \
+      && container image tag "localhost/$tag" "$tag" \
+      || ok=0
+  fi
+
+  rm -f "$oci_tar"
+  [[ $ok -eq 1 ]] || return 1
+
+  # Final guard: confirm the tag actually landed under the expected name before
+  # reporting success (catches any tag-prefix surprise across CLI versions).
+  backend_image_exists "$tag"
+}
+
+# Build an image for the apple/container backend. The native builder is tried
+# first; on an environment-blocked failure (no outbound network / no build-
+# context transfer -- typically a host VPN the vmnet NAT cannot traverse) it
+# transparently rebuilds on a reachable docker/podman peer and loads the OCI
+# image into apple/container under the same tag. Any OTHER failure (real
+# Containerfile error, etc.) is re-streamed and propagated -- the fallback never
+# masks it (a genuine error fails on the peer too).
+_backend_apple_build_image() {  # <tag> <file> <context> [build-args...]
+  local tag="$1" file="$2" context="$3"; shift 3
+  local work_dir native_log peer rc=1
+
+  # tee keeps live output streaming to the user while capturing the log so an
+  # environment-blocked failure can be classified without a second run.
+  work_dir="$(mktemp -d "${TMPDIR:-/tmp}/dce-apple-build.XXXXXX")" || return 1
+  native_log="$work_dir/native.log"
+
+  if container build --tag "$tag" --file "$file" "$@" "$context" 2>&1 | tee "$native_log"; then
+    rc=0
+  elif ! _backend_apple_native_build_blocked "$(cat "$native_log" 2>/dev/null || true)"; then
+    : # Real build error -- already streamed via tee; just propagate non-zero.
+  elif ! peer="$(_backend_apple_peer_cli)"; then
+    dce_warn "apple/container's native builder cannot complete this build in the current"
+    dce_warn "environment (no outbound network or no build-context transfer -- typically a"
+    dce_warn "host VPN the vmnet NAT cannot traverse), and no reachable docker/podman peer"
+    dce_warn "to build on. Build '$tag' on another backend, export OCI, then: container image load."
+  else
+    dce_warn "apple/container's native builder cannot complete this build (environment block:"
+    dce_warn "no outbound network / no build-context transfer)."
+    dce_warn "Falling back: building '$tag' on '$peer' and loading the OCI image into apple/container."
+    if _backend_apple_build_via_peer "$peer" "$tag" "$file" "$context" "$@"; then
+      rc=0
+    else
+      dce_warn "peer build/load failed; apple/container image store left unchanged."
+    fi
+  fi
+
+  rm -rf "$work_dir"
+  return "$rc"
+}
+
 # Build an image from a Containerfile. Extra args are forwarded to the builder.
 backend_build_image() {
   local tag="$1"
@@ -518,7 +660,7 @@ backend_build_image() {
 
   case "$(backend_name)" in
     apple)
-      container build --tag "$tag" --file "$file" "$@" "$context"
+      _backend_apple_build_image "$tag" "$file" "$context" "$@"
       ;;
     docker|orbstack|colima|podman)
       "$(backend_cli)" build --tag "$tag" --file "$file" "$@" "$context"
@@ -539,6 +681,20 @@ _backend_list_contains() {
   local out=""
   out="$("$@" 2>/dev/null)" || true
   [[ $'\n'"$out"$'\n' == *$'\n'"$needle"$'\n'* ]]
+}
+
+# Like _backend_list_contains but for the image store, and normalizes podman's
+# "localhost/" prefix. podman stores/lists an unqualified build tag like
+# `dce-base:latest` as `localhost/dce-base:latest`, while docker/orbstack/colima
+# list the short name; docker/orbstack/colima keep working. Stripping a
+# nonexistent leading "localhost/" from those short names is a no-op, so a single
+# path covers the whole docker family. (Only image names get the prefix -- never
+# container or network names -- so this stays out of _backend_list_contains.)
+_backend_image_list_has() {  # <tag>
+  local tag="$1" out normalized
+  out="$("$(backend_cli)" image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null)" || true
+  normalized="$(printf '%s\n' "$out" | sed -E 's|^localhost/||')"
+  [[ $'\n'"$normalized"$'\n' == *$'\n'"$tag"$'\n'* ]]
 }
 
 # Return whether an image tag exists in the backend's image store.
@@ -562,7 +718,7 @@ backend_image_exists() {
       fi
       ;;
     docker|orbstack|colima|podman)
-      _backend_list_contains "$tag" "$(backend_cli)" image ls --format '{{.Repository}}:{{.Tag}}'
+      _backend_image_list_has "$tag"
       ;;
   esac
 }
@@ -686,7 +842,13 @@ backend_list_images() {
       fi
       ;;
     docker|orbstack|colima|podman)
-      "$(backend_cli)" image ls --format '{{.Repository}}\t{{.Tag}}\t{{.ID}}'
+      # podman lists unqualified builds as "localhost/<repo>"; strip the prefix
+      # so consumers (clean/snapshot/rm/provenance) that match on short repo
+      # names like "dce-base" / "dce-img-<hash>" / "dce-snap-<...>" see the same
+      # short repo as docker/orbstack/colima. sed is not an early-exit reader, so
+      # it cannot SIGPIPE the producer under pipefail.
+      "$(backend_cli)" image ls --format '{{.Repository}}\t{{.Tag}}\t{{.ID}}' \
+        | sed -E 's|^localhost/||'
       ;;
   esac
 }
@@ -792,7 +954,8 @@ backend_volume_copy() {
 backend_list_running() {
   case "$(backend_name)" in
     apple)
-      container ps
+      # apple/container has no `ps` subcommand; the alias is `ls` (a.k.a `list`).
+      container ls
       ;;
     docker|orbstack|colima|podman)
       "$(backend_cli)" ps
@@ -804,7 +967,7 @@ backend_list_running() {
 backend_list_all() {
   case "$(backend_name)" in
     apple)
-      container ps -a
+      container ls -a
       ;;
     docker|orbstack|colima|podman)
       "$(backend_cli)" ps -a
@@ -818,9 +981,9 @@ backend_exists() {
 
   case "$(backend_name)" in
     apple)
-      local out=""
-      out="$(container ps -a 2>/dev/null | awk '{print $1}')" || out=""
-      [[ $'\n'"$out"$'\n' == *$'\n'"$name"$'\n'* ]]
+      # `ls -a -q` prints one container name per line (running + stopped); the
+      # `-q` form avoids depending on the human-readable table column layout.
+      _backend_list_contains "$name" container ls -a -q
       ;;
     docker|orbstack|colima|podman)
       _backend_list_contains "$name" "$(backend_cli)" ps -a --format '{{.Names}}'
@@ -834,9 +997,7 @@ backend_is_running() {
 
   case "$(backend_name)" in
     apple)
-      local out=""
-      out="$(container ps 2>/dev/null | awk '{print $1}')" || out=""
-      [[ $'\n'"$out"$'\n' == *$'\n'"$name"$'\n'* ]]
+      _backend_list_contains "$name" container ls -q
       ;;
     docker|orbstack|colima|podman)
       _backend_list_contains "$name" "$(backend_cli)" ps --format '{{.Names}}'
@@ -877,43 +1038,6 @@ backend_create() {
   esac
 }
 
-# Split a Go-template []string rendering ("[a b c]" or "a b c" or "[]") into
-# one token per line (surrounding brackets stripped). Empty input yields no
-# output. apple/container's image inspect prints array config fields in this
-# bracketed, whitespace-separated form; ENV/CMD/ENTRYPOINT are read this way.
-_backend_template_array_tokens() {
-  local raw="$1"
-  [[ -n "$raw" ]] || return 0
-  raw="${raw#[}"
-  raw="${raw%]}"
-  [[ -z "${raw//[[:space:]]/}" ]] && return 0
-  local -a words=()
-  # shellcheck disable=SC2206
-  # Word-splitting is exactly the intent: the template emits space-separated tokens.
-  words=($raw)
-  local w=""
-  for w in "${words[@]}"; do
-    [[ -n "$w" ]] && printf '%s\n' "$w"
-  done
-}
-
-# Render a Go-template []string rendering as a JSON exec-form array
-# (["a","b"]), with embedded double-quotes backslash-escaped so the result is
-# safe to emit as the argument to CMD/ENTRYPOINT. Empty/[] -> empty (caller
-# omits the directive).
-_backend_template_array_json() {
-  local raw="$1"
-  local token="" out="" esc=""
-  while IFS= read -r token; do
-    [[ -n "$token" ]] || continue
-    esc="${token//\"/\\\"}"
-    if [[ -n "$out" ]]; then out+=","; fi
-    out+="\"$esc\""
-  done < <(_backend_template_array_tokens "$raw")
-  [[ -n "$out" ]] || { printf ''; return 0; }
-  printf '[%s]\n' "$out"
-}
-
 # apple/container has no `commit` and no image `import`, so a commit is composed
 # from `export` (flat merged FS tar, volumes excluded) + `build FROM scratch ADD`.
 # `FROM scratch` discards image config, so base-image metadata (USER, WORKDIR,
@@ -928,16 +1052,33 @@ _backend_apple_container_commit() {
   shift 2
   local -a label_kv=("$@")
 
-  local image_id=""
-  image_id="$(container inspect "$container_name" --format '{{.ImageID}}' 2>/dev/null || true)"
-
-  local cfg_user="" cfg_workdir="" cfg_env="" cfg_cmd="" cfg_entrypoint=""
-  if [[ -n "$image_id" ]]; then
-    cfg_user="$(container image inspect "$image_id" --format '{{.config.user}}' 2>/dev/null || true)"
-    cfg_workdir="$(container image inspect "$image_id" --format '{{.config.workingDir}}' 2>/dev/null || true)"
-    cfg_env="$(container image inspect "$image_id" --format '{{.config.env}}' 2>/dev/null || true)"
-    cfg_cmd="$(container image inspect "$image_id" --format '{{.config.cmd}}' 2>/dev/null || true)"
-    cfg_entrypoint="$(container image inspect "$image_id" --format '{{.config.entrypoint}}' 2>/dev/null || true)"
+  # Read the source image's config so the FROM-scratch snapshot can re-apply
+  # USER/WORKDIR/ENV/CMD/ENTRYPOINT -- without them the restored container has
+  # no command and `container create` fails ("command/entrypoint not specified").
+  # apple/container's inspect has no Go-template --format, so the config is read
+  # from JSON via jq. jq is optional elsewhere in dce; without it the snapshot is
+  # bare (metadata lost) and restore will fail.
+  local image_ref="" cfg_user="" cfg_workdir="" cfg_env="" cfg_cmd="" cfg_entrypoint=""
+  if command -v jq >/dev/null 2>&1; then
+    image_ref="$(container inspect "$container_name" 2>/dev/null \
+      | jq -r '.[0].configuration.image.reference // empty')"
+    if [[ -n "$image_ref" ]]; then
+      local img_json
+      img_json="$(container image inspect "$image_ref" 2>/dev/null || true)"
+      if [[ -n "$img_json" ]]; then
+        # .config.config is the OCI config object; arrays emit empty when
+        # null/[] so CMD/ENTRYPOINT are omitted rather than printed as [].
+        cfg_user="$(printf '%s' "$img_json" | jq -r '.[0].variants[0].config.config.user // empty')"
+        cfg_workdir="$(printf '%s' "$img_json" | jq -r '.[0].variants[0].config.config.WorkingDir // empty')"
+        cfg_env="$(printf '%s' "$img_json" | jq -r '.[0].variants[0].config.config.Env[]?')"
+        # Arrays: emit the JSON form only when non-empty so CMD/ENTRYPOINT are
+        # omitted (not printed as []) when the source image has none.
+        cfg_cmd="$(printf '%s' "$img_json" | jq -rc '(.[0].variants[0].config.config.Cmd // []) | if length > 0 then . else empty end')"
+        cfg_entrypoint="$(printf '%s' "$img_json" | jq -rc '(.[0].variants[0].config.config.Entrypoint // []) | if length > 0 then . else empty end')"
+      fi
+    fi
+  else
+    dce_warn "apple snapshots require jq to copy image config; '$container_name' snapshot will lack USER/CMD/ENTRYPOINT and may fail to restore."
   fi
 
   local work_dir=""
@@ -945,6 +1086,10 @@ _backend_apple_container_commit() {
     echo "ERROR: could not create a temp dir for the apple snapshot build." >&2
     return 1
   }
+  # Normalize: $TMPDIR ends with "/", so the raw path contains "//" which
+  # apple/container's builder rejects with "X is not a child of Y" when it is
+  # passed as the build context. cd -P resolves the "//" and the /var symlink.
+  work_dir="$(cd -P "$work_dir" && pwd)"
   local tar_file="$work_dir/rootfs.tar"
   local cfile="$work_dir/Containerfile"
 
@@ -958,21 +1103,17 @@ _backend_apple_container_commit() {
   {
     printf 'FROM scratch\n'
     printf 'ADD rootfs.tar /\n'
-    if [[ -n "$cfg_user" ]]; then
-      printf 'USER %s\n' "$cfg_user"
+    [[ -n "$cfg_user" ]] && printf 'USER %s\n' "$cfg_user"
+    [[ -n "$cfg_workdir" ]] && printf 'WORKDIR %s\n' "$cfg_workdir"
+    if [[ -n "$cfg_env" ]]; then
+      local env_line=""
+      while IFS= read -r env_line; do
+        [[ -n "$env_line" ]] && printf 'ENV %s\n' "$env_line"
+      done <<< "$cfg_env"
     fi
-    if [[ -n "$cfg_workdir" ]]; then
-      printf 'WORKDIR %s\n' "$cfg_workdir"
-    fi
-    local env_token=""
-    while IFS= read -r env_token; do
-      [[ -n "$env_token" ]] && printf 'ENV %s\n' "$env_token"
-    done < <(_backend_template_array_tokens "$cfg_env")
-    local cmd_json="" ep_json=""
-    cmd_json="$(_backend_template_array_json "$cfg_cmd")"
-    [[ -n "$cmd_json" ]] && printf 'CMD %s\n' "$cmd_json"
-    ep_json="$(_backend_template_array_json "$cfg_entrypoint")"
-    [[ -n "$ep_json" ]] && printf 'ENTRYPOINT %s\n' "$ep_json"
+    # cfg_cmd / cfg_entrypoint are already JSON exec-form arrays (["a","b"]).
+    [[ -n "$cfg_cmd" ]] && printf 'CMD %s\n' "$cfg_cmd"
+    [[ -n "$cfg_entrypoint" ]] && printf 'ENTRYPOINT %s\n' "$cfg_entrypoint"
     if [[ ${#label_kv[@]} -gt 0 ]]; then
       local kv=""
       printf 'LABEL'
@@ -983,7 +1124,11 @@ _backend_apple_container_commit() {
     fi
   } > "$cfile"
 
-  if ! container build --tag "$image_tag" --file "$cfile" "$work_dir" >/dev/null 2>&1; then
+  # Route through backend_build_image so the snapshot build gets the same
+  # peer-backend fallback as dce-base when apple's native builder can't complete
+  # it in the current environment (no build-context transfer). Native is tried
+  # first; the FROM-scratch+ADD build only falls back if context transfer fails.
+  if ! backend_build_image "$image_tag" "$cfile" "$work_dir" >/dev/null 2>&1; then
     rm -rf "$work_dir"
     echo "ERROR: apple/container build failed for snapshot '$image_tag'." >&2
     return 1

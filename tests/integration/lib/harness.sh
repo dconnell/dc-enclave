@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# =============================================================================
+# tests/integration/lib/harness.sh - Core integration test harness.
+#
+# Owns the per-run workspace, the resource registry, command logging, the
+# pass/fail result log, and the trap that GUARANTEES cleanup runs even on
+# interrupt. Case files and the matrix engine use ONLY the public `it_*` API
+# here, never the dce/lib internals, so the cleanup contract holds regardless
+# of what a case does.
+#
+# Public API (see per-function docs):
+#   it_init                       stamp run id, build workspace, arm the trap
+#   it_register_project <name>    record a created project for cleanup replay
+#   it_register_network <name>    record a created network for cleanup replay
+#   it_log_path <backend> <case>  artifacts log file for one case
+#   it_dce <b> <case> <args...>   run scripts/dce (logged), return real rc
+#   it_dce_capture <b> <case>...  same, and echo combined output to stdout
+#   it_record <b> <status> <case> [detail]   append to the results log
+#   it_run_case <b> <case> <fn>   run a case fn; record PASS/FAIL; per-case rm
+#
+# Cleanup contract lives in cleanup.sh (sourced below): the EXIT/INT/TERM trap
+# replays `dce rm --yes` for every registered project, runs backend sweeps,
+# drops test networks + temp dirs, and verifies zero leftovers.
+# =============================================================================
+if [[ -n "${_IT_HARNESS_SH_LOADED:-}" ]]; then return 0; fi
+declare -gr _IT_HARNESS_SH_LOADED=1
+
+_IT_HARNESS_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_IT_ROOT="$(cd "$_IT_HARNESS_DIR/../../.." && pwd)"
+_IT_LIB_DIR="$_IT_ROOT/lib"
+_IT_DCE="$_IT_ROOT/scripts/dce"
+export _IT_ROOT _IT_LIB_DIR _IT_DCE
+
+# Bring in naming + discovery. (cleanup.sh is sourced after its deps below.)
+# shellcheck disable=SC1091  # sibling lib, path resolved above
+source "$_IT_HARNESS_DIR/naming.sh"
+# shellcheck disable=SC1091  # sibling lib, path resolved above
+source "$_IT_HARNESS_DIR/backend-discovery.sh"
+
+# Stamp the run id up front so every helper shares one token.
+it_run_id >/dev/null
+
+# Workspace layout (one self-contained tree per run under /tmp):
+#   $IT_ROOT_WS/                          /tmp/dce-integration/<runid>/
+#     repos/                              DC_REPOS_DIR target (isolated host mounts)
+#     created.tsv                         resource registry: kind<TAB>backend<TAB>name
+#     results.tsv                         per-case: backend<TAB>status<TAB>case<TAB>detail
+#     backends.tsv                        the selected backend list (one per line)
+# Repo-relative artifacts (kept out of the working tree via .gitignore):
+#   tests/integration/artifacts/<runid>/<backend>/<case>.log
+export IT_ROOT_WS; IT_ROOT_WS="$(it_workspace_root)"
+export IT_REPOS_DIR; IT_REPOS_DIR="$IT_ROOT_WS/repos"
+export IT_REGISTRY; IT_REGISTRY="$IT_ROOT_WS/created.tsv"
+export IT_RESULTS; IT_RESULTS="$IT_ROOT_WS/results.tsv"
+export IT_ARTIFACTS_ROOT; IT_ARTIFACTS_ROOT="$_IT_ROOT/tests/integration/artifacts"
+mkdir -p "$IT_REPOS_DIR" "$IT_ARTIFACTS_ROOT"
+: > "$IT_REGISTRY"
+: > "$IT_RESULTS"
+
+# Isolate repo mounts so host projects are never touched by the suite.
+export DC_REPOS_DIR="$IT_REPOS_DIR"
+
+# cleanup.sh pulls in the lib (for leak sweeps) and defines it_cleanup, which is
+# the trap body. Sourced here (after _IT_DCE / globals exist) so it sees them.
+# shellcheck disable=SC1091  # sibling lib, path resolved above
+source "$_IT_HARNESS_DIR/cleanup.sh"
+
+_IT_CLEANUP_RAN=0
+# Arm the safety net: EXIT covers normal return + `exit`, INT/TERM cover Ctrl-C
+# and `kill`. The body is idempotent and re-entrant (guarded by _IT_CLEANUP_RAN).
+trap it_cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# Resource registry
+# ---------------------------------------------------------------------------
+
+# Record a created project so the finalizer can replay `dce rm --yes` on it.
+# Call this immediately after a successful `dce new` (cleanup contract: every
+# created project is tracked + removed).
+it_register_project() {  # <project-name> <backend>
+  printf 'project\t%s\t%s\n' "$2" "$1" >> "$IT_REGISTRY"
+}
+
+# Record a created private network so the finalizer can drop it.
+it_register_network() {  # <network-name> <backend>
+  printf 'network\t%s\t%s\n' "$2" "$1" >> "$IT_REGISTRY"
+}
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+# Echo the artifact log path for one (backend, case); creates the dir.
+it_log_path() {  # <backend> <case>
+  local d="$IT_ARTIFACTS_ROOT/$IT_RUN_ID/$1"
+  [[ -d "$d" ]] || mkdir -p "$d"
+  printf '%s/%s.log\n' "$d" "$2"
+}
+
+# Run scripts/dce under CONTAINER_BACKEND=<backend>, appending a timestamped
+# command line + exit code and all output to the case log. Output is NOT shown
+# on stdout (use it_dce_capture when a case must inspect output). Returns the
+# real exit code so cases can assert expected_exit.
+it_dce() {  # <backend> <case> <args...>
+  local backend="$1" case_id="$2"; shift 2
+  local log; log="$(it_log_path "$backend" "$case_id")"
+  {
+    printf '\n[%s] $ CONTAINER_BACKEND=%s dce %s\n' "$(date -u +%FT%TZ)" "$backend" "$*"
+  } >> "$log"
+  local rc
+  CONTAINER_BACKEND="$backend" "$_IT_DCE" "$@" >>"$log" 2>&1 && rc=0 || rc=$?
+  printf '[%s] exit=%d\n' "$(date -u +%FT%TZ)" "$rc" >> "$log"
+  return "$rc"
+}
+
+# Like it_dce, but also echoes the command's combined output to stdout (after
+# logging it) so the case can grep it. The `&& rc=0 || rc=$?` form survives a
+# caller's `set -e` (the assignment is part of an AND/OR list, so a non-zero
+# command does not abort before rc is captured).
+it_dce_capture() {  # <backend> <case> <args...>
+  local backend="$1" case_id="$2"; shift 2
+  local log; log="$(it_log_path "$backend" "$case_id")"
+  {
+    printf '\n[%s] $ CONTAINER_BACKEND=%s dce %s\n' "$(date -u +%FT%TZ)" "$backend" "$*"
+  } >> "$log"
+  local out rc
+  out="$(CONTAINER_BACKEND="$backend" "$_IT_DCE" "$@" 2>&1)" && rc=0 || rc=$?
+  printf '%s\n' "$out" >> "$log"
+  printf '[%s] exit=%d\n' "$(date -u +%FT%TZ)" "$rc" >> "$log"
+  printf '%s\n' "$out"
+  return "$rc"
+}
+
+# Run scripts/dce with a fixed string on stdin (for prompt-gated paths like
+# rebuild-container --rotate-keys, whose key-rotation pause needs an Enter even
+# under --yes). Logged like it_dce; returns the real exit code.
+it_dce_in() {  # <backend> <case> <stdin-string> <args...>
+  local backend="$1" case_id="$2" input="$3"; shift 3
+  local log; log="$(it_log_path "$backend" "$case_id")"
+  {
+    printf '\n[%s] $ CONTAINER_BACKEND=%s dce %s  (stdin fed)\n' "$(date -u +%FT%TZ)" "$backend" "$*"
+  } >> "$log"
+  local rc
+  printf '%s' "$input" | CONTAINER_BACKEND="$backend" "$_IT_DCE" "$@" >>"$log" 2>&1 && rc=0 || rc=$?
+  printf '[%s] exit=%d\n' "$(date -u +%FT%TZ)" "$rc" >> "$log"
+  return "$rc"
+}
+
+# Portable bounded execution. Prefers GNU `timeout`/`gtimeout` when present;
+# falls back to a native bg-job + sleep + kill. Returns 124 on timeout (GNU
+# convention) so callers can distinguish "ran out of time" from a real exit.
+# Used by the `logs --follow` case so the suite never hangs on a -f stream.
+it_timeout() {  # <seconds> <cmd...>
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"; return $?; fi
+  if command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"; return $?; fi
+  # Native fallback.
+  "$@" &
+  local pid=$!
+  ( sleep "$secs" 2>/dev/null; kill "$pid" >/dev/null 2>&1 ) &
+  local killer=$!
+  wait "$pid" 2>/dev/null; local rc=$?
+  kill "$killer" >/dev/null 2>&1 || true
+  wait "$killer" 2>/dev/null || true
+  [[ $rc -gt 128 ]] && return 124   # killed by our signal == timeout
+  return "$rc"
+}
+
+# ---------------------------------------------------------------------------
+# Result recording + case runner
+# ---------------------------------------------------------------------------
+
+# Append one result row. status ∈ PASS|FAIL|SKIP. detail is forced to one line
+# (newlines collapsed) so the TSV stays parseable for the final summary.
+it_record() {  # <backend> <status> <case> [detail...]
+  local backend="$1" status="$2" case_id="$3"; shift 3
+  local detail="$*"
+  detail="${detail//$'\n'/ }"
+  printf '%s\t%s\t%s\t%s\n' "$backend" "$status" "$case_id" "$detail" >> "$IT_RESULTS"
+}
+
+# Run a single case: invoke <fn> (which may call it_dce*/it_register_*), then
+# ALWAYS run per-case cleanup (`dce rm --yes`) for any project this case
+# registered, then record PASS/FAIL. The case fn signals failure by calling
+# `it_case_fail "detail"` (which sets a flag) OR by returning non-zero; either
+# is recorded as FAIL without aborting the run. Per-case rm guarantees the
+# "every created project removed via dce rm at least once" contract even when a
+# case dies mid-flight (the global finalizer is the idempotent backstop).
+it_run_case() {  # <backend> <case-id> <fn> [fn-args...]
+  local backend="$1" case_id="$2" fn="$3"; shift 3
+
+  _IT_CASE_FAILED=0
+  _IT_CASE_DETAIL=""
+
+  # shellcheck disable=SC1091  # case fn is caller-supplied, invoked by name
+  if ! "$fn" "$backend" "$case_id" "$@"; then
+    [[ $_IT_CASE_FAILED -eq 0 ]] && { _IT_CASE_FAILED=1; _IT_CASE_DETAIL="${_IT_CASE_DETAIL:-case fn returned non-zero}"; }
+  fi
+
+  # Per-case cleanup: rm --yes every project in the registry. Cases run
+  # sequentially and each registers only its own project(s), so this removes the
+  # case's project; re-running rm on an already-removed project is a harmless
+  # no-op (the global finalizer is the idempotent backstop for interrupts).
+  local kind pname pback
+  while IFS=$'\t' read -r kind pback pname; do
+    [[ "$kind" == "project" ]] || continue
+    CONTAINER_BACKEND="$pback" "$_IT_DCE" rm "$pname" --yes \
+      >>"$(it_log_path "$pback" "$case_id")" 2>&1 || true
+  done < "$IT_REGISTRY"
+
+  if [[ $_IT_CASE_FAILED -eq 0 ]]; then
+    it_record "$backend" PASS "$case_id"
+    printf '    \xe2\x9c\x93 %s\n' "$case_id"
+  else
+    it_record "$backend" FAIL "$case_id" "${_IT_CASE_DETAIL:-failed}"
+    printf '    \xe2\x9c\x97 %s\n' "$case_id"
+    printf '        backend: %s\n' "$backend"
+    printf '        log:     %s\n' "$(it_log_path "$backend" "$case_id")"
+  fi
+}
+
+# Case functions call this to mark the current case failed with a reason. Always
+# returns 1 so `it_case_fail "x"` can be used as `return`-style early exit.
+it_case_fail() {  # [detail...]
+  _IT_CASE_FAILED=1
+  if [[ -n "$1" ]]; then
+    if [[ -n "${_IT_CASE_DETAIL:-}" ]]; then _IT_CASE_DETAIL+="; $*"; else _IT_CASE_DETAIL="$*"; fi
+  fi
+  return 1
+}

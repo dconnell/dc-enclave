@@ -19,4 +19,7 @@ Containerfiles/generated/
 projects/
 .devcontainer/
 
+# Integration test run artifacts (logs + captured output)
+tests/integration/artifacts/
+
 plans

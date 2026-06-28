@@ -253,7 +253,7 @@ if $CLEAN_SNAPSHOTS; then
     REMOVE_SNAPVOLS+=("$vol_name")
   done < <(backend_list_volumes 2>/dev/null)
 
-  if [[ ${#REMOVE_SNAPS[@]} -eq 0 && ${#REMOVE_SNAPVOLS[@]:-0} -eq 0 ]]; then
+  if [[ ${#REMOVE_SNAPS[@]} -eq 0 && ${#REMOVE_SNAPVOLS[@]} -eq 0 ]]; then
     if [[ -n "$TARGET_PROJECT" ]]; then
       echo "No snapshots found for project '$TARGET_PROJECT'."
     else
