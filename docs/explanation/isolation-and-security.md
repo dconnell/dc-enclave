@@ -4,9 +4,11 @@
 Each project container runs with its own credentials and container state, so projects stay independent. The credentials below are **optional hardening** — the container runs fine without any of them. `dce new` generates the SSH keypair and creates placeholder/template files for the rest, then prints a checklist steering you through completing the ones you want.
 
 - Per-project SSH deploy key (generated) — `dce new` creates a dedicated keypair at `~/.config/dce-enclave/<name>/ssh_key` and prints the `.pub`. Add it as a GitHub deploy key to use it; skip if you don't need repo write from inside the container.
-- Per-project GitHub PAT (optional) — drop a fine-grained, repo-scoped token (no admin) into `~/.config/dce-enclave/<name>/github-token`. `dce shell` injects it as `GITHUB_TOKEN` only when the file is non-empty.
+- Per-project GitHub PAT (optional) — drop a fine-grained, repo-scoped token (no admin) into `~/.config/dce-enclave/<name>/github-token`. A non-placeholder token is the container's active git auth: `dce new`/`start`/`shell`/`install`/`rebuild-container` set `credential.helper store`, seed `~/.git-credentials` (as `https://x-access-token:<token>@github.com`), and rewrite `git@github.com:` URLs to HTTPS so `git pull` works without changing your repo's `origin`. The PAT also stays available as `GITHUB_TOKEN` inside `dce shell`. **PAT wins over the SSH deploy key** when both are present; with only the deploy key, git routes to SSH instead. The token crosses the host/container boundary through a stdin pipe, never host argv.
 - Per-project .npmrc (optional) — a template is created at `~/.config/dce-enclave/<name>/.npmrc`; edit it for projects that use npm. It is mounted read-only at `/home/dev/.npmrc`.
 - Host-mounted workspace — code lives at `${DC_REPOS_DIR:-$HOME/repos}/<project>` on your machine and is bind-mounted to `/workspace` inside the container.
+
+These credentials are injected by `dce` itself — at `dce new`, and re-applied by `dce start`, `dce shell`, `dce install`, and `dce rebuild-container`. A VS Code-initiated rebuild bypasses dce entirely, so **always rebuild via `dce`** (never VS Code's *Rebuild Container*) or the SSH key, PAT git auth, and `.npmrc` won't be present and `git pull` / private-package installs will fail. See [rebuild and recover](../how-to/rebuild-and-recover.md).
 
 If a container's state is ever suspect, `dce rebuild-container` replaces the container from a known-good image without touching your host repos.
 

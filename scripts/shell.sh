@@ -46,21 +46,9 @@ if ! backend_is_running "$PROJECT"; then
   "$SCRIPT_DIR/start.sh" "$PROJECT"
 fi
 
-# Read the GitHub token, skipping comment lines and the placeholder value so an
-# unfilled token file doesn't leak "ghp_REPLACE_ME" into the environment.
-GITHUB_TOKEN=""
-if [[ -n "${TOKEN_FILE:-}" ]] && [[ -f "$TOKEN_FILE" ]]; then
-  # Pattern on a single line: under mawk a multi-line `&&` pattern followed by
-  # a newline-prefixed `{` action parses the action as a separate unconditional
-  # rule, which would defeat the comment/placeholder filtering below.
-  GITHUB_TOKEN="$(awk '
-    $0 !~ /^#/ && $0 !~ /^ghp_REPLACE_ME/ && $0 ~ /[^[:space:]]/ {
-      gsub(/[[:space:]]+/, "", $0)
-      print
-      exit
-    }
-  ' "$TOKEN_FILE" 2>/dev/null || true)"
-fi
+# Read the GitHub token (skipping comments and the placeholder value) via the
+# shared helper so the filtering logic lives in one place. Empty means unset.
+GITHUB_TOKEN="$(dce_read_github_token)"
 
 echo "  Entering container: $PROJECT"
 echo "  Backend: $ACTIVE_BACKEND"
@@ -71,6 +59,11 @@ else
   echo "  GITHUB_TOKEN: NOT SET (edit ${TOKEN_FILE:-token file})"
 fi
 echo ""
+
+# Ensure git auth is wired in the container (HTTPS+PAT or SSH insteadOf), so a
+# `dce shell` into an already-running container also repairs auth -- not just
+# `dce start`. Idempotent; the PAT, if any, crosses via stdin inside the helper.
+dce_ensure_git_credentials "$PROJECT"
 
 # Seed GITHUB_TOKEN into a short-lived file inside the container over stdin, so
 # the PAT value never appears in host process argv (readable via ps / /proc).

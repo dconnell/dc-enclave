@@ -91,6 +91,10 @@ _start_container() {
     fi
   fi
 
+  # (Re)wire git auth for the configured credential: HTTPS+PAT or SSH deploy key.
+  # Idempotent, so this also repairs containers created before this wiring existed.
+  dce_ensure_git_credentials "$project"
+
   echo "  ✓ $project - started"
 }
 

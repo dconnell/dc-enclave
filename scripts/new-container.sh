@@ -646,7 +646,13 @@ backend_exec_stdin "$PROJECT" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ss
 # GitHub host keys are pinned in the base image; no runtime ssh-keyscan.
 
 echo "==> Configuring git in container..."
-backend_exec "$PROJECT" git config --global url."git@github.com:".insteadOf "https://github.com/"
+# SSH_KEY_PATH is a local here (config persists it as SSH_KEY_PATH); expose the
+# key path to dce_ensure_git_credentials so it can pick the auth method. At
+# `dce new` time the token is still the placeholder, so this resolves to the
+# legacy SSH insteadOf; it flips to HTTPS+PAT once the user fills the token.
+# Exported because the consumer is the sourced lib helper, not this file.
+export SSH_KEY_PATH="$SSH_KEY"
+dce_ensure_git_credentials "$PROJECT"
 
 if $DOCKER_COMPATIBLE; then
   echo "==> Generating Dev Containers config for Docker-compatible backend..."

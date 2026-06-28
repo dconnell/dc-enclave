@@ -627,6 +627,97 @@ dce_ensure_hidden_mounts() {
   done
 }
 
+# Read the GitHub PAT from TOKEN_FILE, skipping comments and the placeholder
+# value so an unfilled token file never leaks "ghp_REPLACE_ME". Echoes the bare
+# token (whitespace-trimmed); echoes nothing when TOKEN_FILE is unset, missing,
+# or contains only comments/placeholder. Single source of truth -- shell.sh's
+# status display and dce_ensure_git_credentials both read through here.
+dce_read_github_token() {
+  [[ -n "${TOKEN_FILE:-}" ]] || return 0
+  [[ -f "$TOKEN_FILE" ]] || return 0
+  # Pattern on a single line: under mawk a multi-line `&&` pattern followed by a
+  # newline-prefixed `{` action parses the action as a separate unconditional
+  # rule, which would defeat the comment/placeholder filtering below.
+  awk '
+    $0 !~ /^#/ && $0 !~ /^ghp_REPLACE_ME/ && $0 ~ /[^[:space:]]/ {
+      gsub(/[[:space:]]+/, "", $0)
+      print
+      exit
+    }
+  ' "$TOKEN_FILE" 2>/dev/null || true
+}
+
+# Decide which GitHub auth method is in effect for the loaded project config.
+# PAT wins: a real (non-placeholder) token selects HTTPS+PAT even when an SSH
+# deploy key is also present (the default once a user fills in the token file).
+# Echoes "pat", "ssh", or "none".
+dce_git_auth_method() {
+  if [[ -n "$(dce_read_github_token)" ]]; then
+    printf 'pat'
+    return 0
+  fi
+  if [[ -n "${SSH_KEY_PATH:-}" ]] && [[ -f "$SSH_KEY_PATH" ]]; then
+    printf 'ssh'
+    return 0
+  fi
+  printf 'none'
+}
+
+# Ensure git authentication is wired inside <project>'s container, idempotently.
+#
+# Replaces the unconditional HTTPS->SSH insteadOf that used to be baked into
+# `dce new` / `dce rebuild-container`. The rewrite direction now follows the
+# configured credential:
+#   pat  -> url."https://github.com/".insteadOf "git@github.com:"
+#           + credential.helper store + ~/.git-credentials (re-injected if missing)
+#   ssh  -> url."git@github.com:".insteadOf "https://github.com/"  (legacy default)
+#   none -> no insteadOf; any stale credential state is cleared
+# The opposite-direction rule is always unset so the two can never coexist.
+#
+# The PAT crosses the host/container boundary via a stdin pipe into a short-lived
+# sh -c -- never via argv -- preserving the invariant enforced by
+# tests/contract/security-token-argv.sh (host `ps`/`/proc` must not see the PAT).
+#
+# Requires a loaded project config (TOKEN_FILE, SSH_KEY_PATH) and an active,
+# running backend. Best-effort: cleanup/unset failures are tolerated.
+dce_ensure_git_credentials() {
+  local project="$1"
+  local method=""
+  method="$(dce_git_auth_method)"
+
+  case "$method" in
+    pat)
+      # HTTPS + PAT: route any SSH GitHub URL through HTTPS and enable the file
+      # credential store, then seed ~/.git-credentials if the container lost it
+      # (mirroring the SSH deploy-key re-inject in dce start).
+      backend_exec "$project" git config --global url."https://github.com/".insteadOf "git@github.com:"
+      backend_exec "$project" git config --global credential.helper store
+      backend_exec "$project" git config --global --unset-all url."git@github.com:".insteadOf 2>/dev/null || true
+      if ! backend_exec "$project" sh -c 'test -f ~/.git-credentials'; then
+        # shellcheck disable=SC2016
+        # sh -c runs in the container; $() and the redirect expand there.
+        printf 'https://x-access-token:%s@github.com\n' "$(dce_read_github_token)" \
+          | backend_exec_stdin "$project" sh -c 'cat > ~/.git-credentials && chmod 600 ~/.git-credentials'
+      fi
+      ;;
+    ssh)
+      # SSH deploy key: route any HTTPS GitHub URL through SSH (legacy default).
+      backend_exec "$project" git config --global url."git@github.com:".insteadOf "https://github.com/"
+      backend_exec "$project" git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true
+      backend_exec "$project" git config --global --unset-all credential.helper 2>/dev/null || true
+      backend_exec "$project" sh -c 'rm -f ~/.git-credentials' 2>/dev/null || true
+      ;;
+    none)
+      # No GitHub credential configured: clear any stale auth state so git falls
+      # back to its defaults (no insteadOf, no stored credential helper/file).
+      backend_exec "$project" git config --global --unset-all url."git@github.com:".insteadOf 2>/dev/null || true
+      backend_exec "$project" git config --global --unset-all url."https://github.com/".insteadOf 2>/dev/null || true
+      backend_exec "$project" git config --global --unset-all credential.helper 2>/dev/null || true
+      backend_exec "$project" sh -c 'rm -f ~/.git-credentials' 2>/dev/null || true
+      ;;
+  esac
+}
+
 # Derive a filesystem-safe slug from a project name (lowercased, non-alnum
 # collapsed to '-', trimmed, capped at 24 chars). Used to build volume names.
 dce_project_slug() {

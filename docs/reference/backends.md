@@ -50,7 +50,7 @@ DC Enclave targets the **latest stable release** of each backend. If you hit beh
 
 docker/orbstack/colima/podman backends:
 
-> **Use "Attach to Running Container", not "Reopen in Container".** `dce new` creates and starts your container (`dce-<name>`); that is the container `dce shell` uses. **Dev Containers: Attach to Running Container...** attaches VS Code to that exact container. **Dev Containers: Reopen in Container** — and the popup shown when you open the folder — instead builds a *separate* editor container (`vsc-*`) that `dce` does not manage and that will not share runtime state with `dce shell`. A stray `vsc-*` container is the sign you took the Reopen path.
+> **Use "Attach to Running Container", not "Reopen in Container".** `dce new` creates and starts your container (`dce-<name>`); that is the container `dce shell` uses. **Dev Containers: Attach to Running Container...** attaches VS Code to that exact container. **Dev Containers: Reopen in Container** — and the popup shown when you open the folder — instead builds a *separate* editor container (`vsc-*`) that `dce` does not manage and that will not share runtime state with `dce shell`. A stray `vsc-*` container is the sign you took the Reopen path. Likewise, when you need a fresh filesystem, run **`dce rebuild-container`** — not VS Code's *Rebuild Container* — since only the dce path re-injects your SSH deploy key, GitHub PAT git auth, and `.npmrc` (see [rebuild and recover](../how-to/rebuild-and-recover.md)).
 
 - `dce new` generates `${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json`
 - For multi-scope and/or overlay projects, it points to a generated composed Containerfile

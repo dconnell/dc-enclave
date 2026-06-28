@@ -1,5 +1,7 @@
 # Rebuild and recover
 
+> **Always rebuild with `dce`, never VS Code's *Rebuild Container*** (or *Reopen in Container*). `dce rebuild-container` / `dce rebuild-image` are the only rebuild paths that re-inject your per-project credentials — SSH deploy key, GitHub PAT git auth (`~/.git-credentials` + the `insteadOf` rewrite), and the read-only `.npmrc` bind — and re-establish hidden volumes. A VS Code-initiated rebuild creates a container `dce` does not manage and **skips all of it**: `git pull`, private-package installs, and SSH auth will silently fail inside that container. To edit in VS Code, attach to the running `dce` container instead (*Dev Containers: Attach to Running Container...*). See [VS Code behavior](../reference/backends.md#vs-code-behavior-by-backend).
+
 ## Rebuild and incident recovery
 
 Rebuild container (hidden volumes removed by default for a clean slate):

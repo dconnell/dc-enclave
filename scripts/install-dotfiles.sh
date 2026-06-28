@@ -75,4 +75,9 @@ backend_exec "$PROJECT" zsh -c "cd $REMOTE_DIR && ./$INSTALL_CMD"
 
 backend_exec "$PROJECT" rm -rf "$REMOTE_DIR"
 
+# Also (re)wire git auth from this project's configured credential, so a
+# post-rebuild `dce install` restores working `git pull` alongside dotfiles.
+dce_ensure_git_credentials "$PROJECT"
+
 echo "  ✓ Dotfiles installed"
+echo "  ✓ Git credentials installed"

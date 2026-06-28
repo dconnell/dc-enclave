@@ -431,8 +431,8 @@ backend_exec_stdin "$PROJECT" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ss
 # GitHub host keys are pinned in the base image; no runtime ssh-keyscan.
 echo "  ✓ SSH key injected"
 
-backend_exec "$PROJECT" git config --global url."git@github.com:".insteadOf "https://github.com/"
-echo "  ✓ git configured (SSH insteadOf)"
+dce_ensure_git_credentials "$PROJECT"
+echo "  ✓ git configured (credential-aware insteadOf)"
 
 if $DOCKER_COMPATIBLE; then
   echo ""
