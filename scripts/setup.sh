@@ -254,6 +254,8 @@ if ! grep -q "DC Enclave secrets" "$GLOBAL_GITIGNORE" 2>/dev/null; then
 # DC Enclave secrets (never commit these)
 github-token
 *.github-token
+gitlab-token
+*.gitlab-token
 ssh_key
 ssh_key.pub
 .npmrc.local

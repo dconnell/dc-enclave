@@ -80,9 +80,12 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
       is_running="unknown (backend unavailable)"
     fi
 
+    _gh_provider="$(dce_project_git_host)"
+    _gh_sentinel="$(dce_git_host_field "$_gh_provider" sentinel)"
+    _gh_display="$(dce_git_host_field "$_gh_provider" display_name)"
     token_set="✗ NOT SET"
     if [[ -n "${TOKEN_FILE:-}" ]] && [[ -f "$TOKEN_FILE" ]]; then
-      if grep -v '^#' "$TOKEN_FILE" 2>/dev/null | grep -v '^ghp_REPLACE_ME' | grep -q .; then
+      if grep -v '^#' "$TOKEN_FILE" 2>/dev/null | grep -v "^${_gh_sentinel}" | grep -q .; then
         token_set="✓"
       fi
     fi
@@ -108,7 +111,7 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
     if declare -p CONTAINER_NETWORKS >/dev/null 2>&1 && [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
       echo "    Networks:     ${CONTAINER_NETWORKS[*]}"
     fi
-    echo "    GitHub token: $token_set"
+    echo "    ${_gh_display} token: $token_set"
     echo "    SSH key:      $ssh_key_exists"
 
     # One-line image provenance from the project log (team/user commit + built

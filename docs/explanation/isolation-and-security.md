@@ -3,8 +3,8 @@
 
 Each project container runs with its own credentials and container state, so projects stay independent. The credentials below are **optional hardening** — the container runs fine without any of them. `dce new` generates the SSH keypair and creates placeholder/template files for the rest, then prints a checklist steering you through completing the ones you want.
 
-- Per-project SSH deploy key (generated) — `dce new` creates a dedicated keypair at `~/.config/dce-enclave/<name>/ssh_key` and prints the `.pub`. Add it as a GitHub deploy key to use it; skip if you don't need repo write from inside the container.
-- Per-project GitHub PAT (optional) — drop a fine-grained, repo-scoped token (no admin) into `~/.config/dce-enclave/<name>/github-token`. A non-placeholder token is the container's active git auth: `dce new`/`start`/`shell`/`install`/`rebuild-container` set `credential.helper store`, seed `~/.git-credentials` (as `https://x-access-token:<token>@github.com`), and rewrite `git@github.com:` URLs to HTTPS so `git pull` works without changing your repo's `origin`. The PAT also stays available as `GITHUB_TOKEN` inside `dce shell`. **PAT wins over the SSH deploy key** when both are present; with only the deploy key, git routes to SSH instead. The token crosses the host/container boundary through a stdin pipe, never host argv. When a PAT is configured, `github.gitAuthentication: false` is also written both to the generated `devcontainer.json` (via `dce config sync-vscode`) and directly into the container's VS Code Server machine settings (`~/.vscode-server/data/Machine/settings.json`, via `dce start`/`shell`/`rebuild-container`) so VS Code's Source Control panel (pull/push/sync) defers to git's credential helper — the PAT in `~/.git-credentials` — instead of prompting you to sign in via the GitHub extension's OAuth flow. Both are omitted for ssh/none auth so VS Code's default (interactive OAuth) remains as a fallback.
+- Per-project SSH deploy key (generated) — `dce new` creates a dedicated keypair at `~/.config/dce-enclave/<name>/ssh_key` and prints the `.pub`. Add it as a deploy key on your git host to use it; skip if you don't need repo write from inside the container.
+- Per-project git token / PAT (optional) — drop a fine-grained, repo-scoped token (no admin) into the project's token file (`github-token` for `--git-host github`, `gitlab-token` for `--git-host gitlab`; GitHub is the default). A non-placeholder token is the container's active git auth: `dce new`/`start`/`shell`/`install`/`rebuild-container` set `credential.helper store`, seed `~/.git-credentials` (as `https://<https-user>:<token>@<host>` — `x-access-token` for GitHub, `oauth2` for GitLab), and rewrite `git@<host>:` URLs to HTTPS so `git pull` works without changing your repo's `origin`. The token also stays available as the provider's env var inside `dce shell` (`GITHUB_TOKEN` / `GITLAB_TOKEN`). **PAT wins over the SSH deploy key** when both are present; with only the deploy key, git routes to SSH instead. The token crosses the host/container boundary through a stdin pipe, never host argv. For GitHub, `github.gitAuthentication: false` is also written both to the generated `devcontainer.json` (via `dce config sync-vscode`) and directly into the container's VS Code Server machine settings (`~/.vscode-server/data/Machine/settings.json`, via `dce start`/`shell`/`rebuild-container`) so VS Code's Source Control panel (pull/push/sync) defers to git's credential helper — the PAT in `~/.git-credentials` — instead of prompting you to sign in via the GitHub extension's OAuth flow. GitLab has no equivalent VS Code conflict, so no setting is emitted there. Both are omitted for ssh/none auth so VS Code's default (interactive OAuth) remains as a fallback.
 - Per-project .npmrc (optional) — a template is created at `~/.config/dce-enclave/<name>/.npmrc`; edit it for projects that use npm. It is mounted read-only at `/home/dev/.npmrc`.
 - Host-mounted workspace — code lives at `${DC_REPOS_DIR:-$HOME/repos}/<project>` on your machine and is bind-mounted to `/workspace` inside the container.
 
@@ -12,15 +12,38 @@ These credentials are injected by `dce` itself — at `dce new`, and re-applied 
 
 If a container's state is ever suspect, `dce rebuild-container` replaces the container from a known-good image without touching your host repos.
 
-### GitHub SSH host key pinning
+### Git host providers
 
-GitHub's SSH host keys are **pinned in the base image** (`Containerfiles/ssh/github_known_hosts`), not learned at runtime. The base image sets `StrictHostKeyChecking yes` for `github.com` and points its `UserKnownHostsFile` at the pinned file, so an unknown or mismatched host key fails closed instead of being silently trusted on first contact. `dce new`, `dce start`, and `dce rebuild-container` only inject your deploy key — they no longer run `ssh-keyscan`.
+The git host a project authenticates against is chosen at `dce new` time with
+`--git-host` (default `github`); supported: `github`, `gitlab`. Everything that
+differs per host — token file name, placeholder sentinel, HTTPS credential
+username, env-var name, SSH host-key pin, deploy-key guidance — lives in one
+provider registry (`lib/git-host.sh`), so the auth code is host-agnostic. The
+choice is read-only after create. Self-hosted hosts are not yet supported
+(theirs SSH keys can't be pinned at build time); see
+[add a git host](../how-to/add-git-host.md).
 
-Rotating the pin (e.g. when GitHub changes a key) is a deliberate, reviewed change:
+### SSH host-key pinning
 
-1. Re-verify the new keys against three independent channels — see `plans/security/m4.md` ("Verification channels").
-2. Update `Containerfiles/ssh/github_known_hosts` **and** the `FP_*` constants in `tests/lint/security-ssh-host-trust.sh` in the same change.
-3. `dce rebuild-image base` then `dce rebuild-container <name>` to pick up the new pin.
+Each supported host's SSH host keys are **pinned in the base image**
+(`Containerfiles/ssh/<provider>_known_hosts`), not learned at runtime. The base
+image sets `StrictHostKeyChecking yes` for each pinned host and points its
+`UserKnownHostsFile` at the pinned file, so an unknown or mismatched host key
+fails closed instead of being silently trusted on first contact. `dce new`,
+`dce start`, and `dce rebuild-container` only inject your deploy key — they no
+longer run `ssh-keyscan`.
 
-The `tests/lint/security-ssh-host-trust.sh` guard blocks a wrong/poisoned pin (it asserts the pinned fingerprints match GitHub's published values) and fails if `accept-new` or runtime `ssh-keyscan github.com` is reintroduced.
+Rotating a pin (e.g. when a host changes a key) is a deliberate, reviewed change:
+
+1. Re-verify the new keys against three independent channels — see
+   [add a git host](../how-to/add-git-host.md) ("Pinning a host's SSH keys").
+2. Update `Containerfiles/ssh/<provider>_known_hosts` **and** the matching
+   `FP_*` constants in `tests/lint/security-ssh-host-trust.sh` in the same change.
+3. `dce rebuild-image base` then `dce rebuild-container <name>` to pick up the
+   new pin.
+
+The `tests/lint/security-ssh-host-trust.sh` guard is data-driven over the
+provider registry: for each known host it blocks a wrong/poisoned pin (asserts
+the pinned fingerprints match the host's published values) and fails if
+`accept-new` or a runtime `ssh-keyscan <host>` is reintroduced.
 

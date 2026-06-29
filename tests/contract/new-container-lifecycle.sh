@@ -254,6 +254,53 @@ printf 'dce-base:latest\n' > "$IMAGES"
 pass "dce new: reuses existing derived image (no rebuild)"
 
 # ===========================================================================
+# dce new --git-host gitlab: provider selection drives token file, sentinel,
+# config key, and guidance copy. (github default is covered by the case above.)
+# ===========================================================================
+GL_PROJ="glapp"
+GL_SECRET_DIR="$WORK/home/.config/dce-enclave/$GL_PROJ"
+GL_CONFIG="$GL_SECRET_DIR/config"
+GL_SENTINEL="$(dce_git_host_field gitlab sentinel)"
+GL_TOKEN_FILE="$GL_SECRET_DIR/$(dce_git_host_field gitlab token_filename)"
+: > "$LOG"
+run_script "$ROOT_DIR/scripts/new-container.sh" "$GL_PROJ" --git-host gitlab \
+  >"$WORK/gl.stdout" 2>"$WORK/gl.stderr" \
+  || fail "dce new --git-host gitlab exited non-zero
+-- stdout:$(cat "$WORK/gl.stdout")
+-- stderr:$(cat "$WORK/gl.stderr")"
+
+# Token placeholder uses the gitlab filename + sentinel.
+[[ -f "$GL_TOKEN_FILE" ]] || fail "gitlab: token placeholder missing at $GL_TOKEN_FILE"
+grep -Fq "$GL_SENTINEL" "$GL_TOKEN_FILE" || fail "gitlab: placeholder must hold $GL_SENTINEL"
+# The github default filename must NOT be created for a gitlab project.
+[[ ! -f "$GL_SECRET_DIR/github-token" ]] || fail "gitlab: must not create github-token"
+[[ "$(_mode "$GL_TOKEN_FILE")" == "600" ]] || fail "gitlab: token file must be 600"
+
+# Config carries the provider key + points TOKEN_FILE at the gitlab file.
+chmod 600 "$GL_CONFIG" 2>/dev/null || true
+dce_load_project_config "$GL_CONFIG"
+[[ "${CONTAINER_GIT_HOST:-}" == "gitlab" ]] || fail "gitlab: CONTAINER_GIT_HOST must be gitlab"
+[[ "${TOKEN_FILE:-}" == "$GL_TOKEN_FILE" ]] || fail "gitlab: TOKEN_FILE must point at gitlab-token"
+# Provider selection is read-only through dce config: not a mutable key.
+if grep -q 'git-host' "$ROOT_DIR/scripts/config.sh"; then
+  fail "gitlab: git-host must not appear as a mutable config key in v1"
+fi
+
+# Unknown provider fails fast, before any backend work.
+if run_script "$ROOT_DIR/scripts/new-container.sh" "badhost" --git-host bitbucket \
+  >"$WORK/bad.stdout" 2>"$WORK/bad.stderr"; then
+  fail "gitlab: unknown provider must fail fast"
+fi
+grep -Fq "Unknown git host 'bitbucket'" "$WORK/bad.stdout" || fail "gitlab: unknown-provider error message"
+
+pass "dce new --git-host gitlab: provider token file, sentinel, config key, fail-fast"
+
+# Restore the myapp config globals: the gitlab block above called
+# dce_load_project_config on glapp's config, which clobbered CONTAINER_IMAGE and
+# the arrays the rebuild section below depends on.
+dce_load_project_config "$CONFIG"
+
+# ===========================================================================
 # rebuild: never builds; stop->delete->create->start; create-argv parity
 # ===========================================================================
 cp "$IMAGES" "$IMAGES_BAK"

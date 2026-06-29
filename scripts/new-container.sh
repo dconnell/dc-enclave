@@ -43,6 +43,7 @@ NETWORK_IP=""
 RECIPE_CONFIG_PATH=""
 SAVE_TEAM_RECIPE=false
 SAVE_USER_RECIPE=false
+GIT_HOST_INPUT=""
 CLI_SET_CPUS=false
 CLI_SET_MEMORY=false
 CLI_SET_HIDE=false
@@ -130,6 +131,22 @@ while [[ $# -gt 0 ]]; do
       SAVE_USER_RECIPE=true
       shift
       ;;
+    --git-host)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        echo "ERROR: --git-host requires a provider name (e.g. github, gitlab)"
+        exit 1
+      fi
+      GIT_HOST_INPUT="$2"
+      shift 2
+      ;;
+    --git-host=*)
+      GIT_HOST_INPUT="${1#--git-host=}"
+      if [[ -z "$GIT_HOST_INPUT" ]]; then
+        echo "ERROR: --git-host requires a provider name (e.g. github, gitlab)"
+        exit 1
+      fi
+      shift
+      ;;
     *)
       PORTS+=("$1")
       CLI_SET_PORTS=true
@@ -171,6 +188,23 @@ source "$ROOT_DIR/lib/recipe.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/devcontainer.sh"
+
+# Resolve the git host provider (github default). Validated against the registry
+# so an unknown id fails fast with the known set, before any backend work.
+GIT_HOST="$(dce_git_host_default)"
+if [[ -n "$GIT_HOST_INPUT" ]]; then
+  if ! dce_git_host_is_known "$GIT_HOST_INPUT"; then
+    echo "ERROR: Unknown git host '$GIT_HOST_INPUT'."
+    echo "  Known providers: $(dce_git_host_known_providers | tr '\n' ' ')"
+    exit 1
+  fi
+  GIT_HOST="$GIT_HOST_INPUT"
+fi
+GIT_HOST_TOKEN_FILENAME="$(dce_git_host_field "$GIT_HOST" token_filename)"
+GIT_HOST_SENTINEL="$(dce_git_host_field "$GIT_HOST" sentinel)"
+GIT_HOST_DEPLOY_DOC="$(dce_git_host_field "$GIT_HOST" deploy_url_doc)"
+# Display name for user-facing copy.
+GIT_HOST_DISPLAY="$(dce_git_host_field "$GIT_HOST" display_name)"
 
 dce_load_global_config
 
@@ -484,25 +518,24 @@ fi
 echo ""
 echo "✓ SSH deploy key: $SSH_KEY"
 echo ""
-echo "  Add this public key to GitHub Deploy Keys (write access):"
-echo "  https://github.com/ORG/REPO/settings/keys"
+echo "  Add this public key to ${GIT_HOST_DISPLAY} Deploy Keys (write access):"
+echo "  https://${GIT_HOST_DEPLOY_DOC}"
 echo ""
 cat "${SSH_KEY}.pub"
 echo ""
 
-TOKEN_FILE="$SECRET_DIR/github-token"
+TOKEN_FILE="$SECRET_DIR/${GIT_HOST_TOKEN_FILENAME}"
 if [[ ! -f "$TOKEN_FILE" ]]; then
   {
-    echo "# GitHub Personal Access Token for container: $PROJECT"
-    echo "# Scope: repo (or fine-grained: specific repos, contents read/write)"
-    echo "# NO admin permissions, NO org-level access"
+    echo "# ${GIT_HOST_DISPLAY} Personal Access Token for container: $PROJECT"
+    echo "# Scope: repository contents read/write (fine-grained preferred; no admin)"
     echo "# Replace this line with your token:"
-    echo "ghp_REPLACE_ME"
+    echo "${GIT_HOST_SENTINEL}"
   } > "$TOKEN_FILE"
   chmod 600 "$TOKEN_FILE"
 fi
-echo "✓ GitHub token placeholder: $TOKEN_FILE"
-echo "  !! Edit this file and replace ghp_REPLACE_ME with your PAT"
+echo "✓ ${GIT_HOST_DISPLAY} token placeholder: $TOKEN_FILE"
+echo "  !! Edit this file and replace ${GIT_HOST_SENTINEL} with your token"
 
 NPMRC="$SECRET_DIR/.npmrc"
 if [[ ! -f "$NPMRC" ]]; then
@@ -529,8 +562,9 @@ esc_memory="$(dce_escape_config_value "${CONTAINER_MEMORY:-}")" || exit 1
 esc_repos="$(dce_escape_config_value "$REPOS_DIR")" || exit 1
 esc_secret="$(dce_escape_config_value "$SECRET_DIR")" || exit 1
 esc_ssh="$(dce_escape_config_value "$SECRET_DIR/ssh_key")" || exit 1
-esc_token="$(dce_escape_config_value "$SECRET_DIR/github-token")" || exit 1
+esc_token="$(dce_escape_config_value "$SECRET_DIR/${GIT_HOST_TOKEN_FILENAME}")" || exit 1
 esc_npmrc="$(dce_escape_config_value "$SECRET_DIR/.npmrc")" || exit 1
+esc_git_host="$(dce_escape_config_value "$GIT_HOST")" || exit 1
 
 cat > "$CONFIG_FILE" <<EOF
 # DC Enclave config for: $PROJECT
@@ -539,6 +573,7 @@ CONTAINER_PROJECT="$esc_project"
 CONTAINER_OVERLAY_SCOPES="$esc_scopes"
 CONTAINER_IMAGE="$esc_image"
 CONTAINER_BACKEND="$esc_backend"
+CONTAINER_GIT_HOST="$esc_git_host"
 CONTAINER_CPUS="$esc_cpus"
 CONTAINER_MEMORY="$esc_memory"
 REPOS_DIR="$esc_repos"
@@ -643,15 +678,18 @@ fi
 echo "==> Injecting SSH deploy key..."
 backend_exec "$PROJECT" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
 backend_exec_stdin "$PROJECT" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY"
-# GitHub host keys are pinned in the base image; no runtime ssh-keyscan.
+# Git host keys are pinned in the base image; no runtime ssh-keyscan.
 
 echo "==> Configuring git in container..."
 # SSH_KEY_PATH is a local here (config persists it as SSH_KEY_PATH); expose the
 # key path to dce_ensure_git_credentials so it can pick the auth method. At
 # `dce new` time the token is still the placeholder, so this resolves to the
 # legacy SSH insteadOf; it flips to HTTPS+PAT once the user fills the token.
+# CONTAINER_GIT_HOST is likewise exported so dce_project_git_host resolves the
+# active provider for the auth-method + insteadOf wiring.
 # Exported because the consumer is the sourced lib helper, not this file.
 export SSH_KEY_PATH="$SSH_KEY"
+export CONTAINER_GIT_HOST="$GIT_HOST"
 dce_ensure_git_credentials "$PROJECT"
 
 if $DOCKER_COMPATIBLE; then
@@ -744,8 +782,8 @@ echo "Container '$PROJECT' created and started."
 echo "======================================================================"
 echo ""
 echo "Config: ~/.config/dce-enclave/$PROJECT/"
-echo "  [ ] github-token   Replace ghp_REPLACE_ME with your GitHub PAT"
-echo "  [ ] ssh_key.pub    Add as GitHub Deploy Key for your repos"
+echo "  [ ] ${GIT_HOST_TOKEN_FILENAME}   Replace ${GIT_HOST_SENTINEL} with your ${GIT_HOST_DISPLAY} token"
+echo "  [ ] ssh_key.pub    Add as ${GIT_HOST_DISPLAY} Deploy Key for your repos"
 echo ""
 if $DOCKER_COMPATIBLE; then
   echo "  [ ] (Optional) Open $REPOS_DIR in VS Code Dev Containers"

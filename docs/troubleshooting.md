@@ -60,7 +60,7 @@ Changed ports or resource limits:
 
 SSH auth issues:
 
-- verify ~/.config/dce-enclave/<name>/ssh_key and github-token
+- verify ~/.config/dce-enclave/<name>/ssh_key and the git-host token file (github-token / gitlab-token)
 - restart with dce start or recreate with dce rebuild-container
 
 Podman on macOS not starting:

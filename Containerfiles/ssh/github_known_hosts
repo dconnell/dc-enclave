@@ -3,7 +3,7 @@
 # Trust anchor for `Host github.com` in the DC Enclave base image. Read-only
 # at runtime; never updated by ssh-keyscan. These exact entries are published by
 # GitHub and were verified against THREE independent channels before pinning
-# (see plans/security/m4.md -> "Verification channels"):
+# (see docs/how-to/add-git-host.md -> "Pinning a host's SSH keys"):
 #
 #   1. https://api.github.com/meta  -> ssh_keys + ssh_key_fingerprints (HTTPS, CA PKI)
 #   2. ssh-keyscan github.com       -> live key from a trusted host (SSH)

@@ -398,19 +398,23 @@ doctor_project() {  # <name>
   fi
 
   # Secrets presence (mirrors dce status logic). Missing token/key is actionable.
+  local _gh_provider="" _gh_sentinel="" _gh_display=""
+  _gh_provider="$(dce_project_git_host)"
+  _gh_sentinel="$(dce_git_host_field "$_gh_provider" sentinel)"
+  _gh_display="$(dce_git_host_field "$_gh_provider" display_name)"
   local token_state="missing"
   if [[ -n "${TOKEN_FILE:-}" && -f "$TOKEN_FILE" ]]; then
-    if grep -v '^#' "$TOKEN_FILE" 2>/dev/null | grep -v '^ghp_REPLACE_ME' | grep -q .; then
+    if grep -v '^#' "$TOKEN_FILE" 2>/dev/null | grep -v "^${_gh_sentinel}" | grep -q .; then
       token_state="set"
     else
       token_state="placeholder"
     fi
   fi
   if [[ "$token_state" == "set" ]]; then
-    _ok "GitHub token set"
+    _ok "${_gh_display} token set"
   else
-    _bad "GitHub token set" \
-      "token $token_state at ${TOKEN_FILE:-(unknown path)} (edit and replace ghp_REPLACE_ME)"
+    _bad "${_gh_display} token set" \
+      "token $token_state at ${TOKEN_FILE:-(unknown path)} (edit and replace ${_gh_sentinel})"
   fi
 
   if [[ -n "${SSH_KEY_PATH:-}" && -f "$SSH_KEY_PATH" ]]; then

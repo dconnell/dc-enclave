@@ -5,7 +5,8 @@ dce-enclave/
 ├── Containerfiles/
 │   ├── Containerfile.base
 │   ├── ssh/
-│   │   └── github_known_hosts         # pinned, three-channel-verified GitHub SSH host keys
+│   │   ├── github_known_hosts        # pinned, three-channel-verified GitHub SSH host keys
+│   │   └── gitlab_known_hosts        # pinned, three-channel-verified GitLab SSH host keys
 │   ├── example/
 │   │   ├── Containerfile.nodejs        # overlay template example
 │   │   ├── Containerfile.golang        # overlay template example

@@ -30,14 +30,14 @@ _show_summary() {
   echo "  new <name> [scope[,scope...]] [host:container ...]"
   echo "                                                    Create a new isolated container project"
   echo "  new <name> [scope[,scope...]] [--config <path>] [--repo-path <path>]"
-  echo "       [--save-team] [--save-user] [--cpus <N>] [--memory <val>]"
+  echo "       [--save-team] [--save-user] [--git-host <provider>] [--cpus <N>] [--memory <val>]"
   echo "       [--hide <path[,path...]> ...] [host:container ...]"
   echo "                                                    With resource limits"
   echo "  start [name ...]                                  Start one or more projects, or all"
   echo "  stop [name ...]                                   Stop one or more projects, or all"
   echo "  list                                              List containers and status"
   echo "  status                                            Show overall status and per-project details"
-  echo "  shell <name> [command]                            Interactive shell/command; seeds GITHUB_TOKEN (zsh -ic)"
+  echo "  shell <name> [command]                            Interactive shell/command; seeds git token as provider env var (zsh -ic)"
   echo "  logs <name> [-f|--follow] [--tail N]              Fetch container log stream"
   echo "  exec [--root] <name> <command...>                 Raw one-shot in a running container; no token (docker-exec style)"
   echo "  restart [name ...]                                Restart one or more projects, or all"
@@ -67,11 +67,11 @@ _show_help_new() {
   cat <<'EOF'
 Usage: dce new <name> [scope[,scope...]] [--repo-path <path>]
               [--config <path>]
-              [--save-team] [--save-user]
+              [--save-team] [--save-user] [--git-host <provider>]
               [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]
 
 Description:
-  Creates a new isolated development container with its own SSH keys, GitHub
+  Creates a new isolated development container with its own SSH keys, git-host
   token placeholder, .npmrc template, and a dedicated workspace mount.
 
   Image selection is scope-driven:
@@ -135,8 +135,16 @@ Options:
                name:ip to pin a static IPv4. Example: --network myapp,obs
 
   --ip <addr>  Static IPv4 for the primary (first) network, e.g. 10.0.0.5.
-               Equivalent to writing name:ip on the first --network entry. Not
-               supported on the apple/container backend.
+                Equivalent to writing name:ip on the first --network entry. Not
+                supported on the apple/container backend.
+
+  --git-host <provider>
+                Select the git host this project authenticates against
+                (default: github). Determines the token file name, placeholder
+                sentinel, HTTPS credential username, SSH host-key pin, and the
+                env var the token is exported as in `dce shell`
+                (GITHUB_TOKEN / GITLAB_TOKEN). Known providers: github, gitlab.
+                Read-only after create; to switch hosts, re-run `dce new`.
 
   host:container
               Port mapping(s) to publish, in Docker syntax. A bare port number
@@ -288,8 +296,9 @@ Description:
   Opens an interactive shell inside a dev container. If the container is not
   running, it is started automatically.
 
-  The GITHUB_TOKEN from the project's token file is injected into the shell
-  environment (if set). The shell prompt is prefixed with the project name.
+  The project's git token is injected into the shell environment as the
+  provider's env var (GITHUB_TOKEN for github, GITLAB_TOKEN for gitlab), if a
+  non-placeholder token is set. The shell prompt is prefixed with the project name.
 
   If a command is provided, it is executed non-interactively inside the
   container (via zsh -ic) and the shell exits afterwards.
@@ -309,8 +318,9 @@ Examples:
 Notes:
   - If the container is stopped, 'dce start' is called automatically.
   - The workspace directory /workspace is mounted from the host repos dir.
-  - GITHUB_TOKEN is available if the token file has been filled in.
-  - For a raw, scriptable command with NO GITHUB_TOKEN and NO zsh wrapping
+  - The provider env var (GITHUB_TOKEN / GITLAB_TOKEN) is available if the
+    token file has been filled in.
+  - For a raw, scriptable command with NO token and NO zsh wrapping
     (docker-exec style, args passed verbatim), use 'dce exec' instead. The
     container must already be running for 'dce exec'. See: dce help exec.
 EOF
@@ -360,7 +370,7 @@ Usage: dce exec [--root] <name> <command...>
 
 Description:
   Runs a single command in a running container, docker-exec style: the command
-  executes directly as the dev user with no GITHUB_TOKEN seeding, no shell
+  executes directly as the dev user with no git-token seeding, no shell
   prompt prefix, and no zsh -ic wrapping.
 
   A TTY is allocated automatically only when both stdin and stdout are
@@ -370,7 +380,7 @@ Description:
       dce exec myapp top            # interactive -> gets a TTY
 
   This is distinct from `dce shell <name> "command"`, which wraps the command
-  in zsh -ic (loading aliases/interactive config) and seeds GITHUB_TOKEN. Use
+  in zsh -ic (loading aliases/interactive config) and seeds the git token. Use
   `dce shell` for token-dependent or alias-dependent one-shots; use `dce exec`
   for raw, scriptable commands.
 

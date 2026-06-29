@@ -129,6 +129,11 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   DOCKER_COMPATIBLE=true
 fi
 
+# Resolve the project's git host for provider-aware guidance copy.
+RB_GIT_HOST="$(dce_project_git_host)"
+RB_GIT_DISPLAY="$(dce_git_host_field "$RB_GIT_HOST" display_name)"
+RB_GIT_DEPLOY_DOC="$(dce_git_host_field "$RB_GIT_HOST" deploy_url_doc)"
+
 if [[ -n "$FROM_SNAP" ]]; then
   # --- restore path: image = the named snapshot ------------------------------
   if ! dce_validate_snapshot_label "$FROM_SNAP"; then
@@ -317,12 +322,12 @@ if $ROTATE_KEYS; then
   ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -C "dce-container-${PROJECT}-rotated-$(date +%Y%m%d)" -N "" -q
   chmod 600 "$SSH_KEY_PATH"
   echo ""
-  echo "  New SSH public key - add to GitHub and remove the old one:"
-  echo "  https://github.com/ORG/REPO/settings/keys"
+  echo "  New SSH public key - add to ${RB_GIT_DISPLAY} and remove the old one:"
+  echo "  https://${RB_GIT_DEPLOY_DOC}"
   echo ""
   cat "${SSH_KEY_PATH}.pub"
   echo ""
-  read -r -p "  !! Pause here, update GitHub, then press Enter to continue..." pause_input
+  read -r -p "  !! Pause here, update ${RB_GIT_DISPLAY}, then press Enter to continue..." pause_input
   : "$pause_input"
 else
   echo ""
@@ -528,5 +533,5 @@ echo "  [ ] dce shell $PROJECT                        # re-enter container"
 echo ""
 echo "Good habits after any rebuild:"
 echo "  [ ] Quick sanity check: git log and git diff in $REPOS_DIR look right"
-echo "  [ ] Rotate your GitHub PAT if it's due: $TOKEN_FILE"
+echo "  [ ] Rotate your ${RB_GIT_DISPLAY} token if it's due: $TOKEN_FILE"
 echo "  [ ] Keep dotfiles current so customizations survive the next rebuild"

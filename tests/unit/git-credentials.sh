@@ -149,5 +149,66 @@ grep -Fq 'cat > ~/.vscode-server/data/Machine/settings.json' "$ARGV_LOG" \
   && fail "none: VS Code machine settings write must not happen when no existing setting"
 pass "none: stale credential state cleared"
 
+# --- GitLab provider: full parity, provider-specific values -------------------
+# Switch the active provider to gitlab and re-run every check. The mechanism is
+# identical; only the host strings, HTTPS username, and the absence of a VS Code
+# setting differ.
+GL_SENTINEL="glpat_SENTINEL0123456789abcdefXYZ"
+# shellcheck disable=SC2034
+# Read indirectly by dce_project_git_host in the sourced lib.
+CONTAINER_GIT_HOST="gitlab"
+write_token "$GL_SENTINEL"; write_ssh_key
+reset_state
+dce_ensure_git_credentials "$PROJECT"
+
+# Security: gitlab sentinel never in backend argv (crosses via stdin).
+grep -Fq "$GL_SENTINEL" "$ARGV_LOG" && fail "gitlab-pat: sentinel leaked into backend argv"
+pass "gitlab-pat: sentinel absent from backend argv"
+
+# HTTPS-direction insteadOf for gitlab.com; SSH-direction unset.
+grep -Fq 'config --global url.https://gitlab.com/.insteadOf git@gitlab.com:' "$ARGV_LOG" \
+  || fail "gitlab-pat: HTTPS insteadOf not set for gitlab.com"
+grep -Fq 'config --global --unset-all url.git@gitlab.com:.insteadOf' "$ARGV_LOG" \
+  || fail "gitlab-pat: stale SSH insteadOf not unset for gitlab.com"
+pass "gitlab-pat: HTTPS insteadOf set, SSH insteadOf unset"
+
+# credential.helper store chain (same shape as github).
+grep -Fq 'config --global --add credential.helper store' "$ARGV_LOG" \
+  || fail "gitlab-pat: credential.helper store not set"
+pass "gitlab-pat: credential.helper store set"
+
+# ~/.git-credentials seeded via stdin in the oauth2:<token>@gitlab.com form.
+grep -Fq "https://oauth2:$GL_SENTINEL@gitlab.com" "$STDIN_CAP" \
+  || fail "gitlab-pat: credential line not delivered via stdin (oauth2 form)"
+pass "gitlab-pat: ~/.git-credentials seeded via stdin (oauth2@gitlab.com)"
+
+# No VS Code machine-settings write for gitlab (no github.gitAuthentication
+# equivalent -- gitlab has no VS Code git-auth conflict to suppress).
+grep -Fq 'cat > ~/.vscode-server/data/Machine/settings.json' "$ARGV_LOG" \
+  && fail "gitlab-pat: must NOT touch VS Code machine settings (no setting for gitlab)"
+pass "gitlab-pat: no VS Code machine-settings write"
+
+# Cross-provider cleanup: the github insteadOf rules (baked into the base image
+# / left from a prior github config) must be cleared so they cannot coexist with
+# the active gitlab wiring.
+grep -Fq 'config --global --unset-all url.https://github.com/.insteadOf' "$ARGV_LOG" \
+  || fail "gitlab-pat: stale github HTTPS insteadOf not cleared"
+grep -Fq 'config --global --unset-all url.git@github.com:.insteadOf' "$ARGV_LOG" \
+  || fail "gitlab-pat: stale github SSH insteadOf not cleared"
+pass "gitlab-pat: stale github insteadOf rules cleared (no coexistence)"
+
+# --- GitLab ssh branch: SSH insteadOf for gitlab, no PAT wiring --------------
+write_token "glpat_REPLACE_ME"; write_ssh_key
+reset_state
+dce_ensure_git_credentials "$PROJECT"
+grep -Fq 'config --global url.git@gitlab.com:.insteadOf https://gitlab.com/' "$ARGV_LOG" \
+  || fail "gitlab-ssh: SSH insteadOf not set for gitlab.com"
+grep -Fq 'config --global --add credential.helper store' "$ARGV_LOG" \
+  && fail "gitlab-ssh: credential.helper store must not be set"
+pass "gitlab-ssh: SSH insteadOf set, no PAT credential wiring"
+
+# Restore the default provider so later test additions are not surprised.
+unset CONTAINER_GIT_HOST
+
 echo ""
 echo "All git-credentials helper checks passed."

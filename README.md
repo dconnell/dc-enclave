@@ -37,7 +37,7 @@ You now have a container named `myapp` running your chosen toolchain, your repo 
 
 The generated `devcontainer.json` follows the [dev container spec](https://containers.dev), so other spec-compliant clients (Codespaces, etc.) can attach too — only VS Code Dev Containers is tested.
 
-`dce new` also generates a per-project SSH keypair and creates placeholder files for a GitHub token and `.npmrc` under `~/.config/dce-enclave/<name>/`. Completing them is optional hardening — see [the isolation model](docs/explanation/isolation-and-security.md).
+`dce new` also generates a per-project SSH keypair and creates placeholder files for a git-host token (GitHub PAT by default; use `--git-host gitlab` for GitLab) and `.npmrc` under `~/.config/dce-enclave/<name>/`. Completing them is optional hardening — see [the isolation model](docs/explanation/isolation-and-security.md).
 
 ## Documentation
 

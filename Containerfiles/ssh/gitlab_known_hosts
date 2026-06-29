@@ -1,0 +1,37 @@
+# Pinned GitLab (gitlab.com) SSH host keys.
+#
+# Trust anchor for `Host gitlab.com` in the DC Enclave base image. Read-only at
+# runtime; never updated by ssh-keyscan. These exact entries were verified
+# against THREE independent channels before pinning (see
+# docs/how-to/add-git-host.md -> "Verification channels"):
+#
+#   1. `ssh-keyscan gitlab.com`               -> live key from the host (SSH)
+#   2. https://docs.gitlab.com/ee/user/gitlab_com/#ssh-host-keys-fingerprints
+#                                              -> GitLab.com published fingerprint
+#                                                 table + known_hosts lines
+#                                                 (HTTPS, docs.gitlab.com cert)
+#   3. https://docs.gitlab.com/ee/user/ssh.html#verify-that-you-are-connecting-to-the-correct-server
+#                                              -> the connection-prompt example
+#                                                 prints the ECDSA fingerprint
+#                                                 (HTTPS, same docs cert,
+#                                                 independently authored page)
+#
+# All three channels agreed on the fingerprints below. Note: unlike GitHub,
+# GitLab does not expose an api.github.com/meta-style endpoint returning raw
+# host keys, so channels 2 and 3 are both docs.gitlab.com pages (a documented
+# deviation from the GitHub 3-independent-channel ideal -- recorded here, never
+# silently assumed). Do NOT edit a key without re-running the channel check and
+# updating the FP_GITLAB_* constants in tests/lint/security-ssh-host-trust.sh
+# in the same change.
+#
+# Verified fingerprints (SHA256):
+#   ed25519: eUXGGm1YGsMAS7vkcx6JOJdOGHPem5gQp4taiCfCLB8
+#   ecdsa:   HbW3g8zUjNSksFbqTiUWPWg2Bq1x8xdGUrliXFzSnUw
+#   rsa:     ROQFvPThGrW4RuWLoL9tq9I9zJ42fK4XywyRtbOz/EQ
+#
+# Source: docs.gitlab.com/ee/user/gitlab_com/ cross-checked against the live
+# ssh-keyscan output and the ssh.html connection-prompt example.
+# Last verified: 2026-06-29.
+gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf
+gitlab.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFSMqzJeV9rUzU4kWitGjeR4PWSa29SPqJ1fVkhtj3Hw9xjLVXVYrU9QlYWrOLXBpQ6KWjbjTDTdDkoohFzgbEY=
+gitlab.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/U0tCNyokEi/ueaBMCvbcTHhO7FcwzY92WK4Yt0aGROY5qX2UKSeOvuP4D6TPqKF1onrSzH9bx9XUf2lEdWT/ia1NEKjunUqu1xOB/StKDHMoX4/OKyIzuS0q/T1zOATthvasJFoPrAjkohTyaDUz2LN5JoH839hViyEG82yB+MjcFV5MU3N1l1QL3cVUCh93xSaua1N85qivl+siMkPGbO5xR/En4iEY6K2XPASUEMaieWVNTRCtJ4S8H+9

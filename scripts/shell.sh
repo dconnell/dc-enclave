@@ -2,7 +2,8 @@
 # =============================================================================
 # scripts/shell.sh - `dce shell`: open an interactive shell (or run one command)
 # in a dev container. Starts the container if it isn't running, and injects the
-# project's GITHUB_TOKEN into the shell environment when set.
+# project's git token into the shell environment as the provider's env var
+# (GITHUB_TOKEN / GITLAB_TOKEN) when set.
 # =============================================================================
 set -euo pipefail
 
@@ -46,17 +47,21 @@ if ! backend_is_running "$PROJECT"; then
   "$SCRIPT_DIR/start.sh" "$PROJECT"
 fi
 
-# Read the GitHub token (skipping comments and the placeholder value) via the
-# shared helper so the filtering logic lives in one place. Empty means unset.
-GITHUB_TOKEN="$(dce_read_github_token)"
+# Read the project's git token (skipping comments and the provider placeholder)
+# via the shared helper so the filtering logic lives in one place. Empty = unset.
+# ENV_VAR is the provider's shell env-var name (GITHUB_TOKEN / GITLAB_TOKEN) the
+# token is exported as inside the container, so provider-native tooling (gh/glab,
+# SDKs) reads it unmodified.
+GIT_TOKEN="$(dce_read_git_token)"
+ENV_VAR="$(dce_git_host_field "$(dce_project_git_host)" env_var)"
 
 echo "  Entering container: $PROJECT"
 echo "  Backend: $ACTIVE_BACKEND"
 echo "  Workspace: /workspace (-> $REPOS_DIR on host)"
-if [[ -n "$GITHUB_TOKEN" ]]; then
-  echo "  GITHUB_TOKEN: set"
+if [[ -n "$GIT_TOKEN" ]]; then
+  echo "  ${ENV_VAR}: set"
 else
-  echo "  GITHUB_TOKEN: NOT SET (edit ${TOKEN_FILE:-token file})"
+  echo "  ${ENV_VAR}: NOT SET (edit ${TOKEN_FILE:-token file})"
 fi
 echo ""
 
@@ -65,8 +70,8 @@ echo ""
 # `dce start`. Idempotent; the PAT, if any, crosses via stdin inside the helper.
 dce_ensure_git_credentials "$PROJECT"
 
-# Seed GITHUB_TOKEN into a short-lived file inside the container over stdin, so
-# the PAT value never appears in host process argv (readable via ps / /proc).
+# Seed the token into a short-lived file inside the container over stdin, so the
+# token value never appears in host process argv (readable via ps / /proc).
 # The raw value is written (not a shell assignment) and read back via command
 # substitution in the wrapper, so token-file metacharacters are never executed;
 # the file is deleted before the user shell is exec'd and best-effort removed
@@ -74,11 +79,11 @@ dce_ensure_git_credentials "$PROJECT"
 _dce_token_env_file=""
 
 _dce_seed_token_file() {
-  _dce_token_env_file="$(backend_exec "$PROJECT" mktemp "/tmp/dce-gh-token.XXXXXX")"
+  _dce_token_env_file="$(backend_exec "$PROJECT" mktemp "/tmp/dce-git-token.XXXXXX")"
   backend_exec "$PROJECT" chmod 600 "$_dce_token_env_file"
   # shellcheck disable=SC2016
   # sh -c runs in the container; $1 expands in that inner shell, not here.
-  printf '%s' "$GITHUB_TOKEN" \
+  printf '%s' "$GIT_TOKEN" \
     | backend_exec_stdin "$PROJECT" sh -c 'cat >"$1"' _ "$_dce_token_env_file"
 }
 
@@ -92,14 +97,16 @@ _dce_cleanup_token_file() {
 trap '_dce_cleanup_token_file' EXIT INT TERM
 
 if $HAS_COMMAND; then
-  if [[ -n "$GITHUB_TOKEN" ]]; then
+  if [[ -n "$GIT_TOKEN" ]]; then
     _dce_seed_token_file
     # shellcheck disable=SC2016
-    # sh -lc runs in the container; $1/$2 and $(cat) expand in the inner shell.
+    # sh -lc runs in the container; $1/$2/$3 and $(cat) expand in the inner
+    # shell. $3 is the env-var NAME (registry-controlled), exported with the
+    # value read from the temp file ($1); the value never touches host argv.
     backend_exec "$PROJECT" env \
       "PS1=[${PROJECT}] %~ %# " \
-      sh -lc 'export GITHUB_TOKEN="$(cat "$1")"; rm -f "$1"; exec zsh -ic "$2"' \
-      _ "$_dce_token_env_file" "$COMMAND"
+      sh -lc 'export "$3=$(cat "$1")"; rm -f "$1"; exec zsh -ic "$2"' \
+      _ "$_dce_token_env_file" "$COMMAND" "$ENV_VAR"
   else
     backend_exec "$PROJECT" env \
       "PS1=[${PROJECT}] %~ %# " \
@@ -109,15 +116,16 @@ else
   # shellcheck disable=SC2016
   # sh -lc runs in the container; $(hostname)/$(whoami)/$(pwd) expand there.
   backend_exec "$PROJECT" sh -lc 'echo "  Connected to container: $(hostname) (user=$(whoami), pwd=$(pwd))"'
-  if [[ -n "$GITHUB_TOKEN" ]]; then
+  if [[ -n "$GIT_TOKEN" ]]; then
     _dce_seed_token_file
     # shellcheck disable=SC2016
-    # sh -lc runs in the container; $1 and $(cat) expand in the inner shell.
+    # sh -lc runs in the container; $1/$2 and $(cat) expand in the inner shell.
+    # $2 is the env-var NAME; the value (read from $1) never touches host argv.
     backend_exec_interactive "$PROJECT" \
       --env "PS1=[${PROJECT}] %~ %# " \
       -- \
-      sh -lc 'export GITHUB_TOKEN="$(cat "$1")"; rm -f "$1"; cd /workspace 2>/dev/null || true; exec zsh -i' \
-      _ "$_dce_token_env_file"
+      sh -lc 'export "$2=$(cat "$1")"; rm -f "$1"; cd /workspace 2>/dev/null || true; exec zsh -i' \
+      _ "$_dce_token_env_file" "$ENV_VAR"
   else
     backend_exec_interactive "$PROJECT" \
       --env "PS1=[${PROJECT}] %~ %# " \

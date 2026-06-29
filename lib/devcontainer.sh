@@ -465,15 +465,21 @@ dce_devcontainer_render() {
     containerenv_block=$',\n  "containerEnv": {\n    "TZ": "'"$host_tz"$'"\n  }'
   fi
 
-  # Only emit the VS Code git-auth override for PAT auth. With the PAT in
-  # ~/.git-credentials, VS Code's Source Control panel must defer to git's
-  # credential helper instead of routing through the GitHub extension's OAuth
-  # prompt. For ssh/none, the VS Code default (true) is left untouched: ssh
-  # auth bypasses HTTPS credentials entirely, and "none" benefits from the
-  # GitHub extension's interactive OAuth as the only available auth path.
+  # Only emit the VS Code git-auth override for PAT auth on a provider that
+  # ships one. With the PAT in ~/.git-credentials, VS Code's Source Control panel
+  # must defer to git's credential helper instead of routing through the hoster
+  # extension's OAuth prompt. GitHub is the only v1 provider with such a setting
+  # (github.gitAuthentication); gitlab has no equivalent conflict, so its
+  # devcontainer.json carries no customizations block. For ssh/none, the VS Code
+  # default is left untouched: ssh auth bypasses HTTPS credentials entirely, and
+  # "none" benefits from the hoster extension's interactive OAuth as the only
+  # available auth path.
   local customizations_block=""
-  if [[ "$auth_method" == "pat" ]]; then
-    customizations_block=$',\n  "customizations": {\n    "vscode": {\n      "settings": {\n        "github.gitAuthentication": false\n      }\n    }\n  }'
+  local dc_provider="" dc_vscode_setting=""
+  dc_provider="$(dce_project_git_host)"
+  dc_vscode_setting="$(dce_git_host_field "$dc_provider" vscode_setting)"
+  if [[ "$auth_method" == "pat" ]] && [[ -n "$dc_vscode_setting" ]]; then
+    customizations_block=$',\n  "customizations": {\n    "vscode": {\n      "settings": {\n        "'"$dc_vscode_setting"$'": false\n      }\n    }\n  }'
   fi
 
   cat <<EOF
@@ -581,6 +587,10 @@ dce_devcontainer_sync() {
   local tmp_file=""
   tmp_file="$(mktemp "${file}.tmp.XXXXXX")" || return 1
 
+  local sync_provider="" sync_vscode_setting=""
+  sync_provider="$(dce_project_git_host)"
+  sync_vscode_setting="$(dce_git_host_field "$sync_provider" vscode_setting)"
+
   if ! jq \
       --arg name "dce-$project" \
       --arg df "$build_dockerfile" \
@@ -590,7 +600,8 @@ dce_devcontainer_sync() {
       --arg slug "$slug" \
       --argjson runargs "$runargs_json" \
       --arg tz "$host_tz" \
-      --arg auth "$auth_method" '
+      --arg auth "$auth_method" \
+      --arg vsetting "$sync_vscode_setting" '
       .name = $name
       | .build = {"dockerfile": $df, "context": $ctx}
       | .workspaceMount = "source=${localWorkspaceFolder},target=/workspace,type=bind"
@@ -609,13 +620,13 @@ dce_devcontainer_sync() {
         ) ) + $add_mounts
       | (if $tz == "" then .
          else (.containerEnv = ((.containerEnv // {}) + {"TZ": $tz})) end)
-      | (if $auth == "pat" then
+      | (if $auth == "pat" and $vsetting != "" then
           .customizations = ((.customizations // {})
             | .vscode = ((.vscode // {})
               | .settings = ((.settings // {})
-                + {"github.gitAuthentication": false})))
-        elif ((.customizations // {}) | (.vscode.settings // {}) | has("github.gitAuthentication")) then
-          del(.customizations.vscode.settings["github.gitAuthentication"])
+                + {($vsetting): false})))
+        elif $vsetting != "" and ((.customizations // {}) | (.vscode.settings // {}) | has($vsetting)) then
+          del(.customizations.vscode.settings[$vsetting])
         else . end)
     ' "$file" > "$tmp_file" 2>/dev/null; then
     rm -f "$tmp_file"

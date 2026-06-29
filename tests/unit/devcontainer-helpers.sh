@@ -258,6 +258,18 @@ if command -v jq >/dev/null 2>&1; then
   printf '%s' "$RENDERED_NONE" | jq -e '.customizations.vscode.settings["github.gitAuthentication"] == null' >/dev/null \
     || fail "render (none): github.gitAuthentication must be absent"
   pass "dce_devcontainer_render: no git auth setting for ssh/none (VS Code default preserved)"
+
+  # GitLab has NO VS Code git-auth setting (no equivalent conflict), so even with
+  # PAT auth the devcontainer.json must carry no customizations block.
+  # shellcheck disable=SC2034
+  # CONTAINER_GIT_HOST is read by dce_project_git_host in the sourced lib.
+  CONTAINER_GIT_HOST="gitlab"
+  RENDERED_GL="$(dce_devcontainer_render "$PROJECT" "$DERIVED_DF" "$ROOT_DIR" "$WORK/sec" \
+    "node_modules" "mynet" "3000" "" "pat")"
+  printf '%s' "$RENDERED_GL" | jq -e '.customizations == null' >/dev/null \
+    || fail "render (gitlab pat): must emit NO customizations (gitlab has no VS Code git-auth setting)"
+  pass "dce_devcontainer_render: gitlab PAT emits no customizations (no VS Code setting)"
+  unset CONTAINER_GIT_HOST
 else
   pass "dce_devcontainer_render (skipped — jq not installed)"
 fi

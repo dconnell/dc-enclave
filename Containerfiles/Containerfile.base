@@ -48,21 +48,24 @@ EOF
 
 RUN chown dev:dev /home/dev/.zshrc
 
-# Pin GitHub SSH host keys in-image instead of trusting on first use.
-# Copying happens before `USER dev` since /etc/ssh is root-owned. The file is
+# Pin git-host SSH host keys in-image instead of trusting on first use.
+# Copying happens before `USER dev` since /etc/ssh is root-owned. Each file is
 # world-readable (0644) so the dev user can read it; read-only is fine -- ssh
-# only rejects group/world-*writable* known_hosts files. See
-# Containerfiles/ssh/github_known_hosts for the three-channel verification.
+# only rejects group/world-*writable* known_hosts files. Each provider's pin is
+# three-channel verified; see Containerfiles/ssh/<provider>_known_hosts headers
+# and docs/how-to/add-git-host.md for the procedure.
 COPY Containerfiles/ssh/github_known_hosts /etc/ssh/ssh_known_hosts.github
-RUN chmod 644 /etc/ssh/ssh_known_hosts.github
+COPY Containerfiles/ssh/gitlab_known_hosts /etc/ssh/ssh_known_hosts.gitlab
+RUN chmod 644 /etc/ssh/ssh_known_hosts.github /etc/ssh/ssh_known_hosts.gitlab
 
 # Configure SSH client defaults for dev user.
-# github.com fails closed: StrictHostKeyChecking yes plus a pinned
+# Each pinned host fails closed: StrictHostKeyChecking yes plus a pinned
 # UserKnownHostsFile means only these reviewed keys are accepted -- no runtime
-# ssh-keyscan, no accept-new. Other hosts keep ssh's default known_hosts.
+# ssh-keyscan, no accept-new. Other (unpinned) hosts keep ssh's default
+# known_hosts behavior.
 USER dev
 RUN mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-    printf 'Host github.com\n  StrictHostKeyChecking yes\n  UserKnownHostsFile /etc/ssh/ssh_known_hosts.github\n  IdentityFile ~/.ssh/id_ed25519\n' > ~/.ssh/config && \
+    printf 'Host github.com\n  StrictHostKeyChecking yes\n  UserKnownHostsFile /etc/ssh/ssh_known_hosts.github\n  IdentityFile ~/.ssh/id_ed25519\n\nHost gitlab.com\n  StrictHostKeyChecking yes\n  UserKnownHostsFile /etc/ssh/ssh_known_hosts.gitlab\n  IdentityFile ~/.ssh/id_ed25519\n' > ~/.ssh/config && \
     chmod 600 ~/.ssh/config
 
 # Force git to use SSH instead of HTTPS for github.com
