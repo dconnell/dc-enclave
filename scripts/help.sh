@@ -39,6 +39,7 @@ _show_summary() {
   echo "  status                                            Show overall status and per-project details"
   echo "  shell <name> [command]                            Interactive shell/command; seeds git token as provider env var (zsh -ic)"
   echo "  logs <name> [-f|--follow] [--tail N]              Fetch container log stream"
+  echo "  editor [--editor <id>] <name>                     Launch your editor attached to the running container (/workspace)"
   echo "  exec [--root] <name> <command...>                 Raw one-shot in a running container; no token (docker-exec style)"
   echo "  restart [name ...]                                Restart one or more projects, or all"
   echo "  rm <name> [--yes] [--keep-config] [--keep-volumes]"
@@ -323,6 +324,68 @@ Notes:
   - For a raw, scriptable command with NO token and NO zsh wrapping
     (docker-exec style, args passed verbatim), use 'dce exec' instead. The
     container must already be running for 'dce exec'. See: dce help exec.
+EOF
+}
+
+_show_help_editor() {
+  cat <<'EOF'
+Usage: dce editor [--editor <id>] <name>
+
+Description:
+  Launches your editor attached to a running dev container at /workspace. The
+  editor counterpart to `dce shell`. If the container is not running, it is
+  started automatically (same preflight as `dce shell`).
+
+  On Docker-compatible backends (docker/orbstack/colima/podman), this is the
+  CLI equivalent of the VS Code "Dev Containers: Attach to Running Container..."
+  GUI command: it points your editor at the exact container `dce` manages.
+  See docs/reference/backends.md for why "attach" (not "reopen in container")
+  is the right path.
+
+  This command REFUSES on the apple/container backend: apple/container is not
+  Docker-API compatible, so the VS Code Dev Containers extension cannot attach.
+  To edit, open the host repo folder with your editor directly, or switch to a
+  Docker-compatible backend.
+
+Editor selection (first match wins):
+  --editor <id>     Explicit one-shot override.
+  $DCE_EDITOR       Per-shell environment variable.
+  DCE_EDITOR        Key in ~/.config/dce-enclave/config.
+  $VISUAL           Standard full-screen-editor env var.
+  $EDITOR           Standard line-editor env var (often terminal-only).
+  (default)         vscode
+
+  Known editor ids: vscode, vscode-insiders.
+
+  Unknown --editor / $DCE_EDITOR / global DCE_EDITOR values are a hard error.
+  Unknown $VISUAL / $EDITOR values are warned about and skipped (those vars
+  are shared with many other tools and are often set to terminal editors).
+
+Editor binary discovery:
+  - DCE_EDITOR_BIN env var: if set, used verbatim (overrides all discovery).
+  - Otherwise: PATH lookup, then macOS .app bundle fallback for VS Code.
+  - On WSL2, the Windows binary (code.exe) is preferred; `code` is fallback.
+
+Arguments:
+  <name>     Project/container name. Must already exist.
+
+Options:
+  --editor <id>
+             Override the resolved editor for this invocation only.
+             Known ids: vscode, vscode-insiders.
+
+Examples:
+  dce editor myapp                       Launch the default editor attached to myapp
+  dce editor --editor vscode-insiders myapp
+  DCE_EDITOR=vscode dce editor myapp     Use VS Code for this shell's invocations
+
+Notes:
+  - Requires a Docker-compatible backend (docker/orbstack/colima/podman).
+  - VS Code's "Dev Containers" extension must be installed for the attach to
+    succeed; `scripts/setup.sh` warns if it is missing.
+  - macOS: `code` is not on PATH by default. Run VS Code's
+    "Install 'code' command in PATH" once, or set DCE_EDITOR_BIN.
+  - WSL2: prefers Windows VS Code via `code.exe` (Docker Desktop setup).
 EOF
 }
 
@@ -1091,6 +1154,7 @@ case "$COMMAND" in
   list|ls)            _show_help_list ;;
   shell)              _show_help_shell ;;
   logs)               _show_help_logs ;;
+  editor)             _show_help_editor ;;
   exec)               _show_help_exec ;;
   restart)            _show_help_restart ;;
   rm)                 _show_help_rm ;;

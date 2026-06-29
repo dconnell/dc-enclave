@@ -91,6 +91,12 @@ _dce_dispatch() {
       # One project, then a free-form command (no completion past it).
       _arguments '1:project:_dce_projects_simple'
       ;;
+    editor)
+      # Optional --editor <id>, then one project.
+      _arguments \
+        '--editor+[editor id]:editor id:_dce_editor_ids' \
+        '1:project:_dce_projects_simple'
+      ;;
     logs)
       _arguments \
         '1:project:_dce_projects_simple' \
@@ -376,4 +382,15 @@ _dce_rebuild_image_targets() {
   local -a all
   all=("${(@f)$(dce_complete_rebuild_image_targets)}")
   _wanted targets expl 'target' compadd -a all
+}
+
+_dce_editor_ids() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+
+  local -a all
+  all=("${(@f)$(dce_complete_editor_ids)}")
+  _wanted editors expl 'editor id' compadd -a all
 }

@@ -34,6 +34,7 @@ dce_complete_subcommands() {
     "ls" \
     "shell" \
     "logs" \
+    "editor" \
     "exec" \
     "restart" \
     "rm" \
@@ -229,4 +230,13 @@ dce_complete_doctor_targets() {
     name="$(basename "$d")"
     [[ -z "$cur" || "$name" == "$cur"* ]] && printf '%s\n' "$name"
   done 2>/dev/null
+}
+
+# Print known editor ids for `dce editor --editor <TAB>`. Mirrors the registry
+# in lib/editor.sh:dce_editor_known_ids. Kept here (not sourced from
+# lib/editor.sh) so completion stays dependency-light -- complete-data.sh is
+# sourced into both bash and zsh completion paths and intentionally avoids
+# pulling in the runtime lib chain.
+dce_complete_editor_ids() {
+  printf '%s\n' vscode vscode-insiders
 }

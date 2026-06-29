@@ -27,13 +27,16 @@ dce new myapp nodejs 3000:3000
 # shell in from the terminal
 dce shell myapp
 
-# or use VS Code: Dev Containers: Attach to Running Container... and pick `myapp`
+# or open your editor attached to the running container (VS Code by default)
+dce editor myapp
+
+# manual VS Code path: Dev Containers: Attach to Running Container... and pick `myapp`
 #   (avoid "Reopen in Container" — it builds a SEPARATE editor container; see note below)
 ```
 
 You now have a container named `myapp` running your chosen toolchain, your repo bind-mounted at `/workspace`, your per-project credentials injected, and a generated `devcontainer.json` so VS Code can open the project.
 
-> **VS Code — attach, don't reopen.** `dce new` already created and started the `myapp` container; that is the container `dce shell` uses. To edit inside it, run **Dev Containers: Attach to Running Container...** and pick `myapp`. Do **not** use **Reopen in Container** (the popup shown when you open the folder) — it builds a *separate* editor container (`vsc-*`) that `dce` does not manage and that will not share runtime state with `dce shell`. When you need a fresh filesystem, rebuild with `dce rebuild-container` — VS Code's *Rebuild Container* bypasses dce's credential injection (SSH key, GitHub PAT git auth, `.npmrc`). See [VS Code behavior](docs/reference/backends.md#vs-code-behavior-by-backend) and [rebuild and recover](docs/how-to/rebuild-and-recover.md).
+> **VS Code — attach, don't reopen.** `dce new` already created and started the `myapp` container; that is the container `dce shell` / `dce editor` use. To edit inside it, run `dce editor myapp` (or manually **Dev Containers: Attach to Running Container...** and pick `myapp`). Do **not** use **Reopen in Container** (the popup shown when you open the folder) — it builds a *separate* editor container (`vsc-*`) that `dce` does not manage and that will not share runtime state with `dce shell`. When you need a fresh filesystem, rebuild with `dce rebuild-container` — VS Code's *Rebuild Container* bypasses dce's credential injection (SSH key, GitHub PAT git auth, `.npmrc`). See [VS Code behavior](docs/reference/backends.md#vs-code-behavior-by-backend) and [rebuild and recover](docs/how-to/rebuild-and-recover.md).
 
 The generated `devcontainer.json` follows the [dev container spec](https://containers.dev), so other spec-compliant clients (Codespaces, etc.) can attach too — only VS Code Dev Containers is tested.
 

@@ -49,6 +49,9 @@ case "$SUBCOMMAND" in
   shell)
     exec "$SCRIPT_DIR/shell.sh" "$@"
     ;;
+  editor)
+    exec "$SCRIPT_DIR/editor.sh" "$@"
+    ;;
   logs)
     exec "$SCRIPT_DIR/logs.sh" "$@"
     ;;

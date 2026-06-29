@@ -70,7 +70,7 @@ scopes_out="$(dce_complete_scopes | sort)"
 pass "scopes dedup + membership"
 
 subs="$(dce_complete_subcommands | sort)"
-for c in new start stop status s list ls shell logs exec restart rm \
+for c in new start stop status s list ls shell logs editor exec restart rm \
          rebuild-container rebuild-image snapshot snapshots provenance clean config network net doctor install version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
@@ -158,6 +158,12 @@ drive 5 dce stop alpha beta gamma "";  assert_empty   "stop all three <TAB>"
 # shell takes exactly one project; nothing past it.
 drive 2 dce shell "";       assert_reply "shell <TAB>" alpha beta gamma
 drive 3 dce shell alpha ""; assert_empty   "shell alpha <TAB>"
+
+# editor: optional --editor <id>, then one project.
+drive 2 dce editor "";              assert_reply "editor <TAB>" --editor alpha beta gamma
+drive 3 dce editor alpha "";        assert_empty   "editor alpha <TAB> (nothing past project)"
+drive 3 dce editor --editor "";     assert_reply "editor --editor <TAB>" vscode vscode-insiders
+drive 4 dce editor --editor vscode ""; assert_reply "editor --editor vscode <TAB>" alpha beta gamma
 
 # rebuild-container: one project, then the flags.
 drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
@@ -429,7 +435,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dce_subcommands
-    local want="--help --version -h -v clean config doctor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm s shell snapshot snapshots start status stop version"
+    local want="--help --version -h -v clean config doctor editor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm s shell snapshot snapshots start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -438,6 +444,8 @@ if command -v zsh >/dev/null 2>&1; then
     chk() { SPEC=(); _dce_dispatch "$1"; [[ "${SPEC[*]}" == *"$2"* ]] || { print "FAIL: zsh $1 spec missing [$2] got [${SPEC[*]}]"; exit 1 }; }
     chk start            "*:project:"
     chk shell            "1:project:"
+    chk editor           "1:project:"
+    chk editor           "--editor+[editor id]"
     chk logs             "1:project:"
     chk logs             "--follow["
     chk exec             "--root["

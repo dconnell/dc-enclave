@@ -68,11 +68,13 @@ docker/orbstack/colima/podman backends:
   omitted for ssh/none auth; run `dce config sync-vscode <name>` after filling
   in the token to update an existing file.
 - `dce new` and `dce rebuild-container` also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
+- `dce editor <name>` is the CLI shortcut for **Dev Containers: Attach to Running Container...**: it starts the container if needed and launches VS Code attached to `/workspace`. Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for full precedence and discovery rules.
 
 apple backend:
 
 - dce new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.vscode/settings.json
 - Integrated terminal profile routes through dce shell
 - Existing settings.json is not overwritten
+- `dce editor` **refuses** on apple: apple/container is not Docker-API compatible, so the VS Code Dev Containers extension cannot attach. Open the host repo folder with your editor directly; the seeded terminal profile still routes shell tabs through `dce shell`.
 
 VS Code is optional. Alias-based shell workflow is always supported.

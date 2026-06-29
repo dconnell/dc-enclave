@@ -74,6 +74,34 @@ _dce_complete() {
       fi
       return 0
       ;;
+    editor)
+      # Optional --editor <id> (in either position), then/at one project.
+      # If we're completing --editor's value, offer editor ids; otherwise offer
+      # the project (and --editor at slot 2 if no project typed yet).
+      if [[ "$prev" == "--editor" ]]; then
+        mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_editor_ids)" -- "$cur")
+        return 0
+      fi
+      if [[ $COMP_CWORD -eq 2 ]]; then
+        _dce_reply_projects "$cur"
+        [[ -z "$cur" || "--editor" == "$cur"* ]] && COMPREPLY+=("--editor")
+        return 0
+      fi
+      # Past slot 2: walk prior words to see if a project positional is already
+      # present. --editor consumes the NEXT word as its value, so skip that pair.
+      local _typed_proj=0 _w _skip_next=0
+      for _w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
+        if (( _skip_next )); then _skip_next=0; continue; fi
+        case "$_w" in
+          --editor) _skip_next=1 ;;
+          --editor=*) : ;;
+          -*) : ;;
+          *) _typed_proj=1 ;;
+        esac
+      done
+      [[ "$_typed_proj" -eq 0 ]] && _dce_reply_projects "$cur"
+      return 0
+      ;;
     logs)
       # One project, then log flags (--tail takes a value, not completed).
       if [[ $COMP_CWORD -eq 2 ]]; then
