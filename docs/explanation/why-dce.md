@@ -4,11 +4,11 @@
 
 Every developer now runs tools that touch their whole repo — AI agents in VS Code extensions, TUI runners like Claude Code, OpenCode, or Pi launched from the terminal, build scripts, dependency installers. Left on the host, each one can read your global credentials, mutate files outside the project, and leave state that survives the session. DC Enclave puts a hard boundary around all of it: the container is the boundary, and anything you run inside it stays inside.
 
-- **Whatever runs in the container, stays in the container.** Launch a TUI agent from `dce shell`, or run a VS Code extension from the integrated terminal — both operate inside the same boundary. Your host filesystem, shell history, and global credentials stay out of reach.
+- **Whatever runs in the container, stays in the container.** Launch a TUI agent from `dce shell`, or run a VS Code extension from the integrated terminal — both operate inside the same boundary. Your project repo is bind-mounted read-write at `/workspace` (so editors and builds can read and write it), but everything outside that mount — home directory, shell history, and global credentials — stays out of reach.
 - **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it. Link them only when you mean to.
 - **A bad session is one command to undo.** `dce rebuild-container <name>` destroys the container filesystem and recreates it from a known-good image. No snapshots to manage, no manual cleanup, no digging through `git reflog`.
 - **Trust is pinned, not learned on first use.** GitHub's SSH host keys are baked into the base image and verified by a guard test, so a hijacked network can't silently redirect git traffic.
-- **Your host code is never touched.** Repos live on the host and bind-mount in; destroying the container leaves your checkout exactly where it was.
+- **Your checkout survives every rebuild.** Your repo lives on the host and bind-mounts in read-write; destroying the container leaves your checkout exactly where it was.
 
 The container is the undo button. Rebuild it and you're back to a known-good state in under a minute.
 

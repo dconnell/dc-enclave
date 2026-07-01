@@ -8,10 +8,10 @@ You bring the runtime — apple/container, Docker Desktop, OrbStack, Colima, or 
 
 Every developer now runs tools that execute code on their machine — AI agents in VS Code extensions, TUI runners like Claude Code, OpenCode, or Pi launched from the terminal, build scripts, and dependency installers whose post-install hooks can run more or less anything. On the host, that code runs with your user privileges: it can read your global credentials, write outside the project, and leave state that survives the session. The container is the boundary; DC Enclave is the one-command, backend-agnostic way to spin it up — and to throw it away and rebuild safely when something goes wrong.
 
-- **Whatever runs in the container, stays in the container.** Your host filesystem, shell history, and global credentials stay out of reach.
+- **Whatever runs in the container, stays in the container.** Processes and state you create inside run only there. Your project repo is bind-mounted read-write at `/workspace` (so your editor and builds can read and write it), but everything outside that mount — your home directory, shell history, and global credentials — stays out of reach.
 - **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it.
 - **A bad session is one command to undo.** `dce rebuild-container <name>` destroys the container filesystem and recreates it from a known-good image — and `dce snapshot <name>` / `dce rebuild-container <name> --from-snap <label>` give you a rollback point first.
-- **Your host code is never touched.** Repos live on the host and bind-mount in; destroying the container leaves your checkout exactly where it was.
+- **Your checkout survives every rebuild.** Your repo lives on the host and bind-mounts in read-write; destroying or rebuilding the container leaves your checkout exactly where it was.
 
 For the full rationale and a comparison against raw Docker/Podman, see [why DC Enclave](docs/explanation/why-dce.md).
 

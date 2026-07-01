@@ -731,8 +731,9 @@ if $DOCKER_COMPATIBLE; then
       > "$DEVCONTAINER_FILE"
 
     echo "  ✓ Created $DEVCONTAINER_FILE"
-    echo "  For a new Dev Container instance: Dev Containers: Reopen in Container"
-    echo "  To use the same running '$PROJECT' container: Dev Containers: Attach to Running Container..."
+    echo "  To attach VS Code to the running '$PROJECT' container:"
+    echo "    Dev Containers: Attach to Running Container..."
+    echo "  (Do not use 'Reopen in Container' — it builds a separate editor container; see README.)"
   fi
 
   echo "==> Seeding VS Code named attach config..."
