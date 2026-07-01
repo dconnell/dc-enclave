@@ -88,6 +88,42 @@ scrubbed="$(dce_label_scrub 'a"b$c`d\e')"
 pass "dce_json_escape + dce_label_scrub (sanitization)"
 
 # ---------------------------------------------------------------------------
+# dce_redact_remote_url: strip userinfo from git remote URLs
+# ---------------------------------------------------------------------------
+# token@ form -> scheme://host/path (credential removed).
+r="$(dce_redact_remote_url 'https://ghp_xxx@github.com/org/repo.git')"
+[[ "$r" == 'https://github.com/org/repo.git' ]] \
+  || fail "redact: token@ -> host (got [$r])"
+# user:pass@ form -> scheme://host/path.
+r="$(dce_redact_remote_url 'https://user:pass@host.example/o/r')"
+[[ "$r" == 'https://host.example/o/r' ]] \
+  || fail "redact: user:pass@ -> host (got [$r])"
+# ssh://git@host:port/path -> drop the conventional git@ user, keep port+path.
+r="$(dce_redact_remote_url 'ssh://git@github.com:2222/org/repo.git')"
+[[ "$r" == 'ssh://github.com:2222/org/repo.git' ]] \
+  || fail "redact: ssh://git@ -> ssh://host (got [$r])"
+# SCP-like SSH form carries no secret; returned untouched (documented).
+r="$(dce_redact_remote_url 'git@github.com:org/repo.git')"
+[[ "$r" == 'git@github.com:org/repo.git' ]] \
+  || fail "redact: git@host:path must pass through unchanged (got [$r])"
+# No userinfo -> unchanged (so useful provenance is preserved).
+r="$(dce_redact_remote_url 'https://github.com/org/repo.git')"
+[[ "$r" == 'https://github.com/org/repo.git' ]] \
+  || fail "redact: bare https must pass through (got [$r])"
+# The redacted value must never echo back the credential, regardless of shape.
+for bad in 'https://ghp_secret@host/p' 'https://u:p@host/p' 'ssh://tok@host/p'; do
+  case "$(dce_redact_remote_url "$bad")" in
+    *secret*|*':p@'*) fail "redact: credential leaked from [$bad]" ;;
+  esac
+done
+# Malformed / unrecognized -> fail closed (empty), never a passthrough.
+r="$(dce_redact_remote_url 'not a url at all')"
+[[ -z "$r" ]] || fail "redact: malformed must fail closed to empty (got [$r])"
+r="$(dce_redact_remote_url '')"
+[[ -z "$r" ]] || fail "redact: empty input -> empty (got [$r])"
+pass "dce_redact_remote_url (strips userinfo, pass-through, fail-closed)"
+
+# ---------------------------------------------------------------------------
 # dce_provenance_git_* (gated on git being installed)
 # ---------------------------------------------------------------------------
 if command -v git >/dev/null 2>&1; then
@@ -120,6 +156,21 @@ if command -v git >/dev/null 2>&1; then
   [[ -z "$(dce_provenance_git_dirty "$NOGIT")" ]] || fail "git_dirty: non-git must be empty"
   [[ -z "$(dce_provenance_git_source "$NOGIT")" ]] || fail "git_source: non-git must be empty"
   pass "dce_provenance_git_* (sha, dirty vs commit, empty for non-git)"
+
+  # dce_provenance_git_source must strip userinfo before returning, so the
+  # credential never reaches the provenance log or image labels.
+  CREDREPO="$WORK/credrepo"; mkdir -p "$CREDREPO"
+  git -C "$CREDREPO" init -q
+  git -C "$CREDREPO" config user.email t@t
+  git -C "$CREDREPO" config user.name t
+  printf 'RUN echo c\n' > "$CREDREPO/Containerfile.nodejs"
+  git -C "$CREDREPO" add -A && git -C "$CREDREPO" commit -qm init
+  git -C "$CREDREPO" remote add origin 'https://ghp_secrettoken@github.com/org/repo.git'
+  src="$(dce_provenance_git_source "$CREDREPO")"
+  [[ "$src" == 'https://github.com/org/repo.git' ]] \
+    || fail "git_source: must redact userinfo (got [$src])"
+  case "$src" in *secrettoken*) fail "git_source: credential leaked into source [$src]" ;; esac
+  pass "dce_provenance_git_source redacts credential remote URLs"
 else
   echo "SKIP: dce_provenance_git_* (git not installed)"
 fi

@@ -1205,13 +1205,76 @@ dce_provenance_git_dirty() {
   fi
 }
 
+# Redact credential material (the userinfo segment) from a git remote URL while
+# preserving the non-secret parts (scheme, host, path) so provenance stays
+# useful for traceability. This is the single chokepoint called by
+# dce_provenance_git_source, so both provenance consumers (the JSONL log and
+# the composed image LABELs) get the redacted value.
+#
+# Behavior:
+#   https://token@host/p        -> https://host/p
+#   https://user:pass@host/p    -> https://host/p
+#   ssh://git@host[:port]/p     -> ssh://host[:port]/p   (git@ is the ssh user,
+#                                                     not a secret; dropped for noise)
+#   git@host:path.git           -> git@host:path.git     (SCP-like SSH form
+#                                                     carries no secret; untouched)
+#   bare scheme://host/...      -> unchanged
+#   malformed / unrecognized    -> ""                    (fail closed: record
+#                                                     nothing rather than risk a
+#                                                     credential)
+#
+# Pure bash string handling (no sed -E / external deps) for portability.
+dce_redact_remote_url() {
+  local url="$1"
+
+  [[ -n "$url" ]] || { printf ''; return 0; }
+
+  # scheme://authority[/path] form (https, ssh, git, http, file, ...).
+  if [[ "$url" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*)://(.*)$ ]]; then
+    local scheme="${BASH_REMATCH[1]}"
+    local rest="${BASH_REMATCH[2]}"
+    local authority="" path=""
+    # Split authority from path at the first '/'.
+    if [[ "$rest" == */* ]]; then
+      authority="${rest%%/*}"
+      path="/${rest#*/}"
+    else
+      authority="$rest"
+      path=""
+    fi
+    # Strip userinfo: drop everything up to and including the LAST '@' so a
+    # deceptive "evil@user:pass@host" cannot smuggle a credential past us.
+    if [[ "$authority" == *@* ]]; then
+      authority="${authority##*@}"
+    fi
+    printf '%s' "${scheme}://${authority}${path}"
+    return 0
+  fi
+
+  # SCP-like SSH form: [user@]host:path. The segment before '@' is the ssh
+  # login (conventionally 'git'), not a credential, so it carries no secret and
+  # is returned untouched.
+  if [[ "$url" == *@*:* ]]; then
+    printf '%s' "$url"
+    return 0
+  fi
+
+  # Unrecognized / malformed: fail closed (no scheme to anchor on, so there is
+  # no safe way to guarantee a credential is not embedded).
+  printf ''
+}
+
 # configured remote.origin.url for $dir, or empty when not under git / no remote.
+# The raw URL is passed through dce_redact_remote_url so embedded credentials
+# (token@ / user:pass@) never reach the provenance log or image labels.
 dce_provenance_git_source() {
   local dir="$1"
+  local raw=""
 
   [[ -d "$dir" ]] || { printf ''; return 0; }
   git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { printf ''; return 0; }
-  git -C "$dir" config --get remote.origin.url 2>/dev/null || printf ''
+  raw="$(git -C "$dir" config --get remote.origin.url 2>/dev/null || true)"
+  dce_redact_remote_url "$raw"
 }
 
 # Render a scopes CSV as a JSON array string, e.g. ["nodejs","golang"] / [].
