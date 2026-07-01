@@ -19,12 +19,13 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
+  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
   exit 1
 fi
 
 PROJECT=""
 ROTATE_KEYS=false
+INJECT_CREDS=false
 KEEP_HIDDEN_VOLUMES=false
 ASSUME_YES=false
 FROM_SNAP=""
@@ -33,6 +34,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --rotate-keys)
       ROTATE_KEYS=true
+      shift
+      ;;
+    --inject-creds)
+      INJECT_CREDS=true
       shift
       ;;
     --keep-hidden-volumes)
@@ -50,7 +55,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --*)
       echo "ERROR: Unknown option: $1"
-      echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
+      echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
       exit 1
       ;;
     *)
@@ -58,7 +63,7 @@ while [[ $# -gt 0 ]]; do
         PROJECT="$1"
       else
         echo "ERROR: Unexpected argument: $1"
-        echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
+        echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
         exit 1
       fi
       shift
@@ -68,7 +73,7 @@ done
 
 if [[ -z "$PROJECT" ]]; then
   echo "ERROR: Project name is required."
-  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
+  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
   exit 1
 fi
 
@@ -431,13 +436,27 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   done
 fi
 
-backend_exec "$PROJECT" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
-backend_exec_stdin "$PROJECT" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY_PATH"
-# GitHub host keys are pinned in the base image; no runtime ssh-keyscan.
-echo "  ✓ SSH key injected"
-
-dce_ensure_git_credentials "$PROJECT"
-echo "  ✓ git configured (credential-aware insteadOf)"
+# Inject current credentials only when explicitly requested. A normal (non
+# --from-snap) rebuild always injects (the container is freshly recreated, so
+# there is nothing to preserve). A --from-snap restore injects ONLY when the
+# operator opts in via --inject-creds (use the restored snapshot with current
+# credentials) or --rotate-keys (incident response: regenerate the SSH key); a
+# bare --from-snap leaves the snapshot's credential state untouched so a
+# possibly-compromised snapshot can be inspected. When injecting, the token is
+# force-written (overwrite if it differs), never only-if-missing -- the SSH key
+# is always overwritten and dce_ensure_git_credentials is called with `force`.
+if [[ -z "$FROM_SNAP" ]] || $INJECT_CREDS || $ROTATE_KEYS; then
+  backend_exec "$PROJECT" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+  backend_exec_stdin "$PROJECT" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY_PATH"
+  # GitHub host keys are pinned in the base image; no runtime ssh-keyscan.
+  echo "  ✓ SSH key injected"
+  dce_ensure_git_credentials "$PROJECT" force
+  echo "  ✓ git configured (credential-aware insteadOf)"
+else
+  echo "  ✓ Credentials NOT injected — snapshot state preserved"
+  echo "    To use this snapshot with current credentials, re-run with --inject-creds:"
+  echo "    dce rebuild-container $PROJECT --from-snap $FROM_SNAP --inject-creds"
+fi
 
 if $DOCKER_COMPATIBLE; then
   echo ""

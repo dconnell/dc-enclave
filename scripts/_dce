@@ -122,6 +122,7 @@ _dce_dispatch() {
       _arguments \
         '1:project:_dce_projects_simple' \
         '--rotate-keys[generate a fresh SSH deploy key]' \
+        '--inject-creds[force-inject current SSH key and git token]' \
         '--keep-hidden-volumes[preserve hidden volumes across the rebuild]' \
         '--from-snap+[recreate from snapshot dce-snap-<name>-<label>]:snapshot label:' \
         '--yes[skip the confirmation prompt]' \
@@ -138,6 +139,9 @@ _dce_dispatch() {
       _arguments \
         '1:project:_dce_projects_simple' \
         '2:dotfiles directory:_files -/'
+      ;;
+    rotate-token)
+      _arguments '1:project:_dce_projects_simple'
       ;;
     rebuild-image)
       _arguments '1:target:_dce_rebuild_image_targets'

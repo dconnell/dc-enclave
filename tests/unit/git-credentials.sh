@@ -44,9 +44,12 @@ backend_exec() {
   printf 'EXEC %s\n' "$*" >> "$ARGV_LOG"
   local a
   for a in "$@"; do
-    if [[ "$a" == *"test -f ~/.git-credentials"* ]]; then
-      return 1
-    fi
+    case "$a" in
+      *'cat ~/.git-credentials'*)
+        printf '%s' "${CONTAINER_CREDS:-}"; return 0 ;;
+      *'test -f ~/.git-credentials'*)
+        [[ -n "${CONTAINER_CREDS:-}" ]] && return 0 || return 1 ;;
+    esac
   done
   return 0
 }
@@ -209,6 +212,57 @@ pass "gitlab-ssh: SSH insteadOf set, no PAT credential wiring"
 
 # Restore the default provider so later test additions are not surprised.
 unset CONTAINER_GIT_HOST
+
+# --- force mode: compare-and-write (idempotent), default still only-if-missing --
+# The stubbed backend_exec (defined above) returns the CONTAINER_CREDS variable
+# for `cat ~/.git-credentials` and gates the `test -f` probe on it, so the force
+# path's hash compare is observable. Each case below sets CONTAINER_CREDS to the
+# container's simulated current credential (unset/empty == absent). The default
+# sections above leave it unset, preserving the "missing -> seed" behavior.
+write_token "$SENTINEL"; write_ssh_key
+CRED_LINE="https://x-access-token:$SENTINEL@github.com"
+
+# force overwrites when the container's value differs (stale/compromised).
+reset_state; CONTAINER_CREDS=$'https://x-access-token:STALE@github.com\n'
+dce_ensure_git_credentials "$PROJECT" force
+grep -Fq "$CRED_LINE" "$STDIN_CAP" || fail "force-drift: must overwrite a differing credential"
+grep -Fq "$SENTINEL" "$ARGV_LOG" && fail "force-drift: sentinel leaked into backend argv"
+pass "force: overwrites when the container credential differs (no argv leak)"
+
+# force is idempotent when the value already matches: no rewrite of ~/.git-credentials.
+reset_state; CONTAINER_CREDS=$"$CRED_LINE"$'\n'
+dce_ensure_git_credentials "$PROJECT" force
+if grep -Fq "$CRED_LINE" "$STDIN_CAP"; then
+  fail "force-idempotent: must NOT rewrite ~/.git-credentials when it already matches"
+fi
+pass "force: idempotent (no rewrite when the credential already matches)"
+
+# default (force unset) preserves an existing credential (only-if-missing).
+reset_state; CONTAINER_CREDS=$'https://x-access-token:STALE@github.com\n'
+dce_ensure_git_credentials "$PROJECT"
+if grep -Fq "$CRED_LINE" "$STDIN_CAP"; then
+  fail "default-existing: must NOT overwrite an existing credential (only-if-missing)"
+fi
+pass "default: only-if-missing (existing credential preserved)"
+
+# default (force unset) seeds when the credential is absent.
+reset_state; CONTAINER_CREDS=""
+dce_ensure_git_credentials "$PROJECT"
+grep -Fq "$CRED_LINE" "$STDIN_CAP" || fail "default-absent: must seed when the credential is absent"
+pass "default: seeds when the credential is absent"
+
+# drift helper mirrors the same compare, read-only, never printing the token.
+reset_state; CONTAINER_CREDS=$"$CRED_LINE"$'\n'
+[[ "$(dce_check_git_token_drift "$PROJECT")" == "match" ]] \
+  || fail "drift: identical credential must report 'match'"
+CONTAINER_CREDS=$'https://x-access-token:STALE@github.com\n'
+[[ "$(dce_check_git_token_drift "$PROJECT")" == "drift" ]] \
+  || fail "drift: differing credential must report 'drift'"
+CONTAINER_CREDS=""
+[[ "$(dce_check_git_token_drift "$PROJECT")" == "absent" ]] \
+  || fail "drift: missing credential must report 'absent'"
+grep -Fq "$SENTINEL" "$ARGV_LOG" && fail "drift: sentinel leaked into backend argv during compare"
+pass "dce_check_git_token_drift: match/drift/absent, no argv leak"
 
 echo ""
 echo "All git-credentials helper checks passed."

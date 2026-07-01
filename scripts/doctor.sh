@@ -427,6 +427,17 @@ doctor_project() {  # <name>
   if ( backend_use "$pb" >/dev/null 2>&1 ); then
     if backend_is_running "$name" 2>/dev/null; then
       _info "Container state: running"
+      # Token drift (PAT only): is the container's ~/.git-credentials current
+      # with the host token? Read-only, hash-compared (token never printed). A
+      # restored/old snapshot legitimately drifts -- informative, surfaced with
+      # the fix command rather than auto-corrected.
+      case "$(dce_check_git_token_drift "$name" 2>/dev/null || printf skip)" in
+        match)  _ok "git token in sync with container" ;;
+        drift)  _bad "git token in sync with container" \
+                  "container token differs from host token (run: dce rotate-token $name)" ;;
+        absent) _info "git token: not yet in container (seeded on next dce start)" ;;
+        skip)   _skip "git token in sync with container" "auth is ssh/none" ;;
+      esac
     elif backend_exists "$name" 2>/dev/null; then
       _info "Container state: stopped"
     else

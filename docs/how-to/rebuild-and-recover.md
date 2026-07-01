@@ -41,6 +41,51 @@ dce config sync-vscode <name> --dry-run
 ```
 
 
+## Rotate credentials
+
+Three distinct operations cover credential changes; pick by what changed:
+
+- **You edited the host git token** (`~/.config/dce-enclave/<name>/<host>-token`) and
+  want the running container to use it, without losing container state (packages,
+  caches, running processes):
+
+  ```
+  dce rotate-token myapp-monorepo
+  ```
+
+  This force-pushes the current PAT into the container's `~/.git-credentials`
+  (overwriting a stale value; a no-op when it already matches) and re-wires git
+  auth. It is state-preserving — no rebuild. Verify with `dce doctor <name>`,
+  which reports token drift non-destructively.
+
+- **You need a fresh SSH deploy key** (suspected key compromise): regenerate it as
+  part of a rebuild:
+
+  ```
+  dce rebuild-container myapp-monorepo --rotate-keys
+  ```
+
+  The old key is backed up and the new `.pub` is printed for you to add to your
+  git host. This is rebuild-bound (the container is destroyed and recreated) and
+  injects the new key plus the current token.
+
+- **You restored a snapshot and want to use it** (`--from-snap`): a bare restore
+  does **not** inject credentials, so a possibly-suspect snapshot's credential
+  state is preserved for inspection. To use the restored snapshot with your
+  current credentials:
+
+  ```
+  dce rebuild-container myapp-monorepo --from-snap <label> --inject-creds
+  ```
+
+  `--inject-creds` force-injects the current SSH key and git token, overwriting
+  any credentials baked into the snapshot. (`--rotate-keys` also injects, after
+  regenerating the SSH key.)
+
+Under `ssh`/`none` auth there is no PAT, so `dce rotate-token` is a no-op; SSH
+deploy-key rotation remains `--rotate-keys`.
+
+
 ## Rebuilding after Containerfile changes
 
 If you change `Containerfile.base`, rebuild managed images first, then recreate containers:

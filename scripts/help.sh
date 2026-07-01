@@ -44,7 +44,7 @@ _show_summary() {
   echo "  restart [name ...]                                Restart one or more projects, or all"
   echo "  rm <name> [--yes] [--keep-config] [--keep-volumes]"
   echo "                                                    Remove a project (container, volumes, snapshots, config)"
-  echo "  rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes]"
+  echo "  rebuild-container <name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes]"
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-container <name> --from-snap <label>     Recreate from a snapshot"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
@@ -56,6 +56,7 @@ _show_summary() {
   echo "  doctor [backend|project]                          Run preflight checks and report pass/fail"
   echo "  network <create|ls|members|rm|add|remove> ...     Manage private networks between containers"
   echo "  install <name> <path>                             Install dotfiles"
+  echo "  rotate-token <name>                              Push the current git token into a container (state-preserving)"
   echo "  config <show|get|set|sync-vscode|ls> ...         Inspect/edit config; sync devcontainer managed fields"
   echo "  version                                           Print version (aliases: --version, -v)"
   echo "  help [command]                                    Show this help or detailed help"
@@ -553,8 +554,8 @@ EOF
 
 _show_help_rebuild_container() {
   cat <<'EOF'
-Usage: dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes|-y]
-              [--from-snap <label>]
+Usage: dce rebuild-container <name> [--rotate-keys] [--inject-creds]
+              [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]
 
 Description:
   Destroys a container and recreates it from its selected image.
@@ -584,6 +585,13 @@ Description:
   the next normal rebuild -- this is correct (it genuinely diverges from its
   configured image), not an error.
 
+  A restore does NOT inject credentials by default: the rebuilt container keeps
+  exactly what the snapshot image baked (nothing, for a scrubbed snapshot). Pass
+  --inject-creds to inject the current SSH deploy key and git token (overwriting
+  any credentials already present), or --rotate-keys to regenerate the SSH key
+  as part of incident response. Inspect a suspect snapshot WITHOUT these flags
+  so its credential state is preserved.
+
 Arguments:
   <name>     Project/container name. Must already exist.
 
@@ -593,6 +601,13 @@ Options:
               The old key is backed up, and the new public key is printed for
               you to add to GitHub. The command pauses for you to update
               GitHub before continuing.
+   --inject-creds
+               Inject the current SSH deploy key and git token into the rebuilt
+               container, overwriting any credentials already present. Always in
+               effect for a normal rebuild and for --rotate-keys; it matters with
+               --from-snap, where a bare restore injects nothing so a (possibly
+               suspect) snapshot's credential state is preserved for inspection.
+               The token is rewritten only when it differs (idempotent).
 
    --keep-hidden-volumes
                 Preserve existing hidden volumes instead of removing them.
@@ -946,6 +961,45 @@ Notes:
 EOF
 }
 
+_show_help_rotate_token() {
+  cat <<'EOF'
+Usage: dce rotate-token <name>
+
+Description:
+  Push the project's current host git token (PAT) into its container, refreshing
+  ~/.git-credentials without a rebuild. Run this right after editing the host
+  token file (~/.config/dce-enclave/<name>/<host>-token) so the container's git
+  auth picks up the new value.
+
+  It is state-preserving: packages, caches, and running processes are left
+  untouched (unlike `dce rebuild-container`, which destroys and recreates the
+  container). The token is force-written -- a stale or compromised value is
+  overwritten -- but only when it differs from the current host token, so
+  re-running it is a no-op when nothing changed. The token never appears in host
+  argv; it crosses via a stdin pipe.
+
+  Under ssh or none auth there is no PAT to push, so the command reports that and
+  exits 0.
+
+Arguments:
+  <name>     Project/container name. Must already exist. Started automatically if
+             it is stopped (the token can only be written into a running
+             container).
+
+Related:
+  - SSH deploy-key rotation is a different operation:
+      dce rebuild-container <name> --rotate-keys
+    (regenerates the keypair; rebuild-bound, for incident response).
+  - Force-injecting current credentials into a restored snapshot:
+      dce rebuild-container <name> --from-snap <label> --inject-creds
+  - Check for token drift without changing anything:
+      dce doctor <name>
+
+Examples:
+  dce rotate-token myapp
+EOF
+}
+
 _show_help_doctor() {
   cat <<'EOF'
 Usage: dce doctor [backend|project]
@@ -1103,7 +1157,7 @@ Description:
 Arguments:
               [command]  Optional command name to show detailed help for. One of:
               new, start, stop, status, list, shell, logs, exec, restart, rm,
-              rebuild-container, rebuild-image, snapshot, provenance, clean, config, doctor, network, install, version, help
+              rebuild-container, rebuild-image, snapshot, provenance, clean, config, doctor, network, install, rotate-token, version, help
 
 Aliases:
   --help     Same as 'dce help'
@@ -1167,6 +1221,7 @@ case "$COMMAND" in
   doctor)             _show_help_doctor ;;
   network|net)        _show_help_network ;;
   install)            _show_help_install ;;
+  rotate-token)       _show_help_rotate_token ;;
   version|--version|-v) _show_help_version ;;
   help|--help|-h)     _show_help_help ;;
   *)

@@ -7,11 +7,14 @@
 # A snapshot is a complete restore point: it commits the container's filesystem
 # (image + writable layer) to dce-snap-<slug>-<label>:latest AND, by default,
 # clones each hidden volume into dce-snapvol-<slug>-<label>-<hash> (source
-# mounted read-only). It never captures the bind-mounted repo (host state). It
-# is an independent operation you can run at any time -- before a risky change,
-# before a rebuild, or simply to preserve a state -- and snapshots live in the
-# active backend's local image store only. Restoring one is opt-in via
-# `dce rebuild-container --from-snap`.
+# mounted read-only). It never captures the bind-mounted repo (host state), and
+# injected credentials (SSH deploy key, git token) are scrubbed from the
+# writable layer before the commit so they are never baked into the image --
+# snapshot images are still shareable artifacts, so treat them as sensitive if
+# you export or share one. It is an independent operation you can run at any
+# time -- before a risky change, before a rebuild, or simply to preserve a
+# state -- and snapshots live in the active backend's local image store only.
+# Restoring one is opt-in via `dce rebuild-container --from-snap`.
 #
 # Surface (one dispatcher, three modes):
 #   dce snapshot  <project> [<label>] [--exclude-volumes]
@@ -21,9 +24,12 @@
 #   dce snapshot  rm <project> <label>        remove one snapshot image
 #   dce snapshots list [<project>]            list snapshots (with sizes)
 #
-# A snapshot is stop -> commit -> start (export / a clean commit require a
-# stopped container on every backend); volume copies run in the same stop
-# window. Restore is via `dce rebuild-container <project> --from-snap <label>`,
+# A snapshot is scrub -> stop -> commit -> start -> re-inject: injected
+# credentials are removed from the writable layer while the container is still
+# running (every backend's exec needs a live target), then re-seeded after the
+# restart so the live container keeps working git/ssh (export / a clean commit
+# require a stopped container on every backend); volume copies run in the same
+# stop window. Restore is via `dce rebuild-container <project> --from-snap <label>`,
 # which always isolates hidden volumes (populated where captured, empty
 # otherwise) without rewriting CONTAINER_IMAGE. Reclamation is
 # manual via `dce clean --snapshots [<project>]`; the default `dce clean` sweep
@@ -57,11 +63,13 @@ saving a state you can return to later -- before a risky change, before a
 rebuild, or any time you want a save point. A snapshot is a complete restore
 point: the image plus each hidden volume (node_modules, caches) cloned into a
 snapshot-specific volume. The bind-mounted repo is NEVER captured (it is host
-state).
+state). Injected credentials (SSH deploy key, git token) are scrubbed before
+commit so they are never baked into the image -- but snapshot images are
+shareable, so treat them as sensitive if you export or share one.
 
   snapshot <project> [<label>]
-          Stop -> commit -> restart the container, producing
-          dce-snap-<project>-<label>:latest, and clone each hidden volume into
+          Scrub -> stop -> commit -> restart -> re-inject the container,
+          producing dce-snap-<project>-<label>:latest, and clone each hidden volume into
           dce-snapvol-<project>-<label>-<hash> with the source mounted READ-ONLY
           (a copy bug can never corrupt the live volume). <label> defaults to a
           sortable timestamp (YYYYmmdd-HHMMSS). Refuses to overwrite an existing
@@ -301,6 +309,8 @@ do_create() {
   fi
 
   echo "==> Snapshotting '$project' -> $snap_ref (backend: $backend)"
+  echo "    Injected credentials are scrubbed before commit; snapshot images are"
+  echo "    shareable, so treat them as sensitive if you export or share one."
   if [[ ${#copy_paths[@]} -eq 0 ]]; then
     if $exclude_volumes || [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
       echo "    Filesystem image only (hidden volumes excluded; restored empty)."
@@ -311,10 +321,29 @@ do_create() {
     echo "    Filesystem image + hidden volumes."
   fi
 
-  if $was_running; then
-    echo "==> Stopping container (a clean commit requires a stopped container)..."
-    backend_stop "$project"
+  # Injected credentials (the SSH deploy key at ~/.ssh/id_ed25519 and, under PAT
+  # auth, ~/.git-credentials) live in the container's writable layer, so a plain
+  # commit would bake them into the shareable snapshot image. Scrub them BEFORE
+  # committing. Every backend's `exec` requires a RUNNING container, so the scrub
+  # runs while the container is still up -- the writable layer survives stop and
+  # start, so removing the files pre-stop still yields a credential-free image. A
+  # container that was already stopped is started for the scrub and left stopped
+  # again after the commit (its credentials are re-seeded by the next `dce start`).
+  if ! $was_running; then
+    echo "==> Starting the stopped container to scrub credentials before commit..."
+    backend_start "$project"
   fi
+
+  local cred_scrub_status="ok"
+  if ! backend_exec "$project" sh -c 'rm -f ~/.ssh/id_ed25519 ~/.git-credentials' 2>/dev/null; then
+    cred_scrub_status="failed"
+    echo "WARNING: credential scrub did not complete; the snapshot image" >&2
+    echo "         $snap_ref may still contain injected credentials." >&2
+    echo "         Treat it as sensitive and avoid exporting or sharing it." >&2
+  fi
+
+  echo "==> Stopping container (a clean commit requires a stopped container)..."
+  backend_stop "$project"
 
   local base_ref="${CONTAINER_IMAGE:-}"
   local snap_utc; snap_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -327,7 +356,8 @@ do_create() {
         "dce.snapshot.project=$slug" \
         "dce.snapshot.label=$label" \
         "dce.snapshot.base=$base_ref" \
-        "dce.snapshot.utc=$snap_utc"; then
+        "dce.snapshot.utc=$snap_utc" \
+        "dce.snapshot.cred_scrub=$cred_scrub_status"; then
     echo "ERROR: snapshot commit failed." >&2
     if $was_running; then
       echo "  (restarting container to restore its running state)" >&2
@@ -409,6 +439,17 @@ do_create() {
   if $was_running; then
     echo "==> Restarting container..."
     backend_start "$project"
+    # Re-seed the credentials the scrub removed so the live container keeps
+    # working git/ssh (mirrors `dce start`). A container that was already stopped
+    # before the snapshot is left stopped; its credentials are re-injected by the
+    # next `dce start`.
+    if [[ -n "${SSH_KEY_PATH:-}" ]] && [[ -f "$SSH_KEY_PATH" ]]; then
+      if ! backend_exec "$project" test -f ~/.ssh/id_ed25519 2>/dev/null; then
+        backend_exec "$project" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+        backend_exec_stdin "$project" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY_PATH"
+      fi
+    fi
+    dce_ensure_git_credentials "$project"
   fi
 
   # Record a provenance event so the project log stays honest about where this

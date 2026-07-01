@@ -33,8 +33,10 @@ unset _dce_scripts_dir
 # Per-subcommand grammar mirrors the real argument parsing in scripts/*.sh:
 #   start|stop              : variadic project names (0 args == all)
 #   shell                   : exactly one project, then free-form command
-#   rebuild-container       : one project + --rotate-keys / --keep-hidden-volumes
+#   rebuild-container       : one project + --rotate-keys / --inject-creds /
+#                             --keep-hidden-volumes / --from-snap
 #   install                 : one project + one dotfiles directory
+#   rotate-token            : one project
 #   rebuild-image           : one of {all, base}
 #   clean                   : --dry-run / --hidden-volumes, then at most one
 #                             project (only meaningful with --hidden-volumes)
@@ -141,7 +143,7 @@ _dce_complete() {
       # --from-snap takes a value (a snapshot label), not completed here.
       [[ "$prev" == "--from-snap" ]] && return 0
       # >= 3: optional flags (order-independent).
-      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --keep-hidden-volumes --yes -y --from-snap" -- "$cur")
+      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --inject-creds --keep-hidden-volumes --yes -y --from-snap" -- "$cur")
       return 0
       ;;
     snapshot)
@@ -157,6 +159,12 @@ _dce_complete() {
         _dce_reply_projects "$cur"
       elif [[ $COMP_CWORD -eq 3 ]]; then
         mapfile -t COMPREPLY < <(compgen -d -- "$cur")
+      fi
+      return 0
+      ;;
+    rotate-token)
+      if [[ $COMP_CWORD -eq 2 ]]; then
+        _dce_reply_projects "$cur"
       fi
       return 0
       ;;

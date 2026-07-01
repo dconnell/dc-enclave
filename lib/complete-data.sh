@@ -49,6 +49,7 @@ dce_complete_subcommands() {
     "net" \
     "doctor" \
     "install" \
+    "rotate-token" \
     "version" \
     "--version" \
     "-v" \

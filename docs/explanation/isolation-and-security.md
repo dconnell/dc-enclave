@@ -12,6 +12,21 @@ These credentials are injected by `dce` itself — at `dce new`, and re-applied 
 
 If a container's state is ever suspect, `dce rebuild-container` replaces the container from a known-good image without touching your host repos.
 
+### Credential injection is explicit on restore and rotation
+
+Credential injection follows a forensics-safe rule. `dce start`, `dce shell`, and
+`dce install` only write credentials when they are **missing** — they never
+overwrite an existing SSH deploy key or `~/.git-credentials` — so a restored or
+otherwise-suspect container keeps its credential state available for inspection.
+A normal `dce rebuild-container` injects current credentials (fresh container),
+but a `--from-snap` restore injects **nothing** by default: the rebuilt container
+keeps exactly what the snapshot baked. Opt in explicitly with `--inject-creds`
+(force-inject the current SSH key and git token, overwriting any present) or
+`--rotate-keys` (regenerate the SSH deploy key as part of incident response). To
+push a just-rotated host token into a running container without a rebuild, use
+`dce rotate-token` (state-preserving, idempotent). `dce doctor` surfaces token
+drift non-destructively — comparison is hash-only and the token is never printed.
+
 ### Git host providers
 
 The git host a project authenticates against is chosen at `dce new` time with
@@ -46,4 +61,28 @@ The `tests/lint/security-ssh-host-trust.sh` guard is data-driven over the
 provider registry: for each known host it blocks a wrong/poisoned pin (asserts
 the pinned fingerprints match the host's published values) and fails if
 `accept-new` or a runtime `ssh-keyscan <host>` is reintroduced.
+
+### Snapshots and injected credentials
+
+`dce snapshot` commits a container's writable layer to a tagged, shareable
+image. The injected credentials that live in that layer — the SSH deploy key
+(`~/.ssh/id_ed25519`) and, under PAT auth, `~/.git-credentials` — are scrubbed
+before the commit so they are never baked into the snapshot image. (The
+read-only bind-mounted `.npmrc` is a bind mount, so it is excluded from the
+commit regardless.) After the commit, `dce snapshot` re-seeds the credentials
+into the still-running container so `git pull` / `ssh` keep working.
+
+Because every backend's `exec` needs a running container, the scrub runs while
+the container is still up; the writable layer survives stop/start, so removing
+the files before the stop still yields a credential-free committed image. A
+container that was already stopped is started transiently for the scrub and left
+stopped again afterward — its credentials are re-injected by the next
+`dce start`.
+
+Each snapshot image carries a `dce.snapshot.cred_scrub=ok|failed` label. A scrub
+that did not complete cleanly is `failed` and is called out with a WARNING —
+treat such a snapshot as potentially credential-bearing. Even with a clean
+scrub, snapshot images are shareable artifacts that contain your code and
+config, so treat them as sensitive and avoid exporting or sharing them unless
+you intend to.
 

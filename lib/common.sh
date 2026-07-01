@@ -304,7 +304,23 @@ dce_sha256_file() {
   dce_die "No SHA-256 tool available (sha256sum, shasum, or openssl required)."
 }
 
-# Validate a single overlay scope name against the allowed identifier pattern.
+# Echo the SHA-256 hex digest of stdin (raw bytes). stdin-based companion to
+# dce_sha256_hex: use it to hash a secret by piping (`printf ... |
+# _dce_sha256_stdin`) so the value is never placed in an argv or a shell
+# variable. Same tool fallback chain as the other hash helpers.
+_dce_sha256_stdin() {
+  local digest=""
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest="$(sha256sum)"
+  elif command -v shasum >/dev/null 2>&1; then
+    digest="$(shasum -a 256)"
+  elif command -v openssl >/dev/null 2>&1; then
+    digest="$(openssl dgst -sha256 -r)"
+  else
+    dce_die "No SHA-256 tool available (sha256sum, shasum, or openssl required)."
+  fi
+  printf '%s\n' "${digest%% *}"
+}
 dce_validate_scope_name() {
   local scope="$1"
   [[ "$scope" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
@@ -703,8 +719,19 @@ dce_git_auth_method() {
 #
 # Requires a loaded project config (TOKEN_FILE, SSH_KEY_PATH) and an active,
 # running backend. Best-effort: cleanup/unset failures are tolerated.
+#
+# The optional second argument enables FORCE mode: under PAT, ~/.git-credentials
+# is rewritten whenever the current value differs (compare-by-hash, idempotent),
+# instead of the default only-if-missing seed. Force mode is the explicit
+# "push current credentials" path used by `dce rotate-token` and `dce
+# rebuild-container --inject-creds`; the default (unset) preserves the
+# forensics-safe only-if-missing behavior relied on by `start`/`shell`/`install`
+# so a restored/compromised snapshot's credential state is never silently
+# overwritten. The token is never placed in argv or printed -- it is piped into a
+# short-lived sh -c and (under force) into the hash comparison.
 dce_ensure_git_credentials() {
   local project="$1"
+  local force="${2:-}"
   local method=""
   method="$(dce_git_auth_method)"
 
@@ -731,7 +758,22 @@ dce_ensure_git_credentials() {
       backend_exec "$project" git config --global --add credential.helper store
       backend_exec "$project" git config --global --unset-all url."git@${ssh_host}:".insteadOf 2>/dev/null || true
       _dce_clear_other_provider_insteadof "$project" "$provider"
-      if ! backend_exec "$project" sh -c 'test -f ~/.git-credentials'; then
+      if [[ -n "$force" ]]; then
+        # Force: rewrite ~/.git-credentials whenever the current value differs
+        # (idempotent). Compare by hash so the token is never printed, and pipe
+        # both the expected line and the container's current file through the
+        # hasher so the token never sits in an argv or a variable.
+        local _exp_hash="" _cur_hash=""
+        _exp_hash="$(printf 'https://%s:%s@%s\n' "$https_user" "$(dce_read_git_token)" "$web_host" | _dce_sha256_stdin)"
+        _cur_hash="$(backend_exec "$project" sh -c 'cat ~/.git-credentials 2>/dev/null' | _dce_sha256_stdin)"
+        if [[ "$_exp_hash" != "$_cur_hash" ]]; then
+          # shellcheck disable=SC2016
+          # sh -c runs in the container; $() and the redirect expand there.
+          printf 'https://%s:%s@%s\n' "$https_user" "$(dce_read_git_token)" "$web_host" \
+            | backend_exec_stdin "$project" sh -c 'cat > ~/.git-credentials && chmod 600 ~/.git-credentials'
+        fi
+      elif ! backend_exec "$project" sh -c 'test -f ~/.git-credentials'; then
+        # Default: seed only when absent (forensics-safe).
         # shellcheck disable=SC2016
         # sh -c runs in the container; $() and the redirect expand there.
         printf 'https://%s:%s@%s\n' "$https_user" "$(dce_read_git_token)" "$web_host" \
@@ -759,6 +801,44 @@ dce_ensure_git_credentials() {
       _dce_ensure_vscode_git_auth "$project" false
       ;;
   esac
+}
+
+# Compare the host PAT to the container's ~/.git-credentials, read-only and for
+# display only (`dce doctor`). PAT auth only. Echoes one of:
+#   match   the container's stored credential matches the current host token
+#   drift   the container's credential differs from the host token (stale/rotated)
+#   absent  the container has no ~/.git-credentials while a host token is set
+#   skip    auth mode is ssh/none (no PAT to compare)
+# The token is never printed: comparison is hash-only, and both the expected line
+# and the container file are piped through the hasher. Requires a loaded project
+# config and a running container (doctor skips silently if it cannot reach it).
+dce_check_git_token_drift() {
+  local project="$1"
+
+  local method=""
+  method="$(dce_git_auth_method)"
+  [[ "$method" == "pat" ]] || { printf 'skip'; return 0; }
+
+  local provider="" web_host="" https_user=""
+  provider="$(dce_project_git_host)"
+  web_host="$(dce_git_host_field "$provider" web_host)"
+  https_user="$(dce_git_host_field "$provider" https_user)"
+
+  local exp_hash=""
+  exp_hash="$(printf 'https://%s:%s@%s\n' "$https_user" "$(dce_read_git_token)" "$web_host" | _dce_sha256_stdin)"
+
+  if ! backend_exec "$project" sh -c 'test -f ~/.git-credentials' 2>/dev/null; then
+    printf 'absent'
+    return 0
+  fi
+
+  local cur_hash=""
+  cur_hash="$(backend_exec "$project" sh -c 'cat ~/.git-credentials 2>/dev/null' | _dce_sha256_stdin)"
+  if [[ "$exp_hash" == "$cur_hash" ]]; then
+    printf 'match'
+  else
+    printf 'drift'
+  fi
 }
 
 # Unset both insteadOf directions for every known provider except the active

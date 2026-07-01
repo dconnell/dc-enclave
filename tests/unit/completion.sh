@@ -71,7 +71,7 @@ pass "scopes dedup + membership"
 
 subs="$(dce_complete_subcommands | sort)"
 for c in new start stop status s list ls shell logs editor exec restart rm \
-         rebuild-container rebuild-image snapshot snapshots provenance clean config network net doctor install version help; do
+         rebuild-container rebuild-image snapshot snapshots provenance clean config network net doctor install rotate-token version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
 pass "subcommands list"
@@ -168,10 +168,10 @@ drive 4 dce editor --editor vscode ""; assert_reply "editor --editor vscode <TAB
 # rebuild-container: one project, then the flags.
 drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
 drive 3 dce rebuild-container alpha "--"; assert_reply "rebuild-container alpha --<TAB>" \
-  --from-snap --keep-hidden-volumes --rotate-keys --yes
+  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --yes
 # Empty prefix offers all flags, including the short -y form.
 drive 3 dce rebuild-container alpha ""; assert_reply "rebuild-container alpha <TAB>" \
-  --from-snap --keep-hidden-volumes --rotate-keys --yes -y
+  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --yes -y
 
 # install: one project, then a directory.
 drive 2 dce install "";     assert_reply "install <TAB>" alpha beta gamma
@@ -435,7 +435,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dce_subcommands
-    local want="--help --version -h -v clean config doctor editor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm s shell snapshot snapshots start status stop version"
+    local want="--help --version -h -v clean config doctor editor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm rotate-token s shell snapshot snapshots start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -454,9 +454,11 @@ if command -v zsh >/dev/null 2>&1; then
     chk rm               "1:project:"
     chk rm               "--keep-config["
     chk rebuild-container "--rotate-keys["
+    chk rebuild-container "--inject-creds["
     chk rebuild-container "--yes["
     chk rebuild-container "-y["
     chk install          "2:dotfiles directory:_files -/"
+    chk rotate-token     "1:project:"
     chk rebuild-image    "1:target:_dce_rebuild_image_targets"
     chk provenance       "1:project:_dce_projects_simple"
     chk provenance       "--history["

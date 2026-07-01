@@ -230,6 +230,21 @@ CFG
   run_shell "echo comment-only" < /dev/null
   grep -Fq "mktemp" "$logx" && fail "$provider comment-only: should be treated as unset"
   pass "$provider comment-only: treated as unset"
+
+  # --- rotate-token: force-pushes the current PAT via stdin, never argv ----
+  # The same force mechanism backs `rebuild-container --inject-creds`; proving it
+  # here for rotate-token covers the token-write invariant for both callers.
+  printf '%s\n' "$real_token" > "$token_path"
+  : > "$logx"; : > "$capx"
+  DC_STUB_LOG="$logx" DC_STUB_CAP="$capx" DC_STUB_PROJECT="$PROJECT" \
+    HOME="$fake_home" PATH="$STUB_DIR:$PATH" CONTAINER_BACKEND="docker" \
+    DEV_CONTAINERS_BACKEND="" \
+    "$ROOT_DIR/scripts/rotate-token.sh" "$PROJECT" < /dev/null
+
+  grep -Fq "$real_token" "$logx" && fail "$provider rotate-token: token leaked into host argv"
+  pass "$provider rotate-token: token absent from host argv"
+  grep -Fq "$real_token" "$capx" || fail "$provider rotate-token: token did not cross via stdin pipe"
+  pass "$provider rotate-token: token force-pushed via stdin"
 }
 
 for provider in $(dce_git_host_known_providers); do

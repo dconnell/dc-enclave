@@ -604,5 +604,85 @@ if run_script "$ROOT_DIR/scripts/clean.sh" --hidden-volumes --snapshots \
 fi
 pass "dce clean: --hidden-volumes / --snapshots are mutually exclusive"
 
+# ===========================================================================
+# F. dce snapshot scrubs injected credentials before commit; re-injects after
+# ===========================================================================
+# A running container is the documented path and exercises the full
+# scrub -> stop -> commit -> start -> re-inject lifecycle (including the
+# post-restart re-injection of the scrubbed credentials).
+grep -Fxq "$PROJECT" "$RUNNING" || printf '%s\n' "$PROJECT" >> "$RUNNING"
+: > "$LOG"
+scrub_ref="$(dce_snapshot_ref "$PROJECT" "scrub")"
+run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" scrub --yes \
+  >"$WORK/scrub.stdout" 2>"$WORK/scrub.stderr" \
+  || fail "dce snapshot (scrub) exited non-zero
+-- stderr:$(cat "$WORK/scrub.stderr")"
+
+# The credential scrub exec (rm of BOTH injected paths in one call) ran, and it
+# ran BEFORE the commit. Fixed-string match: the dots in the paths are literal.
+scrub_ln="$(grep -FnF 'rm -f ~/.ssh/id_ed25519 ~/.git-credentials' "$LOG" | head -n1 | cut -d: -f1)"
+commit_ln="$(first_call 'docker commit')"
+[[ -n "$scrub_ln" ]] || fail "snapshot scrub: credential rm exec missing
+$(grep '^CALL' "$LOG")"
+[[ -n "$commit_ln" ]] || fail "snapshot scrub: commit missing"
+[[ "$scrub_ln" -lt "$commit_ln" ]] \
+  || fail "snapshot scrub: credential scrub must precede commit (scrub=$scrub_ln commit=$commit_ln)"
+
+# The commit stamps the scrub disposition as an image label.
+grep -Fq "dce.snapshot.cred_scrub=ok" "$LOG" \
+  || fail "snapshot scrub: commit missing dce.snapshot.cred_scrub=ok label
+$(grep '^CALL' "$LOG")"
+
+# Re-injection runs AFTER the restart: dce_ensure_git_credentials re-wires git
+# auth (git config --global ...), which must follow `docker start`.
+start_ln="$(first_call 'docker start myapp')"
+reinj_ln="$(first_call 'git config --global')"
+[[ -n "$start_ln" ]] || fail "snapshot scrub: restart missing"
+[[ -n "$reinj_ln" ]] || fail "snapshot scrub: re-inject (git config) missing"
+[[ "$start_ln" -lt "$reinj_ln" ]] \
+  || fail "snapshot scrub: re-inject must follow restart (start=$start_ln reinject=$reinj_ln)"
+
+# End-to-end success: image registered, container left running.
+img_has "$scrub_ref" || fail "snapshot scrub: image not registered"
+grep -Fxq "$PROJECT" "$RUNNING" || fail "snapshot scrub: container not restarted"
+pass "dce snapshot: scrubs credentials before commit, re-injects after restart, stamps cred_scrub label"
+
+# ===========================================================================
+# G. rebuild-container --from-snap: no inject by default; --inject-creds forces
+# ===========================================================================
+# 'scrub' (from section F) exists and myapp is running. A --from-snap restore
+# recreates from it. By default NO credentials are injected (the snapshot's
+# credential state is preserved for inspection); --inject-creds force-injects the
+# current SSH key + git token. Credential injection is detected via the backend
+# exec calls it issues (SSH-key write + git config wiring).
+grep -Fxq "$PROJECT" "$RUNNING" || printf '%s\n' "$PROJECT" >> "$RUNNING"
+img_has "$scrub_ref" || fail "test setup: 'scrub' snapshot missing for restore"
+
+: > "$LOG"
+printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" --from-snap scrub \
+  >"$WORK/rb_noinject.stdout" 2>"$WORK/rb_noinject.stderr" \
+  || fail "rebuild --from-snap (no inject) exited non-zero
+-- stderr:$(cat "$WORK/rb_noinject.stderr")"
+if grep -Fq 'cat > ~/.ssh/id_ed25519' "$LOG"; then
+  fail "rebuild --from-snap (no inject): must NOT write the SSH deploy key"
+fi
+if grep -Fq 'git config --global' "$LOG"; then
+  fail "rebuild --from-snap (no inject): must NOT wire git credentials"
+fi
+grep -Fqi 'NOT injected' "$WORK/rb_noinject.stdout" \
+  || fail "rebuild --from-snap (no inject): should report credentials not injected"
+pass "rebuild --from-snap: credentials NOT injected by default (snapshot state preserved)"
+
+: > "$LOG"
+printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" --from-snap scrub --inject-creds \
+  >"$WORK/rb_inject.stdout" 2>"$WORK/rb_inject.stderr" \
+  || fail "rebuild --from-snap --inject-creds exited non-zero
+-- stderr:$(cat "$WORK/rb_inject.stderr")"
+grep -Fq 'cat > ~/.ssh/id_ed25519' "$LOG" \
+  || fail "rebuild --from-snap --inject-creds: must write the SSH deploy key"
+grep -Fq 'git config --global' "$LOG" \
+  || fail "rebuild --from-snap --inject-creds: must wire git credentials"
+pass "rebuild --from-snap --inject-creds: force-injects SSH key + git token"
+
 echo ""
 echo "All snapshot checks passed."

@@ -51,9 +51,10 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 | Flag / arg | Description |
 |---|---|
 | `<name>` *(required)* | Project/container name. Must already exist. |
-| `--rotate-keys` | Regenerate the SSH deploy key before recreating (old key backed up, new `.pub` printed, command pauses for you to update GitHub). |
+| `--rotate-keys` | Regenerate the SSH deploy key before recreating (old key backed up, new `.pub` printed, command pauses for you to update GitHub). Implies credential injection (the new key + current git token are written). |
+| `--inject-creds` | Inject the current SSH deploy key and git token into the rebuilt container, overwriting any credentials already present (idempotent: the token is rewritten only when it differs). Always in effect for a normal rebuild and for `--rotate-keys`; it matters with `--from-snap`, where a bare restore injects nothing so a (possibly suspect) snapshot's credential state is preserved for inspection. |
 | `--keep-hidden-volumes` | Preserve hidden volumes instead of removing them (default removes them for a clean slate). Combining with `--rotate-keys` triggers a loud warning. |
-| `--from-snap <label>` | Recreate from the snapshot `dce-snap-<name>-<label>:latest` instead of the scope-derived image. Bypasses scope derivation and does NOT rewrite `CONTAINER_IMAGE`. Hidden volumes are ALWAYS isolated on restore: each is mounted from its snapshot volume (populated where captured, empty otherwise) and the live originals are left untouched, so `--keep-hidden-volumes` has no effect here. See [snapshots & rollback](../how-to/snapshot-and-rollback.md). |
+| `--from-snap <label>` | Recreate from the snapshot `dce-snap-<name>-<label>:latest` instead of the scope-derived image. Bypasses scope derivation and does NOT rewrite `CONTAINER_IMAGE`. Hidden volumes are ALWAYS isolated on restore: each is mounted from its snapshot volume (populated where captured, empty otherwise) and the live originals are left untouched, so `--keep-hidden-volumes` has no effect here. A restore does NOT inject credentials by default — the rebuilt container keeps exactly what the snapshot baked (nothing, for a scrubbed snapshot); pass `--inject-creds` to inject current credentials, or `--rotate-keys` to regenerate the SSH key. See [snapshots & rollback](../how-to/snapshot-and-rollback.md). |
 | `--yes`, `-y` | Skip the confirmation prompt (for scripted incident response). |
 
 ## `dce rebuild-image` — rebuild managed images

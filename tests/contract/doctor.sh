@@ -61,6 +61,15 @@ case "$name" in
           exit 0
         fi
         exit 0 ;;
+      exec)
+        # Simulate the container's ~/.git-credentials for the token-drift probe.
+        for _a in "$@"; do
+          case "$_a" in
+            *'test -f ~/.git-credentials'*) [[ -n "${DC_STUB_GIT_CREDS:-}" ]]; exit ;;
+            *'cat ~/.git-credentials'*) printf '%s' "${DC_STUB_GIT_CREDS:-}"; exit 0 ;;
+          esac
+        done
+        exit 0 ;;
       ps) printf '%s\n' "${DC_STUB_CONTAINERS:-}"; exit 0 ;;
     esac
     exit 0 ;;
@@ -419,6 +428,57 @@ RUN_RC=$?
 set -e
 [[ "$RUN_RC" -ne 0 ]] || fail "project backend CLI missing: expected nonzero"
 pass "project backend unavailable: reported + nonzero"
+
+# ---------------------------------------------------------------------------
+# Section 5b - project token-drift probe (PAT only, read-only, hash-compared)
+# ---------------------------------------------------------------------------
+# The drift probe compares the host PAT to the container's ~/.git-credentials:
+# match -> pass; differs -> _bad with the rotate-token fix; absent -> info;
+# ssh/none -> skipped. DC_STUB_GIT_CREDS is what the stub returns for
+# `cat ~/.git-credentials` (and gates the `test -f` probe).
+make_project drift_match docker dce-base:latest "ghp_realtoken"
+DC_STUB_CONTAINERS="drift_match" DC_STUB_GIT_CREDS=$'https://x-access-token:ghp_realtoken@github.com\n' \
+  run_doctor drift_match; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fq "git token in sync with container" \
+  || fail "drift match: missing 'git token in sync' check
+$out"
+if printf '%s' "$out" | grep -Eq 'container token differs|rotate-token drift_match'; then
+  fail "drift match: must not report drift
+$out"
+fi
+[[ "$RUN_RC" -eq 0 ]] || fail "drift match: expected exit 0, got $RUN_RC"
+pass "doctor: PAT in sync -> pass, no drift report"
+
+make_project drift_stale docker dce-base:latest "ghp_realtoken"
+DC_STUB_CONTAINERS="drift_stale" DC_STUB_GIT_CREDS=$'https://x-access-token:STALE@github.com\n' \
+  run_doctor drift_stale; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fq "git token in sync with container" \
+  || fail "drift stale: missing check line
+$out"
+printf '%s' "$out" | grep -Fq "container token differs from host token" \
+  || fail "drift stale: missing drift detail
+$out"
+printf '%s' "$out" | grep -Fq "dce rotate-token drift_stale" \
+  || fail "drift stale: missing rotate-token fix command
+$out"
+[[ "$RUN_RC" -ne 0 ]] || fail "drift stale: expected nonzero"
+pass "doctor: stale container token -> reported + rotate-token fix + nonzero"
+
+make_project drift_absent docker dce-base:latest "ghp_realtoken"
+DC_STUB_CONTAINERS="drift_absent" DC_STUB_GIT_CREDS="" run_doctor drift_absent; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fqi 'not yet in container' \
+  || fail "drift absent: missing info line
+$out"
+[[ "$RUN_RC" -eq 0 ]] || fail "drift absent: should be info, not a failure (got $RUN_RC)"
+pass "doctor: container token absent -> info (not a failure)"
+
+# ssh/none auth: drift probe skipped (no PAT to compare).
+make_project drift_ssh docker dce-base:latest ""
+DC_STUB_CONTAINERS="drift_ssh" run_doctor drift_ssh; out="$RUN_OUT"
+printf '%s' "$out" | grep -Eq 'git token in sync.*skipped.*ssh/none' \
+  || fail "drift ssh: expected skipped check
+$out"
+pass "doctor: ssh/none auth -> drift check skipped"
 
 # ---------------------------------------------------------------------------
 # Section 6 - OS-specific remediation hints

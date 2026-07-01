@@ -94,6 +94,9 @@ case "$SUBCOMMAND" in
   install)
     exec "$SCRIPT_DIR/install-dotfiles.sh" "$@"
     ;;
+  rotate-token)
+    exec "$SCRIPT_DIR/rotate-token.sh" "$@"
+    ;;
   version|--version|-v)
     echo "dce $DC_VERSION"
     ;;

@@ -19,6 +19,19 @@ A snapshot captures:
 It never captures:
 
 - **the bind-mounted repo** — your host working tree was never at risk anyway.
+- **injected credentials** — the SSH deploy key (`~/.ssh/id_ed25519`) and, under
+  PAT auth, `~/.git-credentials` are removed from the writable layer *before* the
+  commit, so they are never baked into the snapshot image. (The read-only
+  bind-mounted `.npmrc` is also excluded — bind mounts aren't committed.)
+
+Snapshot images are still **shareable artifacts**: anyone who exports, inspects,
+restores, or shares one can read everything in the filesystem layer. The
+credential scrub means your SSH key and git token are not in that layer, but
+treat any snapshot image as sensitive anyway (it contains your code, config, and
+history) and avoid exporting or sharing it unless you mean to. A failed scrub is
+stamped on the image as the `dce.snapshot.cred_scrub=failed` label and called out
+with a WARNING at snapshot time — in that case the snapshot may still contain
+credentials, so do not share it.
 
 So `--from-snap` restores the filesystem and the captured volumes, leaving the
 live originals untouched. (Use `--exclude-volumes` to skip volume capture — see

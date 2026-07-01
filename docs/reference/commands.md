@@ -16,8 +16,8 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce exec [--root] <name> <command...>` | Run a single command in a running container, docker-exec style: no token, no zsh wrapping, auto-TTY |
 | `dce restart [name ...]` | Restart one or more projects, or all configured projects |
 | `dce rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, snapshot artifacts, and config+secrets (host code preserved). Snapshot artifacts follow `--keep-volumes` (preserved with the flag, removed without it) |
-| `dce rebuild-container <name> [--rotate-keys] [--keep-hidden-volumes] [--yes]` | Destroy and recreate container from selected image |
-| `dce rebuild-container <name> --from-snap <label>` | Recreate container from a saved snapshot (one-off restore; does not rewrite the configured image) |
+| `dce rebuild-container <name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes]` | Destroy and recreate container from selected image |
+| `dce rebuild-container <name> --from-snap <label>` | Recreate container from a saved snapshot (one-off restore; does not rewrite the configured image; credentials not injected unless `--inject-creds`/`--rotate-keys`) |
 | `dce rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
 | `dce snapshot <name> [<label>] [--exclude-volumes] [--exclude-volume <path>] [--yes]` | Snapshot a container's filesystem AND hidden volumes to a tagged image (`dce-snap-<name>-<label>:latest` + `dce-snapvol-*`); source volumes are copied read-only; prompts before copying unless `--yes`; `--exclude-volumes`/`--exclude-volume` skip volumes — see [snapshots & rollback](../how-to/snapshot-and-rollback.md) |
 | `dce snapshot rm <name> <label>` | Remove one snapshot image, its captured volumes (`dce-snapvol-*`), and its manifest |
@@ -28,6 +28,7 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce doctor [backend\|project]` | Run read-only preflight checks and report pass/fail per subsystem (nonzero if any fail) |
 | `dce network <create\|ls\|members\|rm\|add\|remove> ...` | Manage private networks between containers (no host port publishing); see [private networks](../how-to/connect-private-networks.md) |
 | `dce install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
+| `dce rotate-token <name>` | Push the project's current git token (PAT) into its container without a rebuild — state-preserving, idempotent, force-overwrites a stale value (no-op under ssh/none). See [rebuild & recover](../how-to/rebuild-and-recover.md). |
 | `dce version` (`dce --version`, `dce -v`) | Print the DC Enclave version |
 | `dce help [command]` (`dce --help`, `dce -h`) | Show usage summary or detailed help for a specific command |
 
