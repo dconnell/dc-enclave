@@ -285,7 +285,7 @@ _dce_doctor() {
   _wanted targets expl 'backend or project' compadd -a all
 }
 
-# `dce new <name> [scope] [--config <file>] [--save-team] [--save-user] [--repo-path <d>] [--cpus N] [--memory V] [--hide <p>] [--network <n>[,...]] [--ip <addr>] [ports]`.
+# `dce new <name> [scope] [--config <file>] [--save-team] [--save-user] [--repo-path <d>] [--cpus N] [--memory V] [--hide <p>] [--network <n>[,...]] [--ip <addr>] [--yes|-y] [ports]`.
 _dce_new() {
   _arguments \
     '1:project name:' \
@@ -298,7 +298,9 @@ _dce_new() {
     '--memory+[memory limit (e.g. 4g, 512m)]:value:' \
     '*--hide[workspace path(s) to keep in a named volume]:path:' \
     '*--network[network(s) to attach (name\[,name...\] or name:ip)]:network:' \
-    '--ip+[static IPv4 for the primary network]:addr:'
+    '--ip+[static IPv4 for the primary network]:addr:' \
+    '--yes[skip the recipe-repo-path confirmation prompt]' \
+    '-y[skip the recipe-repo-path confirmation prompt]'
 }
 
 # `dce network <subaction> [args]`.

@@ -12,6 +12,15 @@
 # files; it performs pure key=value parsing, rejects malformed/unknown keys, and
 # validates every value with the same validators/normalizers used by CLI flags.
 #
+# `repo-path` policy: unlike other keys, `repo-path` is NOT applied verbatim.
+# An auto-loaded recipe cannot silently widen the host bind mount — when a
+# recipe-sourced `repo-path` resolves OUTSIDE the default repos dir, the merge
+# consumer (scripts/new-container.sh) gates it behind an operator confirmation
+# (--yes/-y honors it with a visible notice), and hard-rejects values that
+# resolve to a sensitive root (/, $HOME, the repos root, or a parent of it) or
+# that contain non-path-safe characters. CLI `--repo-path` is the documented
+# power-user escape hatch and skips the confirmation gate.
+#
 # Merge model (plans/container-recipe.md):
 #   1) Recipe-internal merge: user overrides team per key; list keys replace.
 #   2) CLI-over-recipe merge is done by new-container.sh after calling
@@ -235,6 +244,9 @@ dce_recipe_parse_file() {
         _DC_RECIPE_SCALAR["$side:$key"]="$value"
         ;;
       repo-path)
+        # Stored verbatim here; the consumer (new-container.sh) gates recipe-
+        # sourced values so an untrusted recipe cannot silently widen the host
+        # bind mount. See the security-posture note at the top of this file.
         _DC_RECIPE_HAS["$side:$key"]=1
         _DC_RECIPE_SCALAR["$side:$key"]="$value"
         ;;

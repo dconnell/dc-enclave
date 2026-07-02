@@ -42,7 +42,8 @@ unset _dce_scripts_dir
 #                             project (only meaningful with --hidden-volumes)
 #   new                     : <name> [scope] [--config <file>] [--save-team]
 #                             [--save-user] [--repo-path <d>] [--cpus N]
-#                             [--memory V] [--hide <path>] [port:port ...]
+#                             [--memory V] [--hide <path>] [--yes|-y]
+#                             [port:port ...]
 _dce_complete() {
   local cur prev cmd
   COMPREPLY=()
@@ -371,7 +372,7 @@ _dce_complete_new() {
       ;;
   esac
 
-  local flags="--config --save-team --save-user --repo-path --cpus --memory --hide --network --ip"
+  local flags="--config --save-team --save-user --repo-path --cpus --memory --hide --network --ip --yes -y"
   if [[ $COMP_CWORD -eq 3 ]]; then
     # Second positional: a scope (with flags also accepted).
     mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_scopes) $flags" -- "$cur")

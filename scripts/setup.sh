@@ -230,6 +230,12 @@ auto-loads \$DC_$(echo "$who" | tr '[:lower:]' '[:upper:]')_DIR/container-recipe
 when it exists; user recipes override team recipes per key, and CLI flags
 override both. The filename IS the container name.
 
+repo-path is gated: an auto-loaded recipe cannot silently widen the host bind
+mount. A recipe-sourced repo-path that resolves OUTSIDE the default repos dir
+(\$DC_REPOS_DIR or ~/repos) asks for confirmation (--yes/-y honors it); values
+that resolve to /, your home, the repos root, or a parent of it are rejected.
+CLI --repo-path is never gated.
+
 Example:
   scopes=nodejs,postgres
   cpus=2

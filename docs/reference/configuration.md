@@ -60,6 +60,21 @@ Merge and override rules:
 - list keys (`hide`, `network`, `port`) replace as a whole (not union)
 - CLI args override recipe values for that run
 
+### `repo-path` trust boundary
+
+Recipes are untrusted input, so `repo-path` is the one key that is **not** applied
+verbatim. An auto-loaded recipe cannot silently widen the host bind mount:
+
+- A recipe-sourced `repo-path` that resolves **outside** the default repos dir
+  (`$DC_REPOS_DIR` or `~/repos`) asks for confirmation before it is mounted
+  read-write as `/workspace`. `--yes`/`-y` honors it and prints a visible notice.
+- A recipe-sourced `repo-path` that resolves to `/`, your home directory, the
+  repos root, or a parent of it is **rejected** outright (too broad to expose),
+  as is any value containing characters that are unsafe in a bind-mount source.
+- A recipe-sourced `repo-path` **inside** the default repos dir needs no
+  confirmation.
+- CLI `--repo-path` is the power-user escape hatch and is **never** gated.
+
 You can load one explicit recipe file with `--config <path>`.
 
 You can also persist the CLI-supplied recipe keys from a `dce new` run:

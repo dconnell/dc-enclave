@@ -19,11 +19,11 @@
 set -euo pipefail
 
 # 1. Parse arguments: project name, optional scope, flags, and port mappings.
-PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--config <path>|--config=<path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [port:port ...]}"
+PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--config <path>|--config=<path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--yes|-y] [port:port ...]}"
 shift
 SCOPE_INPUT=""
 CLI_SET_SCOPE=false
-if [[ $# -gt 0 && "$1" != --* && ! "$1" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
+if [[ $# -gt 0 && "$1" != -* && ! "$1" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
   SCOPE_INPUT="$1"
   CLI_SET_SCOPE=true
   shift
@@ -51,6 +51,7 @@ CLI_SET_NETWORK=false
 CLI_SET_IP=false
 CLI_SET_REPO_PATH=false
 CLI_SET_PORTS=false
+ASSUME_YES=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config)
@@ -129,6 +130,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --save-user)
       SAVE_USER_RECIPE=true
+      shift
+      ;;
+    --yes|-y)
+      ASSUME_YES=true
       shift
       ;;
     --git-host)
@@ -411,18 +416,100 @@ if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
   mapfile -t NETWORK_ARGS < <(dce_networks_create_args "${CONTAINER_NETWORKS[@]}")
 fi
 
+# -----------------------------------------------------------------------------
+# repo-path safety gate
+#
+# `repo-path` selects the host directory bind-mounted read-write as /workspace.
+# CLI `--repo-path` is an intentional power-user escape hatch (unrestricted);
+# an auto-loaded (untrusted) recipe supplying `repo-path` is NOT -- it must not
+# silently widen the mount. Two layers run BEFORE the container is created:
+#
+#   1. Character whitelist (any source): a value containing characters unsafe
+#      in a bind-mount source (`:` breaks the `--volume src:dst` spec; shell
+#      metacharacters, control chars, and quotes are refused too) is rejected
+#      outright, before anything is created. This guards mount-spec integrity,
+#      not the trust boundary, so it applies to CLI and recipe alike.
+#   2. Sensitive-root + confirmation gate (recipe source only): after the target
+#      is created and resolved to its CANONICAL form (symlinks followed), a
+#      recipe repo-path that resolves to /, $HOME, the repos root, or a parent
+#      of it is hard-rejected; one that merely lands OUTSIDE the default repos
+#      dir is gated behind an operator confirmation (--yes/-y honors it with a
+#      visible notice). Canonical resolution is essential here: a symlink can
+#      make a path look inside the repos root lexically while actually pointing
+#      at $HOME, so the lexical view alone is not a sound trust boundary. CLI
+#      --repo-path skips this layer entirely (escape hatch).
+# -----------------------------------------------------------------------------
+
+# Expand a leading ~ to $HOME (literal-char match, not shell expansion), so a
+# value like '~/repos' or '~' behaves the same whether it came from a recipe, the
+# CLI, or $DC_REPOS_DIR.
+_dce_new_repo_path_expand_tilde() {  # <path>
+  local p="$1"
+  # shellcheck disable=SC2088
+  if [[ "$p" == "~" || "$p" == "~/"* ]]; then
+    printf '%s' "$HOME${p#\~}"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+# Return 0 (true) if the value contains any character outside the path-safe
+# whitelist. Allowed: alphanumerics and  / . _ - ~ + @ , and space. Everything
+# else ($ ` ; | & ( ) < > \ ! ' " : control chars ...) is rejected, since a
+# bind-mount source must never risk confusing the `--volume src:dst` spec or
+# downstream tooling.
+_dce_new_repo_path_chars_unsafe() {  # <value>
+  local v="$1"
+  # The bracket-expression CONTENTS (no outer []); wrapped below so the variable
+  # is not double-bracketed. Kept unquoted in the =~ so it is treated as a
+  # character class, not a literal string.
+  local _safe='[:alnum:]/._~+@, -'
+  # shellcheck disable=SC2250
+  [[ "$v" =~ [^$_safe] ]]
+}
+
+# Return 0 (true) when an already-canonicalized mount source is too broad to
+# expose: empty, the host root (/), the user's home, the repos root, or an
+# ancestor of it. Recipe-sourced only -- the CLI --repo-path escape hatch is
+# intentionally unrestricted.
+_dce_new_repo_path_is_sensitive_root() {  # <resolved> <home> <repos_root>
+  local resolved="$1" home="$2" root="$3"
+  if [[ -z "$resolved" || "$resolved" == "/" ]]; then
+    return 0
+  fi
+  if [[ "$resolved" == "$home" ]]; then
+    return 0
+  fi
+  # resolved is the repos root or an ancestor of it (repos root is under it):
+  # mounting it would expose sibling projects / the repos root itself.
+  if [[ "$root" == "$resolved" || "$root" == "$resolved/"* ]]; then
+    return 0
+  fi
+  return 1
+}
+
 if [[ -n "$REPO_PATH_OVERRIDE" ]]; then
   repo_target="$REPO_PATH_OVERRIDE"
 else
-  repo_target="${DC_REPOS_DIR:-$HOME/repos}/$PROJECT"
+  repo_target="$(_dce_new_repo_path_expand_tilde "${DC_REPOS_DIR:-$HOME/repos}")/$PROJECT"
+fi
+repo_target="$(_dce_new_repo_path_expand_tilde "$repo_target")"
+if [[ "$repo_target" != /* ]]; then
+  repo_target="$PWD/$repo_target"
 fi
 
-# shellcheck disable=SC2088
-# ~ is a literal char matched against user input, not an expansion.
-if [[ "$repo_target" == "~" || "$repo_target" == "~/"* ]]; then
-  repo_target="$HOME${repo_target#\~}"
-elif [[ "$repo_target" != /* ]]; then
-  repo_target="$PWD/$repo_target"
+# Layer 1: character whitelist (any source), before anything is created. A value
+# with characters unsafe for a bind-mount source (`:` splits the mount spec, etc.)
+# is refused regardless of whether it came from the CLI or a recipe.
+if _dce_new_repo_path_chars_unsafe "$repo_target"; then
+  echo "ERROR: repo-path contains characters that are unsafe for a bind-mount source: $repo_target" >&2
+  echo "       (Allowed: letters, digits, and  / . _ - ~ + @ , and space.)" >&2
+  if [[ -n "$REPO_PATH_OVERRIDE" && "$CLI_SET_REPO_PATH" == true ]]; then
+    echo "       (--repo-path was: $REPO_PATH_OVERRIDE)" >&2
+  elif [[ -n "$REPO_PATH_OVERRIDE" ]]; then
+    echo "       (recipe repo-path was: $REPO_PATH_OVERRIDE)" >&2
+  fi
+  exit 1
 fi
 
 mkdir -p "$repo_target"
@@ -434,6 +521,40 @@ REPOS_DIR="$(dce_resolve_path "$repo_target")" || {
   fi
   exit 1
 }
+
+# Canonical anchors (symlinks resolved) so the trust boundary reasons about where
+# the mount will REALLY land, not where it appears to land lexically. A symlink
+# can redirect an inside-repos-root path to $HOME or /; only the canonical form
+# closes that hole.
+HOME_CANON="$(dce_resolve_path "$HOME")"
+DEFAULT_REPOS_ROOT_CANON="$(_dce_new_repo_path_expand_tilde "${DC_REPOS_DIR:-$HOME/repos}")"
+DEFAULT_REPOS_ROOT_CANON="$(dce_resolve_path "$DEFAULT_REPOS_ROOT_CANON" 2>/dev/null || printf '%s' "$DEFAULT_REPOS_ROOT_CANON")"
+
+# Layer 2: recipe-sourced repo-path only. CLI --repo-path is the escape hatch and
+# skips this layer entirely.
+if [[ -n "$REPO_PATH_OVERRIDE" && "$CLI_SET_REPO_PATH" != true ]]; then
+  if _dce_new_repo_path_is_sensitive_root "$REPOS_DIR" "$HOME_CANON" "$DEFAULT_REPOS_ROOT_CANON"; then
+    echo "ERROR: recipe repo-path resolves to '$REPOS_DIR', a sensitive root" >&2
+    echo "       (/, your home, the repos root, or a parent of it); refusing to widen the bind mount." >&2
+    echo "       (recipe repo-path was: $REPO_PATH_OVERRIDE)" >&2
+    exit 1
+  fi
+  if [[ "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON" && "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON/"* ]]; then
+    echo "Recipe 'repo-path' resolves outside the default repos directory:"
+    echo "  resolved path : $REPOS_DIR"
+    echo "  default root  : $DEFAULT_REPOS_ROOT_CANON"
+    if $ASSUME_YES; then
+      echo "(--yes: honoring recipe repo-path; it will be mounted read-write as /workspace.)"
+    else
+      echo "Mounting it read-write as /workspace requires confirmation."
+      read -r -p "Type 'yes' to continue: " _repo_path_confirm || _repo_path_confirm=""
+      if [[ "$_repo_path_confirm" != "yes" ]]; then
+        echo "Aborted."
+        exit 0
+      fi
+    fi
+  fi
+fi
 
 COMPOSED_CONTAINERFILE=""
 DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.base"

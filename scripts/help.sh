@@ -69,7 +69,7 @@ _show_help_new() {
   cat <<'EOF'
 Usage: dce new <name> [scope[,scope...]] [--repo-path <path>]
               [--config <path>]
-              [--save-team] [--save-user] [--git-host <provider>]
+              [--save-team] [--save-user] [--git-host <provider>] [--yes|-y]
               [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]
 
 Description:
@@ -105,6 +105,15 @@ Options:
                Override the default repo mount location. Defaults to
                $DC_REPOS_DIR/<name> or ~/repos/<name>.
 
+               Recipe-sourced repo-path is gated: an auto-loaded recipe cannot
+               silently widen the host bind mount. If a recipe repo-path
+               resolves outside the default repos dir, you are asked to confirm
+               before it is mounted read-write as /workspace (--yes/-y honors it
+               and prints a notice). Values resolving to /, your home, the repos
+               root, or a parent of it are rejected, as are values with
+               characters unsafe for a bind-mount source. CLI --repo-path (this
+               flag) is never gated.
+
   --save-team
                Save only the CLI-supplied recipe keys from this run to
                $DC_TEAM_DIR/container-recipes/<name> in key=value form.
@@ -116,6 +125,11 @@ Options:
                Recipe-defaulted values are not written.
 
                You can pass both flags to write both files.
+
+  --yes, -y   Skip the recipe-repo-path confirmation prompt: honor a recipe-
+               sourced repo-path that resolves outside the default repos dir and
+               print a visible notice instead of prompting. Has no effect on CLI
+               --repo-path or on recipe paths inside the default repos dir.
 
   --cpus <N>  CPU limit for the container (e.g. 2, 1.5). Passed to the backend.
 

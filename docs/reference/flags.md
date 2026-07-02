@@ -18,6 +18,15 @@ Every flag each `dce` command accepts, derived from the command help (`dce help 
 | `--hide <path[,path...]>` | Keep one or more `/workspace`-relative paths in a named volume. Repeatable. See [hide generated paths](../how-to/hide-generated-paths.md). |
 | `--network <name[,name...]>` | Attach to private dce network(s) so the container can reach peers by name without publishing ports. `name:ip` pins a static IPv4. Repeatable. See [private networks](../how-to/connect-private-networks.md). |
 | `--ip <addr>` | Static IPv4 for the primary (first) network; equivalent to `name:ip` on the first `--network` entry. Not supported on apple/container. |
+| `--yes`, `-y` | Skip the recipe-`repo-path` confirmation prompt (see below). Non-interactive runs without `--yes` abort instead of mounting. |
+
+> **Recipe `repo-path` is gated.** An auto-loaded recipe cannot silently widen the
+> host bind mount: a recipe-sourced `repo-path` that resolves outside the default
+> repos dir (`$DC_REPOS_DIR` or `~/repos`) asks for confirmation (`--yes`/`-y`
+> honors it); values resolving to `/`, your home, the repos root, or a parent of
+> it are rejected, as are values with characters unsafe in a bind-mount source.
+> A recipe `repo-path` inside the default repos dir needs no confirmation, and
+> CLI `--repo-path` is never gated (escape hatch). See [configuration: recipes](configuration.md).
 
 ## `dce logs` — container log stream
 
