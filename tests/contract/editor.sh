@@ -13,6 +13,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Load the provider registry so credential test configs can be built data-driven
+# (token filename, sentinel, env-var name per provider), mirroring
+# tests/contract/security-token-argv.sh.
+# shellcheck source=/dev/null
+source "$ROOT_DIR/lib/git-host.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
@@ -29,6 +34,7 @@ DC_ROOT="$HOME/.config/dce-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
+mkdir -p "$HOME/.config/Code/User"
 {
   printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
   printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
@@ -56,6 +62,8 @@ cat > "$STUB_DIR/docker" <<'STUB'
 _log="${DC_STUB_LOG:?}"
 _run="${DC_STUB_RUNNING:?}"
 _ctrs="${DC_STUB_CONTAINERS:?}"
+_have_creds_env="${DC_STUB_CONTAINER_CREDS+x}"
+_creds="${DC_STUB_CONTAINER_CREDS-}"
 printf 'CALL docker %s\n' "$*" >> "$_log"
 
 # Drain stdin only for interactive exec calls (start.sh re-injects the SSH key
@@ -96,6 +104,18 @@ case "${1:-}" in
     exit 0
     ;;
   exec)
+    # Optional credential-file state simulation for drift warning coverage. When
+    # DC_STUB_CONTAINER_CREDS is set by the caller, answer the ~/.git-credentials
+    # existence/read probes the same way tests/unit/git-credentials.sh does.
+    if [[ -n "$_have_creds_env" ]]; then
+      if [[ "$*" == *'cat ~/.git-credentials'* ]]; then
+        printf '%s' "$_creds"
+        exit 0
+      fi
+      if [[ "$*" == *'test -f ~/.git-credentials'* ]]; then
+        [[ -n "$_creds" ]] && exit 0 || exit 1
+      fi
+    fi
     # start.sh's git-credential wiring issues several `docker exec ... git
     # config --global --unset-all ...` calls (all best-effort, all tolerate
     # failure). With TOKEN_FILE/SSH_KEY_PATH unset in the test config the
@@ -159,6 +179,51 @@ CFG
   if [[ "$running" == "running" ]]; then
     grep -qxF -- "$project" "$RUNNING_FILE" 2>/dev/null || printf '%s\n' "$project" >> "$RUNNING_FILE"
   fi
+}
+
+# Like make_project, but configures a REAL (non-placeholder) git token for
+# <provider> plus an SSH_KEY_PATH, so dce_git_auth_method resolves to "pat" and
+# `dce editor` exercises the credential-wiring path. The token value is unique
+# enough to grep for and is never the provider sentinel.
+#
+# $1 = project name; $2 = "running" to pre-mark running, "" stopped;
+# $3 = provider (github|gitlab). Echoes the real token value on stdout so the
+# caller can assert it never leaks into the docker argv.
+make_project_token() {
+  local project="$1"
+  local running="${2:-}"
+  local provider="${3:-github}"
+  local cfg_dir="$DC_ROOT/$project"
+  local repos="$WORK/home/repos/$project"
+  local sentinel="" real_token="" token_file=""
+  sentinel="$(dce_git_host_field "$provider" sentinel)"
+  real_token="${sentinel%%_REPLACE_ME}_REAL0123456789abcdefXYZ"
+  token_file="$WORK/$(dce_git_host_field "$provider" token_filename)-$project"
+  printf '%s\n' "$real_token" > "$token_file"
+  chmod 600 "$token_file"
+
+  mkdir -p "$cfg_dir" "$repos"
+  chmod 700 "$cfg_dir"
+  cat > "$cfg_dir/config" <<CFG
+CONTAINER_PROJECT="$project"
+CONTAINER_BACKEND="docker"
+CONTAINER_GIT_HOST="$provider"
+CONTAINER_IMAGE="dce-base:latest"
+REPOS_DIR="$repos"
+SECRET_DIR="$cfg_dir"
+SSH_KEY_PATH="$cfg_dir/ssh_key"
+TOKEN_FILE="$token_file"
+NPMRC_PATH="$cfg_dir/.npmrc"
+PORTS=()
+CONTAINER_HIDDEN_PATHS=()
+CONTAINER_NETWORKS=()
+CFG
+  chmod 600 "$cfg_dir/config"
+  grep -qxF -- "$project" "$CONTAINERS_FILE" 2>/dev/null || printf '%s\n' "$project" >> "$CONTAINERS_FILE"
+  if [[ "$running" == "running" ]]; then
+    grep -qxF -- "$project" "$RUNNING_FILE" 2>/dev/null || printf '%s\n' "$project" >> "$RUNNING_FILE"
+  fi
+  printf '%s' "$real_token"
 }
 
 # Run editor.sh with all stubs wired. Captures stdout/stderr/exit separately.
@@ -337,6 +402,161 @@ grep -Fq "No config for 'no-such-project'" <<<"$err_out" \
   || fail "unknown project: missing guidance (got: $err_out)"
 
 pass "Section 8: unknown project -> clear error"
+
+# ===========================================================================
+# Section 9 - credential injection parity: running container + PAT wires git
+# auth on launch (the reported bug). `dce shell` wires credentials via
+# dce_ensure_git_credentials; `dce editor` must do the same so the editor lands
+# with working git auth without a separate `dce shell`.
+# ===========================================================================
+web_github="$(dce_git_host_field github web_host)"
+ssh_github="$(dce_git_host_field github ssh_host)"
+tok_alpha="$(make_project_token "eta" running github)"
+: > "$DOCKER_LOG"; : > "$CODE_LOG"
+run_editor eta >"$WORK/sec9.out" 2>"$WORK/err" || fail "editor eta exited non-zero
+-- stderr:$(cat "$WORK/err")"
+
+# PAT wiring markers must appear: HTTPS insteadOf + credential.helper store.
+grep -Fq -- "git config --global url.https://${web_github}/.insteadOf" "$DOCKER_LOG" \
+  || fail "eta: PAT insteadOf wiring not issued (got: $(cat "$DOCKER_LOG"))"
+grep -Fq -- "git config --global --add credential.helper store" "$DOCKER_LOG" \
+  || fail "eta: credential.helper store not added"
+
+# Already running -> must NOT call docker start (wiring is independent of start).
+grep -Eq 'docker start eta' "$DOCKER_LOG" \
+  && fail "eta: was running but editor issued docker start"
+
+# Editor still launched.
+grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
+  || fail "eta: editor not launched after credential wiring"
+
+# Security invariant: the token value must never appear in a host argv.
+grep -Fq -- "$tok_alpha" "$DOCKER_LOG" \
+  && fail "eta: token value leaked into host argv"
+
+pass "Section 9: running + PAT -> git credentials wired on editor launch (no start)"
+
+# ===========================================================================
+# Section 10 - stopped container + PAT: start.sh runs, THEN credentials wired.
+# ===========================================================================
+make_project_token "theta" "" github > /dev/null
+: > "$DOCKER_LOG"; : > "$CODE_LOG"
+run_editor theta >"$WORK/sec10.out" 2>"$WORK/err" || fail "editor theta exited non-zero
+-- stderr:$(cat "$WORK/err")"
+
+grep -Eq 'CALL docker start theta' "$DOCKER_LOG" \
+  || fail "theta: start.sh did not issue 'docker start theta'"
+grep -Fq -- "git config --global --add credential.helper store" "$DOCKER_LOG" \
+  || fail "theta: credential.helper store not added after start"
+grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
+  || fail "theta: editor not launched after start+wiring"
+
+pass "Section 10: stopped + PAT -> start, then credentials wired, then launch"
+
+# ===========================================================================
+# Section 11 - gitlab provider: PAT wiring uses the gitlab host (data-driven
+# over the provider registry, like security-token-argv.sh).
+# ===========================================================================
+web_gitlab="$(dce_git_host_field gitlab web_host)"
+make_project_token "iota" running gitlab > /dev/null
+: > "$DOCKER_LOG"; : > "$CODE_LOG"
+run_editor iota >"$WORK/sec11.out" 2>"$WORK/err" || fail "editor iota exited non-zero
+-- stderr:$(cat "$WORK/err")"
+
+grep -Fq -- "git config --global url.https://${web_gitlab}/.insteadOf" "$DOCKER_LOG" \
+  || fail "iota: gitlab PAT insteadOf wiring not issued"
+grep -Fq -- "git config --global --add credential.helper store" "$DOCKER_LOG" \
+  || fail "iota: credential.helper store not added"
+# GitHub insteadOf must NOT be SET for a gitlab project. Match the SET form
+# (trailing " git@github.com:") so the legit --unset-all cleanup of the
+# image-baked github rule (no trailing value) is not mistaken for wiring.
+grep -Fq -- "url.https://${web_github}/.insteadOf git@${ssh_github}:" "$DOCKER_LOG" \
+  && fail "iota: github insteadOf wired (set) for a gitlab project"
+
+pass "Section 11: gitlab PAT -> gitlab host wiring (provider-correct)"
+
+# ===========================================================================
+# Section 12 - placeholder token: treated as unset -> no PAT wiring (method
+# "none"); matches dce shell's behavior for an unfilled token file.
+# ===========================================================================
+make_project "kappa" running
+# Inject a placeholder-only token file + SSH path so the project has a token
+# slot, but dce_read_git_token filters the sentinel out -> auth method "none".
+kappa_sentinel="$(dce_git_host_field github sentinel)"
+kappa_cfg="$DC_ROOT/kappa/config"
+kappa_token="$WORK/github-token-kappa"
+printf '%s\n' "$kappa_sentinel" > "$kappa_token"
+chmod 600 "$kappa_token"
+{
+  printf 'TOKEN_FILE="%s"\n' "$kappa_token"
+  printf 'SSH_KEY_PATH="%s/ssh_key"\n' "$DC_ROOT/kappa"
+} >> "$kappa_cfg"
+: > "$DOCKER_LOG"; : > "$CODE_LOG"
+run_editor kappa >"$WORK/sec12.out" 2>"$WORK/err" || fail "editor kappa exited non-zero
+-- stderr:$(cat "$WORK/err")"
+
+grep -Fq -- "git config --global --add credential.helper store" "$DOCKER_LOG" \
+  && fail "kappa: PAT wiring issued for a placeholder (unset) token"
+# Match the SET form so the method-"none" cleanup unsets are not mistaken for
+# active PAT wiring.
+grep -Fq -- "url.https://${web_github}/.insteadOf git@${ssh_github}:" "$DOCKER_LOG" \
+  && fail "kappa: PAT insteadOf set for a placeholder (unset) token"
+
+cfg_kappa="$HOME/.config/Code/User/globalStorage/ms-vscode-remote.remote-containers/nameConfigs/kappa.json"
+[[ -f "$cfg_kappa" ]] || fail "kappa: named attach config not written"
+if jq -e '.remoteEnv.GIT_CONFIG_COUNT == "2"' "$cfg_kappa" >/dev/null 2>&1; then
+  fail "kappa: placeholder-token project should not carry PAT remoteEnv override"
+fi
+
+pass "Section 12: placeholder token -> no PAT wiring (treated as unset)"
+
+# ===========================================================================
+# Section 13 - named attach config carries the deterministic Git override.
+# Attach-mode named configs support remoteEnv, which VS Code applies to the
+# editor/terminal processes at attach time. dce uses that deterministic hook to
+# force Git's runtime config (`credential.helper = ""`, then `store`) so the
+# editor ignores VS Code's host-forwarding helper and uses the PAT-backed
+# ~/.git-credentials instead.
+# ===========================================================================
+make_project_token "lambda" running github > /dev/null
+: > "$DOCKER_LOG"; : > "$CODE_LOG"
+run_editor lambda >"$WORK/sec13.out" 2>"$WORK/err" || fail "editor lambda exited non-zero
+-- stderr:$(cat "$WORK/err")"
+
+cfg_lambda="$HOME/.config/Code/User/globalStorage/ms-vscode-remote.remote-containers/nameConfigs/lambda.json"
+[[ -f "$cfg_lambda" ]] || fail "lambda: named attach config not written"
+
+grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
+  || fail "lambda: editor not launched"
+
+jq -e '
+  .workspaceFolder == "/workspace"
+  and .remoteEnv.GIT_CONFIG_COUNT == "2"
+  and .remoteEnv.GIT_CONFIG_KEY_0 == "credential.helper"
+  and .remoteEnv.GIT_CONFIG_VALUE_0 == ""
+  and .remoteEnv.GIT_CONFIG_KEY_1 == "credential.helper"
+  and .remoteEnv.GIT_CONFIG_VALUE_1 == "store"
+' "$cfg_lambda" >/dev/null || fail "lambda: named attach config missing deterministic Git remoteEnv override"
+
+pass "Section 13: named attach config carries Git remoteEnv override"
+
+# ===========================================================================
+# Section 14 - PAT drift warning: editor preserves the shell/start only-if-
+# missing policy for ~/.git-credentials, so a rotated host token should produce
+# a visible warning pointing at `dce rotate-token` rather than silently failing
+# later in VS Code's Git UI / terminal.
+# ===========================================================================
+make_project_token "mu" running github > /dev/null
+: > "$DOCKER_LOG"; : > "$CODE_LOG"
+export DC_STUB_CONTAINER_CREDS=$'https://x-access-token:STALE@github.com\n'
+run_editor mu >"$WORK/sec14.out" 2>"$WORK/err" || fail "editor mu exited non-zero
+-- stderr:$(cat "$WORK/err")"
+unset DC_STUB_CONTAINER_CREDS
+
+grep -Fq 'rotate-token mu' "$WORK/err" \
+  || fail "mu: token-drift warning missing rotate-token guidance (got: $(cat "$WORK/err"))"
+
+pass "Section 14: PAT drift warns and points to rotate-token"
 
 echo ""
 echo "All editor contract checks passed."

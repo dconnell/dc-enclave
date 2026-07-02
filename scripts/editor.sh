@@ -117,6 +117,45 @@ fi
 
 echo "  Backend: $ACTIVE_BACKEND"
 echo "  Workspace: /workspace (-> ${REPOS_DIR:-<repos-dir>} on host)"
+
+# Read the project's git token for a status line (provider env-var name:
+# GITHUB_TOKEN / GITLAB_TOKEN), mirroring `dce shell`. Empty = unset.
+GIT_TOKEN="$(dce_read_git_token)"
+ENV_VAR="$(dce_git_host_field "$(dce_project_git_host)" env_var)"
+AUTH_METHOD="$(dce_git_auth_method)"
+if [[ -n "$GIT_TOKEN" ]]; then
+  echo "  ${ENV_VAR}: set"
+else
+  echo "  ${ENV_VAR}: NOT SET (edit ${TOKEN_FILE:-token file})"
+fi
+
+# Ensure git auth is wired in the container (HTTPS+PAT or SSH insteadOf +
+# credential.helper store + VS Code machine setting) so the editor lands with
+# working credentials even when the container was started before the token file
+# was filled in -- `dce editor` must inject credentials just like `dce shell`.
+# Idempotent; the PAT, if any, crosses via stdin inside the helper. Mirrors
+# scripts/shell.sh:71 and scripts/start.sh:96.
+dce_ensure_git_credentials "$PROJECT"
+
+# dce editor preserves the same forensics-safe default as dce shell/start: if a
+# PAT-backed ~/.git-credentials file already exists in the container, it is not
+# silently overwritten on launch. That means a host-side token rotation can leave
+# the editor using a stale token until the user explicitly pushes the new one via
+# `dce rotate-token`. Surface that drift here so "editor launched, git auth
+# still fails" points at the right repair instead of looking like attach wiring
+# broke. Read-only compare; token never printed.
+if [[ "$AUTH_METHOD" == "pat" ]]; then
+  TOKEN_DRIFT="$(dce_check_git_token_drift "$PROJECT" 2>/dev/null || true)"
+  case "$TOKEN_DRIFT" in
+    drift)
+      dce_warn "Container token differs from host token; attached editor Git auth may fail until you run: dce rotate-token $PROJECT"
+      ;;
+    absent)
+      dce_warn "Container is missing the current host token in ~/.git-credentials; attached editor Git auth may fail until you run: dce rotate-token $PROJECT"
+      ;;
+  esac
+fi
+
 echo ""
 
 # Best-effort: (re)seed the VS Code named-attach config so the attach lands in
@@ -127,7 +166,7 @@ echo ""
 while IFS= read -r _attach_cfg; do
   [[ -z "$_attach_cfg" ]] && continue
   echo "  ✓ VS Code named attach: $_attach_cfg"
-done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace" 2>/dev/null || true)
+done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace" "$AUTH_METHOD" || true)
 
 # dce_editor_launch_attach validates the binary, prints the "Launching editor"
 # line, and execs the editor (replacing this process). The CLI forks and

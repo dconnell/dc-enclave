@@ -68,7 +68,8 @@ docker/orbstack/colima/podman backends:
   omitted for ssh/none auth; run `dce config sync-vscode <name>` after filling
   in the token to update an existing file.
 - `dce new` and `dce rebuild-container` also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
-- `dce editor <name>` is the CLI shortcut for **Dev Containers: Attach to Running Container...**: it starts the container if needed and launches VS Code attached to `/workspace`. Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for full precedence and discovery rules.
+- `dce editor <name>` is the CLI shortcut for **Dev Containers: Attach to Running Container...**: it starts the container if needed, launches VS Code attached to `/workspace`, and syncs the attached-container named config's managed fields. Under PAT auth that named config carries a Git `remoteEnv` override (`credential.helper = ""`, then `store`) so attached terminals/UI use the container's PAT-backed `~/.git-credentials` instead of VS Code's host-credential forwarding helper. Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for full precedence and discovery rules.
+- If the host PAT has changed since the container last saw it, `dce editor` preserves the existing container token (same only-if-missing policy as `dce shell` / `dce start`) and warns; run `dce rotate-token <name>` to push the current PAT into the running container.
 
 apple backend:
 

@@ -351,6 +351,13 @@ Description:
   editor counterpart to `dce shell`. If the container is not running, it is
   started automatically (same preflight as `dce shell`).
 
+   For PAT auth, `dce editor` also syncs VS Code's attached-container named
+   config so editor/terminal Git uses the container's PAT-backed
+   `~/.git-credentials` (`credential.helper = store`) instead of VS Code's
+   host-credential forwarding helper. This is attach-mode-specific and separate
+   from `dce config sync-vscode`, which only manages `.devcontainer/`
+   `devcontainer.json`.
+
   On Docker-compatible backends (docker/orbstack/colima/podman), this is the
   CLI equivalent of the VS Code "Dev Containers: Attach to Running Container..."
   GUI command: it points your editor at the exact container `dce` manages.
@@ -398,6 +405,10 @@ Notes:
   - Requires a Docker-compatible backend (docker/orbstack/colima/podman).
   - VS Code's "Dev Containers" extension must be installed for the attach to
     succeed; `scripts/setup.sh` warns if it is missing.
+  - If the host PAT has changed since the container last saw it, `dce editor`
+    preserves the existing container token (same forensics-safe policy as
+    `dce shell`/`dce start`) and warns. Push the current token explicitly with
+    `dce rotate-token <name>`.
   - macOS: `code` is not on PATH by default. Run VS Code's
     "Install 'code' command in PATH" once, or set DCE_EDITOR_BIN.
   - WSL2: prefers Windows VS Code via `code.exe` (Docker Desktop setup).
@@ -830,7 +841,9 @@ Description:
   `sync-vscode` is the one carved-out subcommand: it rewrites the MANAGED fields
   in the project's `.devcontainer/devcontainer.json` (outside the config file),
   preserving user edits. It still makes NO backend call, but requires jq and
-  loads global config to re-derive the managed dockerfile path.
+  loads global config to re-derive the managed dockerfile path. It does NOT
+  manage VS Code's attached-container named config; `dce editor` syncs that
+  attach-mode state automatically on launch.
 
   Only user-input keys are writable. Identity/derived/path keys (project,
   backend, image, repos) are read-only: `set` rejects them so this surface can

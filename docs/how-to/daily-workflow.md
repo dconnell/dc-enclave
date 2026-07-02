@@ -44,7 +44,7 @@ For docker/orbstack/colima/podman backends:
    dce editor myapp-monorepo
    ```
 
-   `dce editor` is the CLI shortcut for *Dev Containers: Attach to Running Container...*. It starts the container if needed, then launches VS Code (by default) attached to `/workspace`. Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for the full precedence and discovery rules.
+   `dce editor` is the CLI shortcut for *Dev Containers: Attach to Running Container...*. It starts the container if needed, then launches VS Code (by default) attached to `/workspace`. Under PAT auth it also syncs VS Code's attached-container named config so editor/terminal Git uses the container's PAT-backed `~/.git-credentials` rather than VS Code's host-credential forwarding helper. If you changed the token file on the host, run `dce rotate-token <project>` to push the new PAT into the running container. Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for the full precedence and discovery rules.
 
    Manual fallback (same effect): Command Palette → **Dev Containers: Attach to Running Container...** → pick your project.
 
@@ -57,4 +57,3 @@ dce rebuild-container myapp-monorepo
 ```
 
 For apple backend, `dce editor` refuses (apple/container is not Docker-API compatible, so the Dev Containers extension cannot attach). Open the host repo folder with your editor directly; the `dce new`-seeded `.vscode/settings.json` terminal profile still routes shell tabs through `dce shell`.
-
