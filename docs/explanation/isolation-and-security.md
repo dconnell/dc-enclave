@@ -12,6 +12,10 @@ These credentials are injected by `dce` itself — at `dce new`, and re-applied 
 
 If a container's state is ever suspect, `dce rebuild-container` replaces the container from a known-good image without touching your host repos.
 
+### VS Code remote development can reach your host
+
+When VS Code is attached to a container, a workspace extension inside the container can open a terminal **on your host** (`workbench.action.terminal.newLocal`) and run commands in it — arbitrary code execution as your user. Microsoft treats this as by-design, and `dce` can't fix it (the command runs host-side, outside anything `dce` manages), so it's a manual tradeoff: **stock VS Code leaves your host reachable; [VSCodium blocks the command by default](https://github.com/VSCodium/vscodium/pull/2487)** ([original report](https://github.com/VSCodium/vscodium/issues/2480)). The block stops a host terminal being *opened*; one already open could still be typed into, so keep host terminals closed. See [VS Code behavior](../reference/backends.md#host-hardening-against-remote-dev-rce).
+
 ### Credential injection is explicit on restore and rotation
 
 Credential injection follows a forensics-safe rule. `dce start`, `dce shell`, and

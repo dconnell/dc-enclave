@@ -71,6 +71,10 @@ docker/orbstack/colima/podman backends:
 - `dce editor <name>` is the CLI shortcut for **Dev Containers: Attach to Running Container...**: it starts the container if needed, launches VS Code attached to `/workspace`, and syncs the attached-container named config's managed fields. Under PAT auth that named config carries a Git `remoteEnv` override (`credential.helper = ""`, then `store`) so attached terminals/UI use the container's PAT-backed `~/.git-credentials` instead of VS Code's host-credential forwarding helper. Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for full precedence and discovery rules.
 - If the host PAT has changed since the container last saw it, `dce editor` preserves the existing container token (same only-if-missing policy as `dce shell` / `dce start`) and warns; run `dce rotate-token <name>` to push the current PAT into the running container.
 
+### Host hardening against remote-dev RCE
+
+When VS Code is attached, a workspace extension in the container can open a terminal on your host and run commands in it (see [Isolation and security](../explanation/isolation-and-security.md#vs-code-remote-development-can-reach-your-host)). There's no container-side fix — it's a property of the host VS Code client. **[VSCodium](https://github.com/VSCodium/vscodium/pull/2487)** blocks the command by default ([discussion](https://github.com/VSCodium/vscodium/issues/2480)); **stock VS Code** does not, and exposes your host whenever you attach to a container running untrusted code. Choose VSCodium, or accept the exposure.
+
 apple backend:
 
 - dce new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.vscode/settings.json
