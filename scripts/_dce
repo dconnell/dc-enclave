@@ -167,6 +167,9 @@ _dce_dispatch() {
     new)
       _dce_new
       ;;
+    extensions)
+      _dce_extensions
+      ;;
     # status|s, list|ls, version(-v), help(-h): no positional completion.
   esac
 }
@@ -398,5 +401,75 @@ _dce_editor_ids() {
 
   local -a all
   all=("${(@f)$(dce_complete_editor_ids)}")
+  _wanted editors expl 'editor id' compadd -a all
+}
+
+# `dce extensions <list|host|available|show|diff|capture> [project] [flags]`.
+# Branches on the subaction so `host` takes no project while the others offer
+# one at slot 2; --editor/--format/--scope consume a value; --user/--team/--all
+# are flags. capture's trailing <id>... is free-form (not completed). Mirrors the
+# per-subaction dispatch pattern used by _dce_config.
+#
+# Grammar assumption: the subaction is the first token after `extensions`
+# ($words[2] after the *:: reset), per the documented
+# `dce extensions <subcommand> [flags] <project>` form. The parser accepts
+# interspersed flags, but completion is positionally rigid: a global flag typed
+# before the subaction falls through to the default branch. Acceptable because
+# usage convention puts the subaction first.
+_dce_extensions() {
+  local sub="${words[2]}"
+  case "$sub" in
+    host)
+      # No project; flags only.
+      _arguments \
+        '--editor+[editor id]:editor id:_dce_extensions_editor_ids' \
+        '--format+[output format]:format:(ids json manifest)'
+      ;;
+    capture)
+      _arguments \
+        '2:project:_dce_projects_simple' \
+        '--editor+[editor id]:editor id:_dce_extensions_editor_ids' \
+        '--format+[output format]:format:(ids json manifest)' \
+        '--scope+[target scope for capture]:scope:_dce_scopes' \
+        '--user[write to the user manifest root]' \
+        '--team[write to the team manifest root]' \
+        '--all[capture: snapshot the full container install set]'
+      ;;
+    show|list|available|diff)
+      _arguments \
+        '2:project:_dce_projects_simple' \
+        '--editor+[editor id]:editor id:_dce_extensions_editor_ids' \
+        '--format+[output format]:format:(ids json manifest)'
+      ;;
+    *)
+      # No subaction committed yet (or an unknown one): offer the subaction
+      # candidate set, then the flags so partial typing still completes.
+      _arguments \
+        '1:subcommand: _dce_extensions_subactions' \
+        '--editor+[editor id]:editor id:_dce_extensions_editor_ids' \
+        '--format+[output format]:format:(ids json manifest)' \
+        '--scope+[target scope for capture]:scope:_dce_scopes' \
+        '--user[write to the user manifest root]' \
+        '--team[write to the team manifest root]' \
+        '--all[capture: snapshot the full container install set]'
+      ;;
+  esac
+}
+_dce_extensions_subactions() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+  local -a subs
+  subs=("${(@f)$(dce_complete_extensions_subactions)}")
+  _describe 'extensions subcommand' subs
+}
+_dce_extensions_editor_ids() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+  local -a all
+  all=("${(@f)$(dce_complete_extensions_editor_ids)}")
   _wanted editors expl 'editor id' compadd -a all
 }

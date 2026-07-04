@@ -36,6 +36,10 @@ source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/platform.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/devcontainer.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/extensions.sh"
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -342,6 +346,102 @@ _chk_project_config() {  # <config-file>  (loads in a subshell so a dce_die only
   ( dce_load_project_config "$1" >/dev/null 2>&1 )
 }
 
+# Editor-extension drift probes (plans/extensions.md §8).
+# Declaration drift (manifest set vs recorded customizations.<ns>.extensions) is
+# static and checked even if the container is stopped; it fails and points at
+# `dce config sync-vscode`. Runtime drift (installed vs declared) is
+# informational and only meaningful when runtime prerequisites are met.
+_doctor_extension_drift() {
+  local name="$1" runtime_ready="${2:-false}"
+
+  # Declaration drift needs a devcontainer.json (docker-compatible only) and the
+  # overlay roots (global config) to re-derive the build file + resolve manifests.
+  local dc_file=""
+  [[ -n "${REPOS_DIR:-}" ]] && dc_file="$REPOS_DIR/.devcontainer/devcontainer.json"
+  if [[ -z "$dc_file" || ! -f "$dc_file" ]]; then
+    _skip "devcontainer.json in sync" "no devcontainer.json (apple backend or not yet created)"
+  else
+    local global_loaded=false
+    local global_cfg
+    global_cfg="$(dce_global_config_path 2>/dev/null || true)"
+    if [[ -n "$global_cfg" && -f "$global_cfg" ]]; then
+      local team_root="" user_root=""
+      team_root="$(dce_config_extract_scalar "$global_cfg" DC_TEAM_DIR 2>/dev/null || true)"
+      user_root="$(dce_config_extract_scalar "$global_cfg" DC_USER_DIR 2>/dev/null || true)"
+      if [[ -n "$team_root" && -n "$user_root" ]]; then
+        # shellcheck disable=SC2088
+        # ~ is matched as a literal in user config input, then expanded safely.
+        if [[ "$team_root" == "~" || "$team_root" == "~/"* ]]; then
+          team_root="$HOME${team_root#\~}"
+        elif [[ "$team_root" != /* ]]; then
+          team_root="$HOME/.config/dce-enclave/$team_root"
+        fi
+        # shellcheck disable=SC2088
+        # Same normalization rule for DC_USER_DIR.
+        if [[ "$user_root" == "~" || "$user_root" == "~/"* ]]; then
+          user_root="$HOME${user_root#\~}"
+        elif [[ "$user_root" != /* ]]; then
+          user_root="$HOME/.config/dce-enclave/$user_root"
+        fi
+        if [[ -d "$team_root" && -d "$user_root" ]]; then
+          DC_TEAM_DIR="$team_root"
+          DC_USER_DIR="$user_root"
+          global_loaded=true
+        fi
+      fi
+    fi
+    if ! $global_loaded; then
+      _skip "devcontainer.json in sync" "global overlay roots unavailable (cannot resolve declared extensions)"
+      _skip "editor extensions in sync with container" "global overlay roots unavailable"
+      return 0
+    fi
+
+    local scopes_csv="${CONTAINER_OVERLAY_SCOPES:-}"
+    local build_df="" ext_csv="" ext_adopted="false"
+    build_df="$(dce_devcontainer_build_file "$ROOT_DIR" "$scopes_csv" 2>/dev/null)" || build_df=""
+    if $global_loaded && dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "$scopes_csv" 2>/dev/null; then
+      ext_adopted="true"
+      ext_csv="$(dce_ext_resolve_csv vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "$scopes_csv" 2>/dev/null)"
+    fi
+    if dce_devcontainer_detect_drift "$name" "$dc_file" "$build_df" \
+         "$(_dce_dc_csv_from_array CONTAINER_HIDDEN_PATHS)" \
+         "$(_dce_dc_csv_from_array CONTAINER_NETWORKS)" \
+         "$(_dce_dc_csv_from_array PORTS)" \
+         "vscode" "$ext_csv" "$ext_adopted" >/dev/null 2>&1; then
+      _ok "devcontainer.json in sync"
+    else
+      _bad "devcontainer.json in sync" \
+        "managed fields drifted (run: dce config sync-vscode $name)"
+    fi
+  fi
+
+  # Runtime drift: installed vs declared. match -> ok; drift -> informational
+  # (undeclared extensions are a capture target, not a failure); skip otherwise.
+  if [[ "$runtime_ready" != "true" ]]; then
+    _skip "editor extensions in sync with container" "container not running"
+    return 0
+  fi
+
+  local scopes_csv="${CONTAINER_OVERLAY_SCOPES:-}"
+  case "$(dce_ext_check_runtime_drift "$name" vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "$scopes_csv" 2>/dev/null || printf skip)" in
+    match)  _ok "editor extensions in sync with container" ;;
+    drift)  _info "editor extensions: runtime drift (run: dce extensions diff $name)" ;;
+    absent) _skip "editor extensions in sync with container" "code CLI absent in container (attach once in VS Code)" ;;
+    *)      _skip "editor extensions in sync with container" "not adopted / backend unsupported" ;;
+  esac
+}
+
+# Helper: render a config array (by varname) as a comma-joined CSV for the drift
+# comparator. Empty/missing -> "".
+_dce_dc_csv_from_array() {
+  local varname="$1"
+  if declare -p "$varname" >/dev/null 2>&1; then
+    local ref="${varname}[@]"
+    local -a vals=("${!ref}")
+    [[ ${#vals[@]} -gt 0 ]] && dce_join_by ',' "${vals[@]}"
+  fi
+}
+
 doctor_project() {  # <name>
   local name="$1"
   local cfg="$HOME/.config/dce-enclave/$name/config"
@@ -425,8 +525,10 @@ doctor_project() {  # <name>
 
   # Container state is informational, not a failure (a stopped project is normal).
   if ( backend_use "$pb" >/dev/null 2>&1 ); then
+    local runtime_ready="false"
     if backend_is_running "$name" 2>/dev/null; then
       _info "Container state: running"
+      runtime_ready="true"
       # Token drift (PAT only): is the container's ~/.git-credentials current
       # with the host token? Read-only, hash-compared (token never printed). A
       # restored/old snapshot legitimately drifts -- informative, surfaced with
@@ -438,11 +540,17 @@ doctor_project() {  # <name>
         absent) _info "git token: not yet in container (seeded on next dce start)" ;;
         skip)   _skip "git token in sync with container" "auth is ssh/none" ;;
       esac
+
     elif backend_exists "$name" 2>/dev/null; then
       _info "Container state: stopped"
     else
       _info "Container state: not present (run: dce start $name)"
     fi
+
+    # Editor-extension drift (plans/extensions.md §8). Declaration drift is
+    # static and checked regardless of container state; runtime drift is checked
+    # only when running and otherwise skipped with a clear reason.
+    _doctor_extension_drift "$name" "$runtime_ready"
   fi
 }
 

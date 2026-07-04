@@ -78,6 +78,8 @@ source "$ROOT_DIR/lib/container-backend.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/editor.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/extensions.sh"
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
@@ -167,6 +169,22 @@ while IFS= read -r _attach_cfg; do
   [[ -z "$_attach_cfg" ]] && continue
   echo "  ✓ VS Code named attach: $_attach_cfg"
 done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace" "$AUTH_METHOD" || true)
+
+# Attach-mode extension convergence (plans/extensions.md §6). VS Code's
+# attached-container open (the vscode-remote://attached-container URI used by
+# dce_editor_launch_attach) does not reliably process
+# customizations.vscode.extensions, so install any declared-but-missing
+# extensions now via the in-container code-server CLI. Idempotent + advisory;
+# gated on the extension-managed editor set (vscode in v1) and a
+# previously-injected VS Code Server. Wrapped so a missing/broken global config
+# (which dce_load_global_config dce_die-exits on) never blocks the launch.
+if dce_ext_is_supported "$EDITOR_ID"; then
+  (
+    dce_load_global_config 2>/dev/null || exit 0
+    dce_ext_enforce_declared "$PROJECT" "$EDITOR_ID" \
+      "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}"
+  ) || true
+fi
 
 # dce_editor_launch_attach validates the binary, prints the "Launching editor"
 # line, and execs the editor (replacing this process). The CLI forks and

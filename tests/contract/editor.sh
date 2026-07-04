@@ -34,7 +34,12 @@ DC_ROOT="$HOME/.config/dce-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
-mkdir -p "$HOME/.config/Code/User"
+# Create both the Linux (.config/Code/User) and macOS (Library/Application
+# Support/Code/User) VS Code user dirs so the named-attach seed
+# (dce_vscode_remote_containers_storage_candidates, lib/vscode.sh:35-48) finds a
+# live parent on either platform; otherwise nameConfig assertions are
+# macOS-only failures unrelated to the behavior under test.
+mkdir -p "$HOME/.config/Code/User" "$HOME/Library/Application Support/Code/User"
 {
   printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
   printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
@@ -121,6 +126,34 @@ case "${1:-}" in
     # failure). With TOKEN_FILE/SSH_KEY_PATH unset in the test config the
     # method is "none", so the calls are all unsets; succeed silently.
     $_drain_stdin && cat > /dev/null
+
+    # --- attach-mode extension enforcement probes (plans/extensions.md §6) ---
+    # _dce_ext_vscode_container_bin resolver: sh -c '...command -v code...'.
+    if [[ "$3" == "sh" && "$4" == "-c" && "$*" == *"command -v code"* ]]; then
+      if [[ "${DC_STUB_EXT_SERVER_ABSENT:-0}" == "1" ]]; then
+        exit 1
+      fi
+      printf '%s\n' '/home/dev/.vscode-server/bin/stubhash/bin/code-server'
+      exit 0
+    fi
+    # dce_ext_list_installed: <bin> --list-extensions.
+    if [[ "${@: -1}" == "--list-extensions" ]]; then
+      [[ -f "${DC_STUB_CONTAINER_EXT:-}" ]] && cat "${DC_STUB_CONTAINER_EXT}" 2>/dev/null || true
+      exit 0
+    fi
+    # dce_ext_install_one: <bin> --install-extension <id>.
+    if [[ "${@: -2:1}" == "--install-extension" ]]; then
+      _id="${@: -1}"
+      if [[ -n "${DC_STUB_INSTALL_LOG:-}" ]]; then
+        printf 'INSTALL %s\n' "$_id" >> "$DC_STUB_INSTALL_LOG"
+      fi
+      if [[ -n "${DC_STUB_INSTALL_FAIL_IDS:-}" ]]; then
+        for _bad in $DC_STUB_INSTALL_FAIL_IDS; do
+          [[ "$_bad" == "$_id" ]] && exit 1
+        done
+      fi
+      exit 0
+    fi
     exit 0
     ;;
   context)
@@ -232,6 +265,10 @@ run_editor() {
   DC_STUB_RUNNING="$RUNNING_FILE" \
   DC_STUB_CONTAINERS="$CONTAINERS_FILE" \
   DC_STUB_CODE_LOG="$CODE_LOG" \
+  DC_STUB_CONTAINER_EXT="${DC_STUB_CONTAINER_EXT:-}" \
+  DC_STUB_INSTALL_LOG="${DC_STUB_INSTALL_LOG:-}" \
+  DC_STUB_INSTALL_FAIL_IDS="${DC_STUB_INSTALL_FAIL_IDS:-}" \
+  DC_STUB_EXT_SERVER_ABSENT="${DC_STUB_EXT_SERVER_ABSENT:-0}" \
   PATH="$STUB_DIR:$ORIG_PATH" \
   CONTAINER_BACKEND="docker" \
   DEV_CONTAINERS_BACKEND="" \
@@ -361,7 +398,8 @@ pass "Section 5: unknown explicit editor hard-errors with guidance"
 make_project "zeta" running
 # Flip the project config to apple backend (no real apple/container needed:
 # editor.sh refuses BEFORE any backend probe of running state).
-sed -i 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/zeta/config"
+sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/zeta/config"
+rm -f "$DC_ROOT/zeta/config.bak"
 
 if run_editor zeta 2>/dev/null; then
   fail "apple: editor should refuse on apple backend"
@@ -502,7 +540,15 @@ grep -Fq -- "git config --global --add credential.helper store" "$DOCKER_LOG" \
 grep -Fq -- "url.https://${web_github}/.insteadOf git@${ssh_github}:" "$DOCKER_LOG" \
   && fail "kappa: PAT insteadOf set for a placeholder (unset) token"
 
-cfg_kappa="$HOME/.config/Code/User/globalStorage/ms-vscode-remote.remote-containers/nameConfigs/kappa.json"
+# Resolve the VS Code Remote-Containers nameConfig dir for the active platform
+# (macOS writes under Library/Application Support; Linux under .config). Both
+# parent dirs were created in the harness setup so the seed finds a live target
+# on either OS.
+_rc_storage="$HOME/.config/Code/User/globalStorage/ms-vscode-remote.remote-containers"
+[[ -d "$HOME/Library/Application Support/Code/User" ]] \
+  && _rc_storage="$HOME/Library/Application Support/Code/User/globalStorage/ms-vscode-remote.remote-containers"
+
+cfg_kappa="$_rc_storage/nameConfigs/kappa.json"
 [[ -f "$cfg_kappa" ]] || fail "kappa: named attach config not written"
 if jq -e '.remoteEnv.GIT_CONFIG_COUNT == "2"' "$cfg_kappa" >/dev/null 2>&1; then
   fail "kappa: placeholder-token project should not carry PAT remoteEnv override"
@@ -523,7 +569,7 @@ make_project_token "lambda" running github > /dev/null
 run_editor lambda >"$WORK/sec13.out" 2>"$WORK/err" || fail "editor lambda exited non-zero
 -- stderr:$(cat "$WORK/err")"
 
-cfg_lambda="$HOME/.config/Code/User/globalStorage/ms-vscode-remote.remote-containers/nameConfigs/lambda.json"
+cfg_lambda="$_rc_storage/nameConfigs/lambda.json"
 [[ -f "$cfg_lambda" ]] || fail "lambda: named attach config not written"
 
 grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
@@ -557,6 +603,100 @@ grep -Fq 'rotate-token mu' "$WORK/err" \
   || fail "mu: token-drift warning missing rotate-token guidance (got: $(cat "$WORK/err"))"
 
 pass "Section 14: PAT drift warns and points to rotate-token"
+
+# ===========================================================================
+# Section 15 - attach-mode extension enforcement (plans/extensions.md §6).
+# VS Code's attached-container open does not reliably process
+# customizations.vscode.extensions, so `dce editor` installs declared-but-
+# missing extensions itself via the in-container code-server CLI before launch.
+# ===========================================================================
+# Helper: seed an extension manifest under the user tree.
+seed_ext_manifest() {  # <scope> <content>
+  local scope="$1" content="$2"
+  local dir="$USER_DIR/extensions/vscode"
+  mkdir -p "$dir"
+  printf '%b' "$content" > "$dir/$scope.txt"
+}
+
+# (a) Declared set has two IDs; one already installed -> only the missing one
+# is installed. Idempotent: the already-installed id is never re-installed.
+make_project "nu" running
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/nu/config"
+seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
+CONTAINER_EXT_FILE="$WORK/nu-installed.txt"
+printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
+INSTALL_LOG="$WORK/nu-installs.log"
+: > "$INSTALL_LOG"
+: > "$CODE_LOG"
+DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  run_editor nu >"$WORK/sec15a.out" 2>"$WORK/err" || fail "editor nu exited non-zero
+-- stderr:$(cat "$WORK/err")"
+
+# Editor still launched.
+grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
+  || fail "nu: editor not launched after enforcement"
+# Missing id installed; already-installed id was NOT re-installed (idempotent).
+grep -Fq 'INSTALL beta.missing' "$INSTALL_LOG" \
+  || fail "nu: missing extension not installed (log: $(cat "$INSTALL_LOG"))"
+grep -Fq 'INSTALL alpha.installed' "$INSTALL_LOG" \
+  && fail "nu: already-installed extension was re-installed (not idempotent)"
+# Status line surfaced to the user.
+grep -Fq 'editor extensions: installing' "$WORK/sec15a.out" \
+  || fail "nu: missing install status line (got: $(cat "$WORK/sec15a.out"))"
+pass "Section 15a: enforcement installs declared-but-missing; idempotent over installed"
+
+# (b) First-ever open: VS Code Server not yet injected -> skip with a notice,
+# editor still launches (the next `dce editor` will enforce after the server
+# lands on this attach).
+make_project "xi" running
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/xi/config"
+: > "$INSTALL_LOG"
+: > "$CODE_LOG"
+DC_STUB_EXT_SERVER_ABSENT=1 DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  run_editor xi >"$WORK/sec15b.out" 2>"$WORK/err" || fail "editor xi exited non-zero
+-- stderr:$(cat "$WORK/err")"
+grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
+  || fail "xi: editor not launched despite server-absent skip"
+[[ ! -s "$INSTALL_LOG" ]] \
+  || fail "xi: no install should run when server absent (log: $(cat "$INSTALL_LOG"))"
+grep -Fqi 'VS Code Server not yet injected' "$WORK/sec15b.out" \
+  || fail "xi: missing server-absent skip notice (got: $(cat "$WORK/sec15b.out"))"
+pass "Section 15b: first-ever open (server absent) -> skip notice, editor still launches"
+
+# (c) Pre-adoption (no manifests): enforcement is a no-op; no install calls.
+make_project "omicron" running
+: > "$INSTALL_LOG"
+: > "$CODE_LOG"
+DC_STUB_INSTALL_LOG="$INSTALL_LOG" run_editor omicron >"$WORK/sec15c.out" 2>"$WORK/err" \
+  || fail "editor omicron exited non-zero
+-- stderr:$(cat "$WORK/err")"
+grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
+  || fail "omicron: editor not launched (pre-adoption)"
+[[ ! -s "$INSTALL_LOG" ]] \
+  || fail "omicron: pre-adoption must not install anything (log: $(cat "$INSTALL_LOG"))"
+pass "Section 15c: pre-adoption (no manifests) -> no enforcement, editor launches"
+
+# (d) Per-id install failure is reported but not fatal: the editor still
+# launches, the failing id is surfaced, the succeeding id is installed.
+make_project "pi" running
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/pi/config"
+seed_ext_manifest nodejs $'good.id\nbad.id\n'
+: > "$CONTAINER_EXT_FILE"
+: > "$INSTALL_LOG"
+: > "$CODE_LOG"
+DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  DC_STUB_INSTALL_FAIL_IDS="bad.id" \
+  run_editor pi >"$WORK/sec15d.out" 2>"$WORK/err" || fail "editor pi exited non-zero
+-- stderr:$(cat "$WORK/err")"
+grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
+  || fail "pi: editor not launched despite a per-id install failure"
+grep -Fq 'INSTALL good.id' "$INSTALL_LOG" \
+  || fail "pi: good.id not installed (log: $(cat "$INSTALL_LOG"))"
+grep -Fq 'INSTALL bad.id' "$INSTALL_LOG" \
+  || fail "pi: bad.id install attempt not recorded (log: $(cat "$INSTALL_LOG"))"
+grep -Fq 'bad.id' "$WORK/sec15d.out" \
+  || fail "pi: failing id not surfaced in status (got: $(cat "$WORK/sec15d.out"))"
+pass "Section 15d: per-id install failure is non-fatal (editor still launches)"
 
 echo ""
 echo "All editor contract checks passed."

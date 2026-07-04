@@ -87,6 +87,24 @@ fi
 case "$me" in
   docker)
     if [[ "${1:-}" == "context" && "${2:-}" == "show" ]]; then printf 'colima\n'; fi
+    # Running-container list (backend_is_running). Emits DC_STUB_RUNNING when set
+    # so rebuild-container's pre-destroy extension warning can be exercised.
+    if [[ "${1:-}" == "ps" ]]; then
+      [[ -n "${DC_STUB_RUNNING:-}" ]] && printf '%s\n' "$DC_STUB_RUNNING"
+      exit 0
+    fi
+    # `docker exec <name> ...` covers two shapes from dce_ext_list_installed:
+    # the VS Code Server resolver (sh -c '...command -v code...') and the
+    # subsequent <resolved-bin> --list-extensions call.
+    if [[ "${1:-}" == "exec" ]]; then
+      if [[ "$3" == "sh" && "$4" == "-c" && "$*" == *"command -v code"* ]]; then
+        printf '%s\n' '/home/dev/.vscode-server/bin/stubhash/bin/code'
+        exit 0
+      fi
+      case "${*: -2}" in
+        *'code --list-extensions') printf '%s' "${DC_STUB_CONTAINER_EXT:-}"; exit 0 ;;
+      esac
+    fi
     ;;
 esac
 exit 0
@@ -109,6 +127,8 @@ run_script() {
   DC_REPOS_DIR="$WORK/home/repos" \
   TZ="America/New_York" \
   DC_STUB_LOG="$LOG" DC_STUB_IMAGES="$IMAGES" \
+  DC_STUB_RUNNING="${DC_STUB_RUNNING:-}" \
+  DC_STUB_CONTAINER_EXT="${DC_STUB_CONTAINER_EXT:-}" \
   PATH="$STUB_DIR:$ORIG_PATH" \
   CONTAINER_BACKEND="$BACKEND" \
   bash "$@"
@@ -447,6 +467,71 @@ if ! run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" -y \
 fi
 [[ -n "$(first_call 'create --name myapp')" ]] || fail "rebuild -y: missing create call"
 pass "rebuild -y: short form skips prompt"
+
+# ===========================================================================
+# rebuild pre-destroy warning: undeclared editor extensions will be lost
+# (plans/extensions.md §8). Fires only when running + adopted + runtime drift;
+# advisory under --yes.
+# ===========================================================================
+# The myapp project has scopes nodejs,golang. Adopt manifests: declare a.b only.
+BACKEND=docker
+cp "$IMAGES_BAK" "$IMAGES"; printf '%s\n' "$CONTAINER_IMAGE" >> "$IMAGES"
+EXT_USER_DIR="$WORK/home/.config/dce-enclave/user/extensions/vscode"
+mkdir -p "$EXT_USER_DIR"
+printf 'a.b\n' > "$EXT_USER_DIR/nodejs.txt"
+: > "$EXT_USER_DIR/golang.txt"
+: > "$EXT_USER_DIR/all.txt"
+
+# Running + undeclared extension (extra.undeclared) in the container.
+: > "$LOG"
+DC_STUB_RUNNING="myapp" DC_STUB_CONTAINER_EXT=$'a.b\nextra.undeclared\n' \
+  run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" --yes \
+    >"$WORK/rbext.stdout" 2>"$WORK/rbext.stderr" \
+    || fail "rebuild (ext warning) exited non-zero
+-- stderr:$(cat "$WORK/rbext.stderr")"
+# The warning must name the undeclared extension and the capture remediation.
+grep -Fq 'extra.undeclared' "$WORK/rbext.stdout" \
+  || fail "rebuild ext-warning: undeclared id not named
+$(cat "$WORK/rbext.stdout")"
+grep -Fq "dce extensions capture $PROJECT" "$WORK/rbext.stdout" \
+  || fail "rebuild ext-warning: missing capture remediation
+$(cat "$WORK/rbext.stdout")"
+pass "rebuild: warns pre-destroy about undeclared extensions (advisory under --yes)"
+
+# Clean case: installed == declared -> NO extension warning.
+: > "$LOG"
+DC_STUB_RUNNING="myapp" DC_STUB_CONTAINER_EXT=$'a.b\n' \
+  run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" --yes \
+    >"$WORK/rbext2.stdout" 2>"$WORK/rbext2.stderr" \
+    || fail "rebuild (ext clean) exited non-zero
+-- stderr:$(cat "$WORK/rbext2.stderr")"
+if grep -Fqi 'WARNING.*UNDECLARED' "$WORK/rbext2.stdout"; then
+  fail "rebuild ext-clean: must not warn when extensions in sync
+$(cat "$WORK/rbext2.stdout")"
+fi
+if grep -Fq 'UNDECLARED and will be LOST in the rebuild' "$WORK/rbext2.stdout"; then
+  fail "rebuild ext-clean: undeclared-loss banner must not appear when in sync
+$(cat "$WORK/rbext2.stdout")"
+fi
+pass "rebuild: no extension warning when installed == declared"
+
+# Pre-adoption (remove manifests) -> no warning even with container extensions.
+rm -f "$EXT_USER_DIR/nodejs.txt" "$EXT_USER_DIR/golang.txt" "$EXT_USER_DIR/all.txt"
+: > "$LOG"
+DC_STUB_RUNNING="myapp" DC_STUB_CONTAINER_EXT=$'x.y\n' \
+  run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" --yes \
+    >"$WORK/rbext3.stdout" 2>"$WORK/rbext3.stderr" \
+    || fail "rebuild (ext pre-adoption) exited non-zero
+-- stderr:$(cat "$WORK/rbext3.stderr")"
+if grep -Fqi 'WARNING.*UNDECLARED' "$WORK/rbext3.stdout"; then
+  fail "rebuild ext pre-adoption: must not warn pre-adoption
+$(cat "$WORK/rbext3.stdout")"
+fi
+if grep -Fq 'UNDECLARED and will be LOST in the rebuild' "$WORK/rbext3.stdout"; then
+  fail "rebuild ext pre-adoption: undeclared-loss banner must not appear pre-adoption
+$(cat "$WORK/rbext3.stdout")"
+fi
+pass "rebuild: no extension warning pre-adoption (migration guard)"
 
 # ===========================================================================
 # dce new (apple backend): VS Code terminal-profile settings.json branch

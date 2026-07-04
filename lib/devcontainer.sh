@@ -44,6 +44,7 @@ declare -gr _DC_DRIFT_TAG_SCOPES="scopes"
 declare -gr _DC_DRIFT_TAG_HIDDEN="hidden"
 declare -gr _DC_DRIFT_TAG_NETWORKS="networks"
 declare -gr _DC_DRIFT_TAG_PORTS="ports"
+declare -gr _DC_DRIFT_TAG_EXTENSIONS="extensions"
 
 # Human labels for the drift notice (tag -> label).
 _dce_dc_drift_label() {
@@ -52,6 +53,7 @@ _dce_dc_drift_label() {
     "$_DC_DRIFT_TAG_HIDDEN")  printf 'hidden paths' ;;
     "$_DC_DRIFT_TAG_NETWORKS") printf 'networks' ;;
     "$_DC_DRIFT_TAG_PORTS")   printf 'ports' ;;
+    "$_DC_DRIFT_TAG_EXTENSIONS") printf 'extensions' ;;
     *) printf '%s' "$1" ;;
   esac
 }
@@ -117,6 +119,13 @@ dce_devcontainer_expected_state() {
   local hidden_csv="$3"
   local networks_csv="$4"
   local ports_csv="$5"
+  # Optional editor-extensions declaration-drift inputs (plans/extensions.md §8A).
+  # ext_namespace is the customizations.<ns> key ("vscode" in v1); extensions_csv
+  # is the resolved manifest set; manifests_exist gates emission so pre-adoption
+  # projects emit nothing (migration guard -> no spurious drift).
+  local ext_namespace="${6:-}"
+  local extensions_csv="${7:-}"
+  local manifests_exist="${8:-false}"
 
   if [[ -n "$build_dockerfile" ]]; then
     printf '%s\t%s\n' "$_DC_DRIFT_TAG_SCOPES" "$(_dce_dc_scope_token "$build_dockerfile")"
@@ -139,6 +148,16 @@ dce_devcontainer_expected_state() {
     [[ -z "$pm" ]] && continue
     printf '%s\t%s\n' "$_DC_DRIFT_TAG_PORTS" "$(_dce_dc_container_port "$pm")"
   done < <(_dce_dc_csv_lines "$ports_csv")
+
+  # Extensions: emit one line per resolved id, ONLY post-adoption. Pre-adoption
+  # (no manifests) the array is user-owned, so comparing it would cry wolf.
+  if [[ "$manifests_exist" == "true" && -n "$ext_namespace" ]]; then
+    local ex=""
+    while IFS= read -r ex; do
+      [[ -z "$ex" ]] && continue
+      printf '%s\t%s\n' "$_DC_DRIFT_TAG_EXTENSIONS" "$ex"
+    done < <(_dce_dc_csv_lines "$extensions_csv")
+  fi
 }
 
 # Recorded canonical state (parsed from an existing devcontainer.json).
@@ -149,6 +168,7 @@ dce_devcontainer_expected_state() {
 dce_devcontainer_recorded_state() {
   local project="$1"
   local file="$2"
+  local ext_namespace="${3:-}"
 
   [[ -f "$file" ]] || return 0
 
@@ -156,23 +176,28 @@ dce_devcontainer_recorded_state() {
   slug="$(dce_project_slug "$project")"
 
   if command -v jq >/dev/null 2>&1; then
-    if dce_devcontainer_recorded_state_jq "$slug" "$file"; then
+    if dce_devcontainer_recorded_state_jq "$slug" "$file" "$ext_namespace"; then
       return 0
     fi
   fi
-  dce_devcontainer_recorded_state_grep "$slug" "$file"
+  dce_devcontainer_recorded_state_grep "$slug" "$file" "$ext_namespace"
 }
 
 # jq path. Emits the canonical lines. Failure (malformed JSON, jq error) falls
 # through to the grep path so a corrupt file degrades rather than aborting.
+# ext_namespace (optional, arg 3): when non-empty, also emits one
+# extensions\t<id> line per element of customizations.<ns>.extensions.
 dce_devcontainer_recorded_state_jq() {
   local slug="$1"
   local file="$2"
+  local ext_namespace="${3:-}"
 
   # Tag literals are hardcoded here (the jq program is single-quoted, so bash
   # vars would not expand). They mirror the _DC_DRIFT_TAG_* constants exactly.
   # The scopes token mirrors _dce_dc_scope_token so recorded matches expected.
-  jq -r --arg slug "$slug" '
+  # Extension parsing is conditional on $ns being non-empty so a caller that
+  # passes no namespace pays no cost and sees no extensions lines.
+  jq -r --arg slug "$slug" --arg ns "$ext_namespace" '
     (.build.dockerfile // null) as $df |
     (if $df == null then empty
      else "scopes\t" + ($df | split("/") | last |
@@ -190,16 +215,23 @@ dce_devcontainer_recorded_state_jq() {
         elif .flag == "ip" then .nets[-1] += ":" + $t | .flag = ""
         else . end
       ) | .nets[] | "networks\t" + .),
-    (.forwardPorts[]? | "ports\t" + tostring)
+    (.forwardPorts[]? | "ports\t" + tostring),
+    (if $ns != "" then
+       (.customizations[$ns].extensions[]? | "extensions\t" + .)
+     else empty end)
   ' "$file" 2>/dev/null
 }
 
 # grep fallback (best-effort): line-based extraction for the constrained format
 # dce emits. Robust for scopes/ports, and for hidden/runArgs when each managed
-# entry sits on its own line (the seeded layout).
+# entry sits on its own line (the seeded layout). ext_namespace (arg 3, optional)
+# adds best-effort parsing of customizations.<ns>.extensions: only the simple
+# single-line array layout dce seeds is recognized; a hand-reformatted file may
+# be missed (jq path handles the general case).
 dce_devcontainer_recorded_state_grep() {
   local slug="$1"
   local file="$2"
+  local ext_namespace="${3:-}"
   local content=""
   local line="" tok=""
 
@@ -270,6 +302,67 @@ dce_devcontainer_recorded_state_grep() {
       [[ -n "$tok" ]] && printf '%s\t%s\n' "$_DC_DRIFT_TAG_PORTS" "$tok"
     done < <(printf '%s\n' "$fpline" | grep -oE '[0-9]+')
   fi
+
+  # extensions: best-effort parse scoped to customizations.<ns>.extensions.
+  # This intentionally DOES NOT scan every "extensions" key in the file: a
+  # top-level user-owned "extensions" array must never be mistaken for the
+  # managed devcontainer key.
+  #
+  # Supported fallback layouts:
+  #   "customizations": { "<ns>": { "extensions": ["a.b","c.d"] } }
+  #   ...or the same with the array split across multiple lines.
+  #
+  # If the file is heavily reformatted (or malformed), this parser may miss
+  # values; the jq path handles the general case.
+  if [[ -n "$ext_namespace" ]]; then
+    local saw_customizations=false
+    local saw_namespace=false
+    local in_ext_array=false
+    local ext_fragment=""
+
+    while IFS= read -r line; do
+      if ! $saw_customizations; then
+        [[ "$line" == *'"customizations"'* ]] || continue
+        saw_customizations=true
+      fi
+
+      if ! $saw_namespace; then
+        [[ "$line" == *"\"$ext_namespace\""* ]] || continue
+        saw_namespace=true
+      fi
+
+      if ! $in_ext_array; then
+        if [[ "$line" != *'"extensions"'* || "$line" != *'['* ]]; then
+          continue
+        fi
+        ext_fragment="${line#*[}"
+        if [[ "$ext_fragment" == *']'* ]]; then
+          ext_fragment="${ext_fragment%%]*}"
+          in_ext_array=false
+        else
+          in_ext_array=true
+          continue
+        fi
+      else
+        if [[ "$line" == *']'* ]]; then
+          ext_fragment+=$'\n'"${line%%]*}"
+          in_ext_array=false
+        else
+          ext_fragment+=$'\n'"$line"
+          continue
+        fi
+      fi
+
+      local exid=""
+      while IFS= read -r exid; do
+        # grep -oE yields quoted tokens; strip the quotes.
+        exid="${exid#\"}"
+        exid="${exid%\"}"
+        [[ -n "$exid" ]] && printf '%s\t%s\n' "$_DC_DRIFT_TAG_EXTENSIONS" "$exid"
+      done < <(printf '%s\n' "$ext_fragment" | grep -oE '"[^"]+"')
+      break
+    done <<< "$content"
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -285,17 +378,25 @@ dce_devcontainer_detect_drift() {
   local hidden_csv="$4"
   local networks_csv="$5"
   local ports_csv="$6"
+  # Optional editor-extensions declaration drift (§8A). See expected_state.
+  local ext_namespace="${7:-}"
+  local extensions_csv="${8:-}"
+  local manifests_exist="${9:-false}"
 
   [[ -f "$file" ]] || return 0
 
   local expected recorded
   expected="$(dce_devcontainer_expected_state "$project" "$build_dockerfile" \
-    "$hidden_csv" "$networks_csv" "$ports_csv")"
-  recorded="$(dce_devcontainer_recorded_state "$project" "$file")"
+    "$hidden_csv" "$networks_csv" "$ports_csv" \
+    "$ext_namespace" "$extensions_csv" "$manifests_exist")"
+  recorded="$(dce_devcontainer_recorded_state "$project" "$file" "$ext_namespace")"
 
-  # Fields to compare; scopes only when a dockerfile was supplied.
+  # Fields to compare; scopes only when a dockerfile was supplied; extensions
+  # only when manifests are adopted (pre-adoption the array is user-owned).
   local -a tags=("$_DC_DRIFT_TAG_HIDDEN" "$_DC_DRIFT_TAG_NETWORKS" "$_DC_DRIFT_TAG_PORTS")
   [[ -n "$build_dockerfile" ]] && tags=("$_DC_DRIFT_TAG_SCOPES" "${tags[@]}")
+  [[ "$manifests_exist" == "true" && -n "$ext_namespace" ]] \
+    && tags+=("$_DC_DRIFT_TAG_EXTENSIONS")
 
   local drifted=0
   local diff_block=""
@@ -407,6 +508,12 @@ dce_devcontainer_render() {
   local ports_csv="$7"
   local host_tz="$8"
   local auth_method="${9:-}"
+  # Optional editor-extensions seeding (plans/extensions.md). ext_namespace is
+  # the customizations.<ns> key ("vscode" in v1); extensions_csv is a comma-joined
+  # resolved extension-ID set. Both default empty so pre-extensions callers
+  # produce byte-identical output.
+  local ext_namespace="${10:-}"
+  local extensions_csv="${11:-}"
 
   local forward_ports_block=""
   local -a container_ports=()
@@ -478,8 +585,35 @@ dce_devcontainer_render() {
   local dc_provider="" dc_vscode_setting=""
   dc_provider="$(dce_project_git_host)"
   dc_vscode_setting="$(dce_git_host_field "$dc_provider" vscode_setting)"
-  if [[ "$auth_method" == "pat" ]] && [[ -n "$dc_vscode_setting" ]]; then
+
+  # Editor extensions array (resolved set), when an editor namespace + non-empty
+  # CSV were supplied. v1 ext_namespace is always "vscode"; extensions share the
+  # customizations.vscode object with the git-auth setting. A non-vscode
+  # namespace would need its own customizations key (future-editor work).
+  local _ext_array=""
+  if [[ -n "$ext_namespace" ]] && [[ -n "$extensions_csv" ]]; then
+    local -a _ee=()
+    local _id
+    while IFS= read -r _id; do
+      [[ -n "$_id" ]] && _ee+=("$_id")
+    done < <(_dce_dc_csv_lines "$extensions_csv")
+    if [[ ${#_ee[@]} -gt 0 ]]; then
+      _ext_array="$(_dce_dc_json_string_array "${_ee[@]}")"
+    fi
+  fi
+
+  local _emit_settings=false
+  [[ "$auth_method" == "pat" ]] && [[ -n "$dc_vscode_setting" ]] && _emit_settings=true
+
+  if $_emit_settings && [[ -z "$_ext_array" ]]; then
+    # Settings only -- byte-identical to the pre-extensions block.
     customizations_block=$',\n  "customizations": {\n    "vscode": {\n      "settings": {\n        "'"$dc_vscode_setting"$'": false\n      }\n    }\n  }'
+  elif $_emit_settings && [[ -n "$_ext_array" ]]; then
+    # Settings + extensions under customizations.vscode.
+    customizations_block=$',\n  "customizations": {\n    "vscode": {\n      "settings": {\n        "'"$dc_vscode_setting"$'": false\n      },\n      "extensions": '"$_ext_array"$'\n    }\n  }'
+  elif [[ -n "$_ext_array" ]]; then
+    # Extensions only (no PAT git-auth override).
+    customizations_block=$',\n  "customizations": {\n    "vscode": {\n      "extensions": '"$_ext_array"$'\n    }\n  }'
   fi
 
   cat <<EOF
@@ -518,6 +652,16 @@ dce_devcontainer_sync() {
   local host_tz="$9"
   local dry_run="${10:-false}"
   local auth_method="${11:-}"
+  # Optional editor-extensions management (plans/extensions.md):
+  #   ext_namespace   customizations.<ns> key ("vscode" in v1)
+  #   extensions_csv  comma-joined resolved extension-ID set
+  #   manifests_exist "true" when any effective-scope manifest exists for the
+  #                   editor (adoption signal). When false, the array is passed
+  #                   through untouched (migration guard); when true, the array
+  #                   is rewritten to exactly the resolved set (fully-managed).
+  local ext_namespace="${12:-}"
+  local extensions_csv="${13:-}"
+  local manifests_exist="${14:-false}"
 
   if ! command -v jq >/dev/null 2>&1; then
     printf 'ERROR: sync-vscode requires jq (it is optional everywhere else).\n' >&2
@@ -563,6 +707,21 @@ dce_devcontainer_sync() {
     return 1
   }
 
+  # Resolved editor-extensions array for the namespace (empty array when no
+  # namespace, no CSV, or adoption is off). Passed to jq regardless; the jq
+  # program applies it only when $manifests == "true".
+  local exts_json="[]"
+  if [[ -n "$ext_namespace" ]] && [[ -n "$extensions_csv" ]]; then
+    local -a _sx=()
+    local _si
+    while IFS= read -r _si; do
+      [[ -n "$_si" ]] && _sx+=("$_si")
+    done < <(_dce_dc_csv_lines "$extensions_csv")
+    exts_json="$(_dce_dc_json_string_array "${_sx[@]}")" || exts_json="[]"
+  fi
+  # Namespace actually managed (empty when no extensions feature is in use).
+  local ext_ns_arg="$ext_namespace"
+
   # Count user top-level keys we will NOT touch (for the summary). Array
   # subtraction is unambiguous: keys minus the managed set.
   local user_keys="0"
@@ -575,9 +734,13 @@ dce_devcontainer_sync() {
   if [[ "$dry_run" == "true" ]]; then
     printf 'Dry run: would rewrite managed fields (build, mounts, runArgs,\n' >&2
     printf 'forwardPorts, containerEnv.TZ, VS Code git-auth) in %s.\n' "$file" >&2
+    if [[ "$manifests_exist" == "true" ]]; then
+      printf 'Editor extensions: fully-managed (customizations.%s.extensions).\n' "$ext_ns_arg" >&2
+    fi
     printf 'Preserved (untouched): %s user top-level key(s) + user mounts.\n' "$user_keys" >&2
     dce_devcontainer_detect_drift "$project" "$file" "$build_dockerfile" \
-      "$hidden_csv" "$networks_csv" "$ports_csv" >&2 || true
+      "$hidden_csv" "$networks_csv" "$ports_csv" \
+      "$ext_ns_arg" "$extensions_csv" "$manifests_exist" >&2 || true
     return 0
   fi
 
@@ -601,7 +764,10 @@ dce_devcontainer_sync() {
       --argjson runargs "$runargs_json" \
       --arg tz "$host_tz" \
       --arg auth "$auth_method" \
-      --arg vsetting "$sync_vscode_setting" '
+      --arg vsetting "$sync_vscode_setting" \
+      --argjson exts "$exts_json" \
+      --arg extns "$ext_ns_arg" \
+      --arg manifests "$manifests_exist" '
       .name = $name
       | .build = {"dockerfile": $df, "context": $ctx}
       | .workspaceMount = "source=${localWorkspaceFolder},target=/workspace,type=bind"
@@ -628,6 +794,11 @@ dce_devcontainer_sync() {
         elif $vsetting != "" and ((.customizations // {}) | (.vscode.settings // {}) | has($vsetting)) then
           del(.customizations.vscode.settings[$vsetting])
         else . end)
+      | (if $manifests == "true" and $extns != "" then
+          .customizations = ((.customizations // {})
+            | (.[$extns] // {}) as $ns
+            | .[$extns] = ($ns + {"extensions": $exts}))
+        else . end)
     ' "$file" > "$tmp_file" 2>/dev/null; then
     rm -f "$tmp_file"
     printf 'ERROR: failed to rewrite devcontainer.json (is it valid JSON?).\n' >&2
@@ -641,7 +812,8 @@ dce_devcontainer_sync() {
 
   # Best-effort: confirm the file is now in sync.
   if ! dce_devcontainer_detect_drift "$project" "$file" "$build_dockerfile" \
-        "$hidden_csv" "$networks_csv" "$ports_csv" >/dev/null 2>&1; then
+        "$hidden_csv" "$networks_csv" "$ports_csv" \
+        "$ext_ns_arg" "$extensions_csv" "$manifests_exist" >/dev/null 2>&1; then
     dce_warn "devcontainer.json still reports drift after sync (please report this bug): $file"
   fi
   return 0

@@ -35,6 +35,7 @@ dce_complete_subcommands() {
     "shell" \
     "logs" \
     "editor" \
+    "extensions" \
     "exec" \
     "restart" \
     "rm" \
@@ -240,4 +241,23 @@ dce_complete_doctor_targets() {
 # pulling in the runtime lib chain.
 dce_complete_editor_ids() {
   printf '%s\n' vscode vscode-insiders
+}
+
+# Print the subactions of `dce extensions` (list/host/available/show/diff/
+# capture). Mirrors the dispatch table in scripts/extensions.sh.
+dce_complete_extensions_subactions() {
+  printf '%s\n' \
+    "list" \
+    "host" \
+    "available" \
+    "show" \
+    "diff" \
+    "capture"
+}
+
+# Print editor ids that have extension management support, for
+# `dce extensions ... --editor <TAB>`. v1: vscode only (a separate, smaller
+# subset than dce_complete_editor_ids -- the launcher registry).
+dce_complete_extensions_editor_ids() {
+  printf '%s\n' vscode
 }

@@ -62,6 +62,7 @@ case "$name" in
         fi
         exit 0 ;;
       exec)
+        _all="$*"
         # Simulate the container's ~/.git-credentials for the token-drift probe.
         for _a in "$@"; do
           case "$_a" in
@@ -69,6 +70,15 @@ case "$name" in
             *'cat ~/.git-credentials'*) printf '%s' "${DC_STUB_GIT_CREDS:-}"; exit 0 ;;
           esac
         done
+        # _dce_ext_vscode_container_bin resolver: sh -c '...command -v code...'.
+        if [[ "$3" == "sh" && "$4" == "-c" && "$_all" == *"command -v code"* ]]; then
+          printf '%s\n' '/home/dev/.vscode-server/bin/stubhash/bin/code'
+          exit 0
+        fi
+        # dce_ext_list_installed: <bin> --list-extensions.
+        case "${*: -2}" in
+          *'code --list-extensions') printf '%s' "${DC_STUB_CONTAINER_EXT:-}"; exit 0 ;;
+        esac
         exit 0 ;;
       ps) printf '%s\n' "${DC_STUB_CONTAINERS:-}"; exit 0 ;;
     esac
@@ -479,6 +489,108 @@ printf '%s' "$out" | grep -Eq 'git token in sync.*skipped.*ssh/none' \
   || fail "drift ssh: expected skipped check
 $out"
 pass "doctor: ssh/none auth -> drift check skipped"
+
+# ---------------------------------------------------------------------------
+# Section 5c - editor-extension drift probes (plans/extensions.md §8)
+# ---------------------------------------------------------------------------
+# Declaration drift = manifest set vs recorded customizations.vscode.extensions
+# (FAIL -> sync-vscode). Runtime drift = installed vs declared (informational).
+# Both need a devcontainer.json + adopted manifests; otherwise skipped.
+make_project extdoc docker dce-base:latest "ghp_realtoken"
+# Adopt: a user all.txt manifest exists. Seed a devcontainer.json IN SYNC.
+mkdir -p "$USER_DIR/extensions/vscode"
+printf 'a.b\n' > "$USER_DIR/extensions/vscode/all.txt"
+mkdir -p "$WORK/repos/extdoc/.devcontainer"
+cat > "$WORK/repos/extdoc/.devcontainer/devcontainer.json" <<EOF
+{
+  "build": { "dockerfile": "$ROOT_DIR/Containerfiles/Containerfile.base" },
+  "workspaceFolder": "/workspace",
+  "remoteUser": "dev",
+  "postCreateCommand": "true",
+  "customizations": { "vscode": { "extensions": ["a.b"] } }
+}
+EOF
+# Runtime match: container installs exactly a.b.
+DC_STUB_CONTAINERS="extdoc" DC_STUB_CONTAINER_EXT=$'a.b\n' run_doctor extdoc; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fq "devcontainer.json in sync" \
+  || fail "ext match: missing devcontainer.json in-sync check
+$out"
+printf '%s' "$out" | grep -Fq "editor extensions in sync with container" \
+  || fail "ext match: missing extension in-sync check
+$out"
+[[ "$RUN_RC" -eq 0 ]] || fail "ext match: expected exit 0 (got $RUN_RC)
+$out"
+pass "doctor: extensions in sync -> ok (declaration + runtime)"
+
+# Declaration drift: recorded array differs from the manifest set.
+cat > "$WORK/repos/extdoc/.devcontainer/devcontainer.json" <<EOF
+{
+  "build": { "dockerfile": "$ROOT_DIR/Containerfiles/Containerfile.base" },
+  "workspaceFolder": "/workspace",
+  "remoteUser": "dev",
+  "postCreateCommand": "true",
+  "customizations": { "vscode": { "extensions": ["stale.id"] } }
+}
+EOF
+DC_STUB_CONTAINERS="extdoc" DC_STUB_CONTAINER_EXT=$'a.b\n' run_doctor extdoc; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fq "devcontainer.json in sync" \
+  || fail "ext decl-drift: missing check line
+$out"
+printf '%s' "$out" | grep -Fq "sync-vscode extdoc" \
+  || fail "ext decl-drift: missing sync-vscode fix
+$out"
+[[ "$RUN_RC" -ne 0 ]] || fail "ext decl-drift: declaration drift must be nonzero"
+pass "doctor: extension declaration drift -> fail + sync-vscode fix"
+
+# Declaration drift must still be checked when the container is STOPPED: this is
+# static config drift (manifest vs devcontainer.json), not runtime state.
+cat > "$WORK/repos/extdoc/.devcontainer/devcontainer.json" <<EOF
+{
+  "build": { "dockerfile": "$ROOT_DIR/Containerfiles/Containerfile.base" },
+  "workspaceFolder": "/workspace",
+  "remoteUser": "dev",
+  "postCreateCommand": "true",
+  "customizations": { "vscode": { "extensions": ["stale.stopped"] } }
+}
+EOF
+DC_STUB_CONTAINERS="" run_doctor extdoc; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fq "sync-vscode extdoc" \
+  || fail "ext decl-drift stopped: missing sync-vscode fix\n$out"
+[[ "$RUN_RC" -ne 0 ]] || fail "ext decl-drift stopped: declaration drift must be nonzero"
+pass "doctor: declaration drift still fails when container is stopped"
+
+# Remaining runtime-drift probes in this section self-prefix DC_STUB_CONTAINERS
+# on each run_doctor call (the bare assignment previously here was non-exported
+# and thus never reached the stub subprocess; shellcheck flagged it as unused).
+
+# Runtime drift: installed set has an undeclared extension (informational, not fail).
+cat > "$WORK/repos/extdoc/.devcontainer/devcontainer.json" <<EOF
+{
+  "build": { "dockerfile": "$ROOT_DIR/Containerfiles/Containerfile.base" },
+  "workspaceFolder": "/workspace",
+  "remoteUser": "dev",
+  "postCreateCommand": "true",
+  "customizations": { "vscode": { "extensions": ["a.b"] } }
+}
+EOF
+DC_STUB_CONTAINERS="extdoc" DC_STUB_CONTAINER_EXT=$'a.b\nextra.installed\n' run_doctor extdoc; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fqi 'runtime drift' \
+  || fail "ext runtime-drift: missing info line
+$out"
+printf '%s' "$out" | grep -Fq "dce extensions diff extdoc" \
+  || fail "ext runtime-drift: missing diff fix
+$out"
+[[ "$RUN_RC" -eq 0 ]] || fail "ext runtime-drift: must be informational (exit 0), got $RUN_RC"
+pass "doctor: extension runtime drift -> informational (not a failure)"
+
+# Pre-adoption (no manifests): both extension checks skip cleanly.
+make_project extpre docker dce-base:latest "ghp_realtoken"
+DC_STUB_CONTAINERS="extpre" run_doctor extpre; out="$RUN_OUT"
+printf '%s' "$out" | grep -Eq 'editor extensions in sync.*skipped' \
+  || fail "ext pre-adoption: expected skipped extension check
+$out"
+[[ "$RUN_RC" -eq 0 ]] || fail "ext pre-adoption: expected exit 0 (got $RUN_RC)"
+pass "doctor: pre-adoption -> extension probes skipped"
 
 # ---------------------------------------------------------------------------
 # Section 6 - OS-specific remediation hints

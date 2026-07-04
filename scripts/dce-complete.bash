@@ -203,6 +203,10 @@ _dce_complete() {
       _dce_complete_new "$cur" "$prev"
       return 0
       ;;
+    extensions)
+      _dce_complete_extensions "$cur" "$prev"
+      return 0
+      ;;
   esac
 }
 
@@ -451,6 +455,65 @@ _dce_complete_config() {
       return 0
       ;;
   esac
+}
+
+# `dce extensions <list|host|available|show|diff|capture> [project] [flags]`:
+# position 2 is the subaction; project at position 3 (except for `host`);
+# --editor/--format/--scope consume a value; --user/--team/--all are flags.
+# capture takes trailing free-form <id>... which is not completed.
+#
+# Grammar assumption: the subaction sits at slot 2 (COMP_WORDS[2]) per the
+# documented `dce extensions <subcommand> [flags] <project>` form. The parser
+# accepts interspersed flags, but completion is positionally rigid -- a global
+# flag typed BEFORE the subaction (e.g. `dce extensions --editor vscode show`)
+# would mislead this logic. Acceptable: usage convention puts the subaction
+# first, and completion only ever offers it at slot 2.
+_dce_complete_extensions() {
+  local cur="$1" prev="$2"
+
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_extensions_subactions)" -- "$cur")
+    return 0
+  fi
+
+  # Value-consuming flags: offer no completion for their value except --editor
+  # (known ids) and --format/--scope (fixed sets).
+  case "$prev" in
+    --editor)
+      mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_extensions_editor_ids)" -- "$cur")
+      return 0
+      ;;
+    --format)
+      mapfile -t COMPREPLY < <(compgen -W "ids json manifest" -- "$cur")
+      return 0
+      ;;
+    --scope)
+      mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_scopes)" -- "$cur")
+      return 0
+      ;;
+  esac
+
+  local subaction="${COMP_WORDS[2]}"
+  # Output flags apply to every subcommand; the manifest-target flags are
+  # capture-only.
+  local flags="--editor --format"
+  [[ "$subaction" == "capture" ]] && flags="$flags --scope --user --team --all"
+
+  # `host` takes no project; offer flags at every position.
+  if [[ "$subaction" == "host" ]]; then
+    mapfile -t COMPREPLY < <(compgen -W "$flags" -- "$cur")
+    return 0
+  fi
+
+  # Slot 3 is the project for every non-host subcommand.
+  if [[ $COMP_CWORD -eq 3 ]]; then
+    _dce_reply_projects "$cur"
+    return 0
+  fi
+
+  # Slot 4+: offer flags (capture's trailing <id>... is free-form, not completed).
+  mapfile -t COMPREPLY < <(compgen -W "$flags" -- "$cur")
+  return 0
 }
 
 complete -F _dce_complete dce

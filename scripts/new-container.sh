@@ -193,6 +193,8 @@ source "$ROOT_DIR/lib/recipe.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/devcontainer.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/extensions.sh"
 
 # Resolve the git host provider (github default). Validated against the registry
 # so an unknown id fails fast with the known set, before any backend work.
@@ -832,8 +834,18 @@ if $DOCKER_COMPATIBLE; then
     [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]] && _new_nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
     _new_ports_csv=""
     [[ ${#PORTS[@]} -gt 0 ]] && _new_ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
+    # Resolve the extension adoption state so declaration drift is reported for
+    # adopted projects (manifests_exist) and suppressed pre-adoption (migration
+    # guard). Mirrors the seeding resolution in the else-branch below.
+    _new_ext_csv=""
+    _new_ext_adopted="false"
+    if dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null; then
+      _new_ext_adopted="true"
+      _new_ext_csv="$(dce_ext_resolve_csv vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null)"
+    fi
     dce_devcontainer_detect_drift "$PROJECT" "$DEVCONTAINER_FILE" "$DEVCONTAINER_BUILD_FILE" \
-      "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" >&2 || true
+      "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" \
+      "vscode" "$_new_ext_csv" "$_new_ext_adopted" >&2 || true
   else
     mkdir -p "$DEVCONTAINER_DIR"
 
@@ -842,13 +854,22 @@ if $DOCKER_COMPATIBLE; then
     _new_ports_csv=""
     [[ ${#PORTS[@]} -gt 0 ]] && _new_ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
 
+    # Resolve the editor-extensions set for this project's scopes (vscode in v1)
+    # so the seeded devcontainer.json carries customizations.vscode.extensions
+    # and VS Code auto-installs them on first open (plans/extensions.md). Global
+    # config (team/user roots) was loaded above for scope/image derivation.
+    _new_ext_csv=""
+    if dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null; then
+      _new_ext_csv="$(dce_ext_resolve_csv vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null)"
+    fi
+
     # The seeded JSON is produced by the single shared renderer so `dce new`,
     # drift detection, and `dce config sync-vscode` all agree on managed state.
     # Pass the current git auth method so the renderer can emit the VS Code
     # git-auth override only when a PAT is configured (see dce_devcontainer_render).
     dce_devcontainer_render "$PROJECT" "$DEVCONTAINER_BUILD_FILE" "$ROOT_DIR" \
       "$SECRET_DIR" "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" "$HOST_TZ" \
-      "$(dce_git_auth_method)" \
+      "$(dce_git_auth_method)" "vscode" "$_new_ext_csv" \
       > "$DEVCONTAINER_FILE"
 
     echo "  ✓ Created $DEVCONTAINER_FILE"

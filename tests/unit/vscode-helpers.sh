@@ -24,7 +24,16 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 FAKE_HOME="$WORK/home"
-mkdir -p "$FAKE_HOME/.config/Code/User"
+FAKE_STORAGE_DIR=""
+# Make this test host-OS agnostic: pick the first platform-native storage
+# candidate and make only that root "live" (so run_seed emits a single path).
+while IFS= read -r _storage; do
+  [[ -z "$_storage" ]] && continue
+  FAKE_STORAGE_DIR="$_storage"
+  break
+done < <(HOME="$FAKE_HOME" dce_vscode_remote_containers_storage_candidates)
+[[ -n "$FAKE_STORAGE_DIR" ]] || fail "no VS Code storage candidate for platform"
+mkdir -p "$(dirname "$FAKE_STORAGE_DIR")"
 
 run_seed() {
   HOME="$FAKE_HOME" dce_vscode_seed_named_attach_config "$@"
@@ -32,8 +41,7 @@ run_seed() {
 
 cfg_path() {
   local name="$1"
-  printf '%s/.config/Code/User/globalStorage/ms-vscode-remote.remote-containers/nameConfigs/%s.json' \
-    "$FAKE_HOME" "$(dce_vscode_encode_attach_key "$name")"
+  printf '%s/nameConfigs/%s.json' "$FAKE_STORAGE_DIR" "$(dce_vscode_encode_attach_key "$name")"
 }
 
 # =============================================================================

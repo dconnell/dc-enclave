@@ -303,5 +303,70 @@ if grep -Fqi 'Global config not found' "$WORK/fs.rb.err"; then
 fi
 pass "dce rebuild-container --from-snap: fallback drift detection remains non-fatal and reports ports"
 
+# =============================================================================
+# J. `dce config sync-vscode` editor-extensions management (plans/extensions.md)
+#    - adopted (manifest present) -> customizations.vscode.extensions fully-managed
+#    - pre-adoption (no manifest) -> hand-curated array untouched (migration guard)
+# =============================================================================
+if ! command -v jq >/dev/null 2>&1; then
+  pass "extensions sync contract (skipped — jq not installed)"
+else
+  # Section I above removed the global config to exercise a fallback branch;
+  # recreate it so sync-vscode can resolve the team/user roots again.
+  [[ -f "$DC_ROOT/config" ]] || {
+    mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
+    {
+      printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
+      printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
+    } > "$DC_ROOT/config"
+    chmod 600 "$DC_ROOT/config"
+  }
+
+  # (J1) Adoption: a user all.txt manifest exists -> sync rewrites
+  # customizations.vscode.extensions to the resolved set, replacing any
+  # hand-curated array.
+  EXT_USER_DIR="$USER_DIR/extensions/vscode"
+  mkdir -p "$EXT_USER_DIR"
+  printf 'a.b\nc.d\n' > "$EXT_USER_DIR/all.txt"
+
+  EXT_PROJ="extproj"
+  EXT_SECRET="$DC_ROOT/$EXT_PROJ"
+  EXT_REPO="$WORK/home/repos/$EXT_PROJ"
+  mkdir -p "$EXT_SECRET" "$EXT_REPO/.devcontainer"
+  chmod 700 "$EXT_SECRET"
+  {
+    echo "CONTAINER_PROJECT=\"$EXT_PROJ\""
+    echo "CONTAINER_BACKEND=\"docker\""
+    echo "CONTAINER_IMAGE=\"dce-base:latest\""
+    echo "CONTAINER_OVERLAY_SCOPES=\"\""
+    echo "REPOS_DIR=\"$EXT_REPO\""
+    echo "SECRET_DIR=\"$EXT_SECRET\""
+    echo "PORTS=()"
+    echo "CONTAINER_HIDDEN_PATHS=()"
+    echo "CONTAINER_NETWORKS=()"
+  } > "$EXT_SECRET/config"
+  chmod 600 "$EXT_SECRET/config"
+  EXT_DC="$EXT_REPO/.devcontainer/devcontainer.json"
+  printf '{ "customizations": { "vscode": { "extensions": ["hand.curated"] } } }\n' > "$EXT_DC"
+  chmod 600 "$EXT_DC"
+
+  HOME="$WORK/home" bash "$ROOT_DIR/scripts/config.sh" sync-vscode "$EXT_PROJ" \
+    >"$WORK/j1.out" 2>"$WORK/j1.err" || fail "sync extproj exited non-zero ($(cat "$WORK/j1.err"))"
+  J1="$(cat "$EXT_DC")"
+  echo "$J1" | jq -e '.customizations.vscode.extensions == ["a.b","c.d"]' >/dev/null \
+    || fail "sync extproj: adopted array must equal resolved set (got $(echo "$J1" | jq -c '.customizations.vscode.extensions'))"
+  pass "config sync-vscode: adopted -> customizations.vscode.extensions fully-managed"
+
+  # (J2) Migration guard: remove the manifest -> a hand-curated array is preserved.
+  rm -f "$EXT_USER_DIR/all.txt"
+  printf '{ "customizations": { "vscode": { "extensions": ["keep.me", "user.choice"] } } }\n' > "$EXT_DC"
+  HOME="$WORK/home" bash "$ROOT_DIR/scripts/config.sh" sync-vscode "$EXT_PROJ" \
+    >"$WORK/j2.out" 2>"$WORK/j2.err" || fail "sync extproj (guard) exited non-zero ($(cat "$WORK/j2.err"))"
+  J2="$(cat "$EXT_DC")"
+  echo "$J2" | jq -e '.customizations.vscode.extensions == ["keep.me","user.choice"]' >/dev/null \
+    || fail "sync extproj guard: pre-adoption array must be untouched (got $(echo "$J2" | jq -c '.customizations.vscode.extensions'))"
+  pass "config sync-vscode: migration guard preserves hand-curated array (no manifest)"
+fi
+
 echo ""
 echo "All devcontainer-sync checks passed."

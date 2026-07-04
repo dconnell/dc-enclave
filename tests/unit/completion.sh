@@ -70,7 +70,7 @@ scopes_out="$(dce_complete_scopes | sort)"
 pass "scopes dedup + membership"
 
 subs="$(dce_complete_subcommands | sort)"
-for c in new start stop status s list ls shell logs editor exec restart rm \
+for c in new start stop status s list ls shell logs editor extensions exec restart rm \
          rebuild-container rebuild-image snapshot snapshots provenance clean config network net doctor install rotate-token version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
@@ -164,6 +164,18 @@ drive 2 dce editor "";              assert_reply "editor <TAB>" --editor alpha b
 drive 3 dce editor alpha "";        assert_empty   "editor alpha <TAB> (nothing past project)"
 drive 3 dce editor --editor "";     assert_reply "editor --editor <TAB>" vscode vscode-insiders
 drive 4 dce editor --editor vscode ""; assert_reply "editor --editor vscode <TAB>" alpha beta gamma
+
+# extensions: subactions at slot 2; project + flags after.
+drive 2 dce extensions ""; assert_reply "extensions <TAB>" \
+  available capture diff host list show
+drive 3 dce extensions show ""; assert_reply "extensions show <TAB>" alpha beta gamma
+# Past the project, the output flags are offered (--editor/--format).
+drive 4 dce extensions show alpha ""; assert_reply "extensions show alpha <TAB>" --editor --format
+# --editor / --format / --scope consume a value.
+drive 3 dce extensions --editor ""; assert_reply "extensions --editor <TAB>" vscode
+drive 4 dce extensions list --format ""; assert_reply "extensions list --format <TAB>" ids json manifest
+# capture offers --scope/--user/--team/--all plus project.
+drive 3 dce extensions capture ""; assert_reply "extensions capture <TAB>" alpha beta gamma
 
 # rebuild-container: one project, then the flags.
 drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
@@ -435,7 +447,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dce_subcommands
-    local want="--help --version -h -v clean config doctor editor exec help install list logs ls net network new provenance rebuild-container rebuild-image restart rm rotate-token s shell snapshot snapshots start status stop version"
+    local want="--help --version -h -v clean config doctor editor exec extensions help install list logs ls net network new provenance rebuild-container rebuild-image restart rm rotate-token s shell snapshot snapshots start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -446,6 +458,23 @@ if command -v zsh >/dev/null 2>&1; then
     chk shell            "1:project:"
     chk editor           "1:project:"
     chk editor           "--editor+[editor id]"
+    chk extensions       "1:subcommand: _dce_extensions_subactions"
+    chk extensions       "--scope+[target scope for capture]"
+    # capture-only flags must NOT be offered on non-capture subactions.
+    words=(extensions show "") CURRENT=3 SPEC=(); _dce_extensions
+    [[ "${SPEC[*]}" != *"--scope+"* ]] || { print "FAIL: zsh extensions show must not offer --scope -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" != *"--all["* ]] || { print "FAIL: zsh extensions show must not offer --all -> [${SPEC[*]}]"; exit 1 }
+    words=(extensions capture "") CURRENT=3 SPEC=(); _dce_extensions
+    [[ "${SPEC[*]}" == *"--scope+[target scope for capture]"* ]] || { print "FAIL: zsh extensions capture must offer --scope -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" == *"--all[capture: snapshot the full container install set]"* ]] || { print "FAIL: zsh extensions capture must offer --all -> [${SPEC[*]}]"; exit 1 }
+    # extensions show/diff/list/available/capture complete a project at slot 2;
+    # `host` does not. Verify the project spec is emitted for a project-taking
+    # subaction (parity with editor/shell/logs and with the bash front-end).
+    words=(extensions show "") CURRENT=3 SPEC=(); _dce_extensions
+    [[ "${SPEC[*]}" == *"2:project"* ]] || { print "FAIL: zsh extensions show should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1 }
+    # `host` takes NO project -- the project spec must not appear.
+    words=(extensions host "") CURRENT=3 SPEC=(); _dce_extensions
+    [[ "${SPEC[*]}" != *"2:project"* ]] || { print "FAIL: zsh extensions host must not offer a project -> [${SPEC[*]}]"; exit 1 }
     chk logs             "1:project:"
     chk logs             "--follow["
     chk exec             "--root["

@@ -86,6 +86,7 @@ run_check "dce help status" "$DC_BIN" help status
 run_check "dce help list" "$DC_BIN" help list
 run_check "dce help shell" "$DC_BIN" help shell
 run_check "dce help editor" "$DC_BIN" help editor
+run_check "dce help extensions" "$DC_BIN" help extensions
 run_check "dce help logs" "$DC_BIN" help logs
 run_check "dce help exec" "$DC_BIN" help exec
 run_check "dce help restart" "$DC_BIN" help restart

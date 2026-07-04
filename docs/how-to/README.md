@@ -7,6 +7,7 @@ Step-by-step recipes for specific tasks. Each guide is self-contained.
 - [Set the timezone](set-timezone.md) — mirror your host zone into containers.
 - [Add a git host](add-git-host.md) — use GitLab/other hosts, and pin SSH host keys.
 - [Hide generated paths from the host](hide-generated-paths.md) — keep `node_modules` and caches in container volumes.
+- [Manage editor extensions](manage-editor-extensions.md) — declare/capture/sync VS Code extensions by scope.
 - [Connect containers with private networks](connect-private-networks.md) — let containers talk without publishing ports.
 - [Connect to host PostgreSQL](connect-host-postgres.md) — reach a host database securely.
 - [Rebuild and recover](rebuild-and-recover.md) — rebuild containers, rotate keys, clean up, remove projects.

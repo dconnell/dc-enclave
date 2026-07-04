@@ -27,6 +27,40 @@ Preferred day-to-day tools (for example `tree`, `rg`, `fzf`, `psql`, custom CLIs
 - `FROM` and `CMD` are ignored during composition
 - `COPY` and `ADD` are not allowed (to avoid external build-context coupling)
 
+## Editor extension manifests
+
+Editor extensions are declared in manifests (not image layers):
+
+```
+$DC_TEAM_DIR/extensions/<editor>/<scope>.txt
+$DC_USER_DIR/extensions/<editor>/<scope>.txt
+```
+
+v1 editor namespace is `vscode`, so typical files are:
+
+- `extensions/vscode/all.txt`
+- `extensions/vscode/nodejs.txt`
+
+Manifest format:
+
+- one extension ID (`publisher.name`) per line
+- blank lines and `#` comments allowed
+
+Layering matches overlay scopes:
+
+- `all` is auto-prepended when present
+- then each effective project scope
+- team file before user file per scope
+- merged output is de-duplicated and order-preserving
+
+Why manifests (not `Containerfile.<scope>`): VS Code extensions install via
+`customizations.<editor>.extensions` in `devcontainer.json` when VS Code opens
+the container. The `code` CLI is not available at image build time, so image-
+baked `RUN code --install-extension ...` is not a viable path.
+
+Use `dce extensions ...` to inspect/capture, and `dce config sync-vscode <name>`
+to reconcile managed `devcontainer.json` fields.
+
 
 ## Install-on-start behavior
 
@@ -53,4 +87,3 @@ This means you get fast, correct dependency sync without any `node_modules` file
 > For untrusted inputs, disable install-time code with `DC_NODE_IGNORE_SCRIPTS=1`
 > or `DC_PYTHON_IGNORE_SCRIPTS=1`. See the *Trusted vs untrusted overlays*
 > section in `Containerfiles/example/README.md`.
-

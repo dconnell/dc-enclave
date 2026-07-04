@@ -97,6 +97,8 @@ source "$ROOT_DIR/lib/network.sh"
 source "$ROOT_DIR/lib/vscode.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/devcontainer.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/extensions.sh"
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
@@ -270,6 +272,41 @@ if $ROTATE_KEYS && $KEEP_HIDDEN_VOLUMES && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 
   echo "  *                                                                  *"
   echo "  ********************************************************************"
   echo ""
+fi
+
+# Pre-destroy warning: undeclared editor extensions will be LOST (the container
+# FS -- including ~/.vscode-server -- is wiped). Only running + docker-
+# compatible + adopted projects are checked; the warning is advisory (does not
+# block, even under --yes) and mirrors the rotate-keys notice style. Plans §8.
+if $DOCKER_COMPATIBLE && backend_is_running "$PROJECT" 2>/dev/null; then
+  # Resolve declared set in a subshell so a missing/broken global config (which
+  # dce_load_global_config dce_die-exits on) is contained, not fatal to rebuild.
+  # Emits the undeclared extensions (installed not in declared), one per line.
+  # shellcheck disable=SC2086
+  _rb_undeclared="$( {
+    dce_load_global_config 2>/dev/null || exit 0
+    dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" || exit 0
+    _rb_d="$(dce_ext_resolve_set vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}")"
+    _rb_i="$(dce_ext_list_installed vscode "$PROJECT" 2>/dev/null)" || exit 0
+    printf '%s\n' "$_rb_i" | dce_ext_minus $_rb_d
+  } 2>/dev/null )" || _rb_undeclared=""
+  _rb_und_count="$(printf '%s\n' "$_rb_undeclared" | grep -c -v '^$' 2>/dev/null || printf '0')"
+  if [[ "$_rb_und_count" -gt 0 ]]; then
+    echo "  ********************************************************************"
+    echo "  *                                                                  *"
+    echo "  *  WARNING: $_rb_und_count installed editor extension(s) are       *"
+    printf "  *  UNDECLARED and will be LOST in the rebuild:                     *\n"
+    # shellcheck disable=SC2086
+    for _u in $_rb_undeclared; do
+      printf "  *    - %s\n" "$_u"
+    done
+    echo "  *                                                                  *"
+    echo "  *  Capture them first to keep them across rebuilds:                *"
+    echo "  *    dce extensions capture $PROJECT --scope <scope> --all         *"
+    echo "  *                                                                  *"
+    echo "  ********************************************************************"
+    echo ""
+  fi
 fi
 
 echo "This will DESTROY the container '$PROJECT' and recreate it."
@@ -499,8 +536,29 @@ if $DOCKER_COMPATIBLE && [[ -n "${REPOS_DIR:-}" ]]; then
       _rb_build_df="$( { dce_load_global_config 2>/dev/null && \
         dce_devcontainer_build_file "$ROOT_DIR" "${CONTAINER_OVERLAY_SCOPES:-}"; } 2>/dev/null )" || _rb_build_df=""
     fi
+    # Editor-extensions declaration drift: resolve the adoption state so the
+    # notice fires post-adoption and stays silent pre-adoption (migration guard).
+    # Best-effort: a missing global config degrades to no extensions comparison.
+    # Run in a subshell so dce_load_global_config's dce_die (on missing config)
+    # is contained, not fatal to the rebuild. Emits "ADOPTED\n<csv>" post-adoption.
+    _rb_ext_vals="$( {
+      dce_load_global_config 2>/dev/null || exit 0
+      dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" || exit 0
+      printf 'ADOPTED\n'
+      dce_ext_resolve_csv vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}"
+    } 2>/dev/null )" || _rb_ext_vals=""
+    _rb_ext_csv=""
+    _rb_ext_adopted="false"
+    case "$_rb_ext_vals" in
+      ADOPTED*)
+        _rb_ext_adopted="true"
+        _rb_ext_csv="${_rb_ext_vals#ADOPTED}"
+        _rb_ext_csv="${_rb_ext_csv#$'\n'}"
+        ;;
+    esac
     dce_devcontainer_detect_drift "$PROJECT" "$_rb_dc_file" "$_rb_build_df" \
-      "$HIDDEN_PATHS_CSV" "$_rb_nets_csv" "$_rb_ports_csv" >&2 || true
+      "$HIDDEN_PATHS_CSV" "$_rb_nets_csv" "$_rb_ports_csv" \
+      "vscode" "$_rb_ext_csv" "$_rb_ext_adopted" >&2 || true
   fi
 fi
 

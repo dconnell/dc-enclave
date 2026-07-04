@@ -223,6 +223,109 @@ else
 fi
 
 # =============================================================================
+# C-ext. dce_devcontainer_detect_drift: editor-extensions declaration drift
+# (plans/extensions.md §8A). The extensions tag is gated on manifests_exist:
+# pre-adoption (false) emits nothing and never reports drift (migration guard);
+# post-adoption (true) compares the resolved set to the recorded
+# customizations.<ns>.extensions array.
+# =============================================================================
+
+# expected_state: post-adoption emits one extensions line per resolved id.
+EXP_EXT="$(dce_devcontainer_expected_state "$PROJECT" "" "" "" "" \
+  "vscode" "a.b,c.d" "true")"
+printf '%s\n' "$EXP_EXT" | grep -Fxq $'extensions\ta.b' || fail "expected_state(ext): missing a.b"
+printf '%s\n' "$EXP_EXT" | grep -Fxq $'extensions\tc.d' || fail "expected_state(ext): missing c.d"
+# Pre-adoption (manifests_exist=false) -> NO extensions lines (migration guard).
+EXP_NOEXT="$(dce_devcontainer_expected_state "$PROJECT" "" "" "" "" \
+  "vscode" "a.b,c.d" "false")"
+! printf '%s\n' "$EXP_NOEXT" | grep -q '^extensions' \
+  || fail "expected_state(ext): manifests_exist=false must emit no extensions lines"
+pass "expected_state: extensions tag gated on manifests_exist (migration guard)"
+
+# recorded_state: parses customizations.vscode.extensions (jq path).
+DC_EXT="$(write_dc extrec "{
+  \"build\": { \"dockerfile\": \"$DERIVED_DF\" },
+  \"mounts\": [\"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
+  \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"],
+  \"forwardPorts\": [3000, 8080],
+  \"customizations\": { \"vscode\": { \"extensions\": [\"a.b\", \"c.d\"] } }
+}")"
+REC_EXT="$(dce_devcontainer_recorded_state "$PROJECT" "$DC_EXT" "vscode")"
+printf '%s\n' "$REC_EXT" | grep -Fxq $'extensions\ta.b' || fail "recorded_state(ext jq): missing a.b"
+printf '%s\n' "$REC_EXT" | grep -Fxq $'extensions\tc.d' || fail "recorded_state(ext jq): missing c.d"
+# Without a namespace, extensions are not parsed (caller opted out).
+REC_NONS="$(dce_devcontainer_recorded_state "$PROJECT" "$DC_EXT" "")"
+! printf '%s\n' "$REC_NONS" | grep -q '^extensions' \
+  || fail "recorded_state(ext): empty namespace must not parse extensions"
+pass "recorded_state: parses customizations.<ns>.extensions (jq)"
+
+# detect_drift: in-sync extensions -> 0.
+if ! dce_devcontainer_detect_drift "$PROJECT" "$DC_EXT" "$DERIVED_DF" \
+    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" \
+    "vscode" "a.b,c.d" "true" >/dev/null 2>&1; then
+  fail "detect_drift(ext): in-sync extensions must return 0"
+fi
+# detect_drift: drifted extensions (recorded has x.y, expected does not) -> non-zero.
+DC_EXT_DRIFT="$(write_dc extdrift "{
+  \"build\": { \"dockerfile\": \"$DERIVED_DF\" },
+  \"mounts\": [\"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
+  \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"],
+  \"forwardPorts\": [3000, 8080],
+  \"customizations\": { \"vscode\": { \"extensions\": [\"a.b\", \"x.y\"] } }
+}")"
+OUT="$(dce_devcontainer_detect_drift "$PROJECT" "$DC_EXT_DRIFT" "$DERIVED_DF" \
+  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" \
+  "vscode" "a.b,c.d" "true" 2>&1 >/dev/null)" || true
+grep -Eqi 'extension' <<<"$OUT" || fail "detect_drift(ext): notice must mention extensions"
+# detect_drift: pre-adoption (manifests_exist=false) -> extensions IGNOREED even
+# if the recorded array differs (migration guard preserves hand-curated arrays).
+if ! dce_devcontainer_detect_drift "$PROJECT" "$DC_EXT_DRIFT" "$DERIVED_DF" \
+    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" \
+    "vscode" "a.b,c.d" "false" >/dev/null 2>&1; then
+  fail "detect_drift(ext): pre-adoption must NOT report extensions drift (migration guard)"
+fi
+pass "detect_drift: extension declaration drift detected post-adoption; suppressed pre-adoption"
+
+# grep fallback for extensions: shadow jq and confirm detection still works.
+if [[ ${DC_SKIP_JQ_SHADOW:-0} -ne 1 ]]; then
+  STUB_BIN2="$WORK/bin2"; mkdir -p "$STUB_BIN2"
+  printf '#!/usr/bin/env bash\nexit 127\n' > "$STUB_BIN2/jq"
+  chmod +x "$STUB_BIN2/jq"
+  # In-sync set MUST stay in-sync under the grep fallback (regression guard for
+  # accidentally scraping quoted JSON keys like "customizations"/"extensions").
+  if ! PATH="$STUB_BIN2:$PATH" dce_devcontainer_detect_drift "$PROJECT" "$DC_EXT" \
+      "$DERIVED_DF" "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" \
+      "vscode" "a.b,c.d" "true" >/dev/null 2>&1; then
+    fail "detect_drift(ext): grep fallback must keep an in-sync file in-sync"
+  fi
+
+  # Namespace scoping guard: a top-level legacy "extensions" key is user-owned
+  # and must NOT be mistaken for customizations.<ns>.extensions in fallback mode.
+  DC_EXT_NOISE="$(write_dc extnoise "{
+    \"build\": { \"dockerfile\": \"$DERIVED_DF\" },
+    \"mounts\": [\"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
+    \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"],
+    \"forwardPorts\": [3000, 8080],
+    \"extensions\": [\"user.owned\"],
+    \"customizations\": { \"vscode\": { \"extensions\": [\"a.b\", \"c.d\"] } }
+  }")"
+  if ! PATH="$STUB_BIN2:$PATH" dce_devcontainer_detect_drift "$PROJECT" "$DC_EXT_NOISE" \
+      "$DERIVED_DF" "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" \
+      "vscode" "a.b,c.d" "true" >/dev/null 2>&1; then
+    fail "detect_drift(ext): grep fallback must ignore top-level user extensions key"
+  fi
+
+  if PATH="$STUB_BIN2:$PATH" dce_devcontainer_detect_drift "$PROJECT" "$DC_EXT_DRIFT" \
+      "$DERIVED_DF" "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" \
+      "vscode" "a.b,c.d" "true" >/dev/null 2>&1; then
+    fail "detect_drift(ext): grep fallback must still detect extensions drift"
+  fi
+  pass "detect_drift: extensions grep fallback works when jq is broken/absent"
+else
+  pass "detect_drift: extensions grep fallback (skipped via DC_SKIP_JQ_SHADOW)"
+fi
+
+# =============================================================================
 # D. dce_devcontainer_render: full JSON, valid + managed fields present
 # (byte-equivalence vs the shipped `dce new` output is additionally pinned by
 #  tests/new-container-lifecycle.sh, which greps the file dce new writes.)
@@ -386,6 +489,77 @@ else
   [[ "$(dce_sha256_file "$DC_DRY")" == "$SHA_BEFORE" ]] \
     || fail "sync --dry-run must not modify the file"
   pass "dce_devcontainer_sync: --dry-run leaves the file untouched"
+
+  # ===========================================================================
+  # F. Editor-extensions management (plans/extensions.md)
+  # ===========================================================================
+  # Render: extensions emitted in customizations.vscode.extensions.
+  R_EXT="$(dce_devcontainer_render "$PROJECT" "$DERIVED_DF" "$ROOT_DIR" "$WORK/sec" \
+    "" "" "" "" "none" "vscode" "esbenp.prettier-vscode,dbaeumer.vscode-eslint")"
+  echo "$R_EXT" | jq -e '.customizations.vscode.extensions == ["esbenp.prettier-vscode","dbaeumer.vscode-eslint"]' >/dev/null \
+    || fail "render (ext): extensions array wrong"
+  echo "$R_EXT" | jq -e '.customizations.vscode.settings == null' >/dev/null \
+    || fail "render (ext): no PAT -> no settings block"
+  pass "dce_devcontainer_render: emits extensions, no settings (non-PAT)"
+
+  # Render: PAT + extensions share customizations.vscode.
+  R_BOTH="$(dce_devcontainer_render "$PROJECT" "$DERIVED_DF" "$ROOT_DIR" "$WORK/sec" \
+    "" "" "" "" "pat" "vscode" "esbenp.prettier-vscode")"
+  echo "$R_BOTH" | jq -e '.customizations.vscode.settings["github.gitAuthentication"] == false' >/dev/null \
+    || fail "render (pat+ext): git-auth setting missing"
+  echo "$R_BOTH" | jq -e '.customizations.vscode.extensions == ["esbenp.prettier-vscode"]' >/dev/null \
+    || fail "render (pat+ext): extensions missing"
+  pass "dce_devcontainer_render: PAT + extensions share customizations.vscode"
+
+  # Sync migration guard: manifests_exist=false -> existing array UNTOUCHED even
+  # when a resolved set is supplied. Pre-adoption preserves hand-curated arrays.
+  DC_GUARD="$(write_dc guard "{
+    \"customizations\": {
+      \"vscode\": {
+        \"extensions\": [\"hand.curated\", \"user.favorite\"]
+      }
+    }
+  }")"
+  dce_devcontainer_sync "$PROJECT" "$DC_GUARD" "$DERIVED_DF" "$ROOT_DIR" "$SECRET" \
+    "" "" "" "" "false" "none" "vscode" "should.be.ignored" "false" \
+    >"$WORK/guard.out" 2>"$WORK/guard.err" || fail "sync guard exited non-zero ($(cat "$WORK/guard.err"))"
+  GUARD_AFTER="$(cat "$DC_GUARD")"
+  echo "$GUARD_AFTER" | jq -e '.customizations.vscode.extensions == ["hand.curated","user.favorite"]' >/dev/null \
+    || fail "sync guard: pre-adoption array must be untouched (got $(echo "$GUARD_AFTER" | jq -c '.customizations.vscode.extensions'))"
+  pass "dce_devcontainer_sync: migration guard preserves array when manifests_exist=false"
+
+  # Sync fully-managed: manifests_exist=true -> array rewritten to EXACTLY the
+  # resolved set (hand-curated entries replaced).
+  DC_FM="$(write_dc fm "{
+    \"customizations\": {
+      \"vscode\": {
+        \"extensions\": [\"hand.curated\", \"will.be.replaced\"],
+        \"settings\": { \"files.autoSave\": \"afterDelay\" }
+      }
+    }
+  }")"
+  dce_devcontainer_sync "$PROJECT" "$DC_FM" "$DERIVED_DF" "$ROOT_DIR" "$SECRET" \
+    "" "" "" "" "false" "none" "vscode" "a.b,c.d" "true" \
+    >"$WORK/fm.out" 2>"$WORK/fm.err" || fail "sync fully-managed exited non-zero ($(cat "$WORK/fm.err"))"
+  FM_AFTER="$(cat "$DC_FM")"
+  echo "$FM_AFTER" | jq -e '.customizations.vscode.extensions == ["a.b","c.d"]' >/dev/null \
+    || fail "sync fully-managed: array must equal resolved set (got $(echo "$FM_AFTER" | jq -c '.customizations.vscode.extensions'))"
+  # User vscode settings survive alongside the managed extensions array.
+  echo "$FM_AFTER" | jq -e '.customizations.vscode.settings["files.autoSave"] == "afterDelay"' >/dev/null \
+    || fail "sync fully-managed: user settings lost alongside extensions"
+  pass "dce_devcontainer_sync: fully-managed rewrites array, preserves settings"
+
+  # Sync fully-managed with EMPTY resolved set -> array becomes [] (manifest
+  # adopted but resolves to nothing).
+  DC_EMPTY="$(write_dc empty "{
+    \"customizations\": { \"vscode\": { \"extensions\": [\"stale.thing\"] } }
+  }")"
+  dce_devcontainer_sync "$PROJECT" "$DC_EMPTY" "$DERIVED_DF" "$ROOT_DIR" "$SECRET" \
+    "" "" "" "" "false" "none" "vscode" "" "true" >/dev/null 2>&1 \
+    || fail "sync empty-set exited non-zero"
+cat "$DC_EMPTY" | jq -e '.customizations.vscode.extensions == []' >/dev/null \
+  || fail "sync empty-set: array must be [] (fully-managed empty)"
+  pass "dce_devcontainer_sync: empty resolved set -> [] (fully-managed)"
 fi
 
 echo ""

@@ -40,6 +40,8 @@ _show_summary() {
   echo "  shell <name> [command]                            Interactive shell/command; seeds git token as provider env var (zsh -ic)"
   echo "  logs <name> [-f|--follow] [--tail N]              Fetch container log stream"
   echo "  editor [--editor <id>] <name>                     Launch your editor attached to the running container (/workspace)"
+  echo "  extensions <list|host|available|show|diff|capture> [<name>] [--scope <s>] [--editor <id>]"
+  echo "                                                    Inspect, compare, and capture editor extensions"
   echo "  exec [--root] <name> <command...>                 Raw one-shot in a running container; no token (docker-exec style)"
   echo "  restart [name ...]                                Restart one or more projects, or all"
   echo "  rm <name> [--yes] [--keep-config] [--keep-volumes]"
@@ -412,6 +414,85 @@ Notes:
   - macOS: `code` is not on PATH by default. Run VS Code's
     "Install 'code' command in PATH" once, or set DCE_EDITOR_BIN.
   - WSL2: prefers Windows VS Code via `code.exe` (Docker Desktop setup).
+EOF
+}
+
+_show_help_extensions() {
+  cat <<'EOF'
+Usage: dce extensions <list|host|available|show|diff|capture> [<project>] [ids...]
+               [--editor <id>] [--format ids|json|manifest]
+               [--scope <scope>] [--user|--team] [--all]
+
+Description:
+  Inspects, compares, and captures editor extensions for a project against
+  per-scope manifests. Extensions are declared in plain-text manifests under:
+
+    $DC_TEAM_DIR/extensions/<editor>/<scope>.txt   (layered first per scope)
+    $DC_USER_DIR/extensions/<editor>/<scope>.txt   (layered second per scope)
+
+  One ID per line; '#' comments and blank lines are allowed. Layering mirrors
+  the overlay scope model: "all" is auto-prepended when present, then each
+  effective scope team-then-user (first occurrence wins on duplicates).
+
+  `dce new` seeds these into .devcontainer/devcontainer.json
+  (customizations.<editor>.extensions) and `dce config sync-vscode` re-syncs
+  them, so VS Code installs the declared set on container open. This command is
+  the operational surface for bootstrapping manifests and inspecting runtime vs
+  declared state.
+
+  v1 supports the vscode editor only (namespace "vscode"). Container-derived
+  subcommands require a Docker-compatible backend and a running container
+  (they do NOT auto-start); static subcommands are backend-agnostic.
+
+Subcommands:
+  list <project>              Extensions installed in the project's container.
+  host                        Extensions installed on the host editor.
+  available <project>         Host minus container -- the extensions VS Code
+                              shows greyed-out with an "Install in Dev Container"
+                              button (computed by set difference; an
+                              over-approximation, since VS Code filters by
+                              extensionKind).
+  show <project>              Merged effective manifest set for the project's
+                              scopes (what sync will write).
+  diff <project>              Runtime drift in BOTH directions: installed but
+                              not declared (capture these before a rebuild), and
+                              declared but not installed (converges on next open).
+  capture <project> --scope <scope> (--all | <id>...) [--user|--team]
+                              Merge extension IDs into a manifest. Selective by
+                              default (explicit IDs); --all snapshots the
+                              container's full installed set (the migration
+                              helper). Never bulk-dumps host extensions -- the
+                              manifest is curated, not a host mirror.
+
+Options:
+  --editor <id>               Editor id (default: vscode). v1 supports vscode.
+  --format ids|json|manifest  Output format for list/host/available/show
+                              (default: ids). diff is always human-readable.
+  --scope <scope>             Target scope for capture (validated name).
+  --user | --team             Manifest root for capture (default: --user).
+  --all                       capture: snapshot the full container install set.
+
+Examples:
+  dce extensions show myapp
+  dce extensions list myapp --format json
+  dce extensions available myapp
+  dce extensions diff myapp
+  dce extensions capture myapp --scope nodejs esbenp.prettier-vscode
+  dce extensions capture myapp --scope all --all
+
+Migration recipe (adopt manifests without losing current extensions):
+  dce extensions capture myapp --scope all --all
+  dce config sync-vscode myapp
+
+Notes:
+  - Declared extensions survive `dce rebuild-container` via devcontainer.json
+    (VS Code re-installs them on next open); UNDECLARED extensions are lost on
+    rebuild -- `dce extensions diff` shows them, and `dce rebuild-container`
+    warns before destroying them.
+  - `dce config sync-vscode` fully-manages the array once any manifest exists;
+    before adoption it leaves a hand-curated array untouched (migration guard).
+  - Drift surfaces in `dce doctor <project>` and `dce extensions diff`, and as a
+    pre-destroy warning from `dce rebuild-container`.
 EOF
 }
 
@@ -1183,7 +1264,7 @@ Description:
 
 Arguments:
               [command]  Optional command name to show detailed help for. One of:
-              new, start, stop, status, list, shell, logs, exec, restart, rm,
+              new, start, stop, status, list, shell, logs, editor, extensions, exec, restart, rm,
               rebuild-container, rebuild-image, snapshot, provenance, clean, config, doctor, network, install, rotate-token, version, help
 
 Aliases:
@@ -1236,6 +1317,7 @@ case "$COMMAND" in
   shell)              _show_help_shell ;;
   logs)               _show_help_logs ;;
   editor)             _show_help_editor ;;
+  extensions)         _show_help_extensions ;;
   exec)               _show_help_exec ;;
   restart)            _show_help_restart ;;
   rm)                 _show_help_rm ;;

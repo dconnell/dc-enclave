@@ -30,6 +30,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/devcontainer.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/extensions.sh"
 
 # --- friendly-key vocabulary -------------------------------------------------
 # Mutable keys map a short name to the real config key + kind. Read-only keys
@@ -416,10 +418,10 @@ do_sync_vscode() {
   # Re-derive the managed dockerfile (needs the overlay dirs -> global config).
   dce_load_global_config
 
-  local scopes="${CONTAINER_OVERLAY_SCOPES:-}"
+  local scopes_csv="${CONTAINER_OVERLAY_SCOPES:-}"
   local build_file=""
-  build_file="$(dce_devcontainer_build_file "$ROOT_DIR" "$scopes")" \
-    || dce_die "Could not derive the managed Containerfile path for scopes '$scopes'."
+  build_file="$(dce_devcontainer_build_file "$ROOT_DIR" "$scopes_csv")" \
+    || dce_die "Could not derive the managed Containerfile path for scopes '$scopes_csv'."
 
   local dc_file="$REPOS_DIR/.devcontainer/devcontainer.json"
   if [[ ! -f "$dc_file" ]]; then
@@ -442,10 +444,22 @@ do_sync_vscode() {
   local tz=""
   tz="$(dce_host_timezone)" || tz=""
 
+  # Resolve the editor-extensions set for this project's scopes (vscode in v1)
+  # and the adoption flag (any effective manifest present). Passed to sync so it
+  # either fully-manages customizations.vscode.extensions (adopted) or leaves a
+  # hand-curated array untouched (migration guard). See plans/extensions.md.
+  local ext_csv=""
+  local ext_manifests="false"
+  if dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "$scopes_csv" 2>/dev/null; then
+    ext_manifests="true"
+    ext_csv="$(dce_ext_resolve_csv vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "$scopes_csv" 2>/dev/null)"
+  fi
+
   # shellcheck disable=SC2153
   # SECRET_DIR is a global populated by dce_load_project_config (not a typo).
   dce_devcontainer_sync "$project" "$dc_file" "$build_file" "$ROOT_DIR" "$SECRET_DIR" \
-    "$hidden_csv" "$nets_csv" "$ports_csv" "$tz" "$dry_run" "$(dce_git_auth_method)"
+    "$hidden_csv" "$nets_csv" "$ports_csv" "$tz" "$dry_run" "$(dce_git_auth_method)" \
+    "vscode" "$ext_csv" "$ext_manifests"
 }
 
 # --- dispatch ----------------------------------------------------------------

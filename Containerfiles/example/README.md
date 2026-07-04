@@ -11,6 +11,32 @@ Typical overlay workflow:
 2. Copy starter overlay fragments from this directory into one of those namespaces.
 3. Edit them for your team/personal workflow.
 
+## Extension manifests
+
+Editor extensions are declared separately from overlay `Containerfile.*` layers.
+Copy these starter manifests into your team/user extension roots:
+
+```
+$DC_TEAM_DIR/extensions/vscode/
+$DC_USER_DIR/extensions/vscode/
+```
+
+Templates shipped here:
+
+- `extensions/vscode/all.txt`
+- `extensions/vscode/nodejs.txt`
+
+Example bootstrap flow:
+
+```bash
+mkdir -p "$DC_USER_DIR/extensions/vscode"
+cp Containerfiles/example/extensions/vscode/*.txt "$DC_USER_DIR/extensions/vscode/"
+dce config sync-vscode <project>
+```
+
+Use `dce extensions diff <project>` to inspect runtime drift and
+`dce extensions capture` to curate additions back into manifests.
+
 Supported auto-layer filenames in team/user namespaces:
 
 - `Containerfile.all`
