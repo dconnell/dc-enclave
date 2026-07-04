@@ -2,7 +2,9 @@
 
 A thin wrapper of readable Bash 4+ scripts that turns any container runtime into a one-command isolated dev environment. Spin one up, shell in from the terminal or open it in VS Code, and run your code and AI agents inside a sandbox you can wipe and rebuild in seconds.
 
-You bring the runtime — apple/container, Docker Desktop, OrbStack, Colima, or Podman, on macOS, Linux, and WSL2. DC Enclave handles bootstrap, per-project credentials, rebuilds, and recovery with the same `dce` commands everywhere.
+You bring the runtime — apple/container, Docker Desktop, OrbStack, Colima, or Podman, on macOS, Linux\*, and WSL2\*. DC Enclave handles bootstrap, per-project credentials, rebuilds, and recovery with the same `dce` commands everywhere.
+
+> **\* Platform support:** Only macOS has been tested so far. Linux validation is planned soon. WSL2 is currently untested and there is no Windows environment on hand to verify it; feedback from anyone running DC Enclave on either platform would be especially welcome.
 
 ## Why
 
