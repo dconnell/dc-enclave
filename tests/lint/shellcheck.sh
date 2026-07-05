@@ -80,13 +80,20 @@ if ! command -v shellcheck >/dev/null 2>&1; then
   exit 0
 fi
 
-# Installed: any finding fails the suite. --shell=bash pins the dialect (the
-# whole repo is Bash 4+); --source-path gives include context without enabling
-# --external-sources (which would chase dynamic `source "$var"` and add noise).
-# No global --exclude: suppressions live as directive comments in each file.
+# Settings source of truth: this driver passes no flag overrides, so a missing
+# .shellcheckrc would let shellcheck fall back to its built-in defaults and the
+# verdict could silently drift. Fail fast instead.
+[[ -f "$ROOT_DIR/.shellcheckrc" ]] \
+  || fail "missing $ROOT_DIR/.shellcheckrc -- settings source of truth is gone"
+
+# Installed: any finding fails the suite. Settings (shell dialect, severity,
+# external-sources) live in .shellcheckrc at the repo root -- this driver
+# invokes `shellcheck <file>` with NO flag overrides, so the rc is the single
+# source of truth consumed by both this harness and editor integrations.
+# Suppressions live as inline `# shellcheck disable=SCxxxx` directives per site.
 failures=0
 for f in "${FILES[@]}"; do
-  if shellcheck --shell=bash --source-path="$ROOT_DIR" "$ROOT_DIR/$f"; then
+  if shellcheck "$ROOT_DIR/$f"; then
     pass "shellcheck $f"
   else
     failures=$((failures + 1))

@@ -1,13 +1,16 @@
 # =============================================================================
-# .shellcheckrc - Repo-wide ShellCheck defaults.
+# .shellcheckrc - Repo-wide ShellCheck defaults. SINGLE SOURCE OF TRUTH.
 #
-# Mirrors the flags hard-coded in tests/lint/shellcheck.sh so that:
-#   - editor integrations (which auto-load this file) see the same dialect and
-#     include search path as the test runner;
-#   - running `shellcheck <file>` from the repo root with no extra args produces
-#     the same verdict as `bash tests/lint/shellcheck.sh`.
+# Consumed by:
+#   - tests/lint/shellcheck.sh, the CI harness, which invokes `shellcheck <file>`
+#     with NO flag overrides so this file alone determines the verdict;
+#   - editor integrations (VS Code, flycheck, etc.) that auto-load .shellcheckrc.
 #
-# Policy (do NOT change without also editing tests/lint/shellcheck.sh):
+# Running `shellcheck <file>` from the repo root with no extra args produces the
+# same verdict as `bash tests/lint/shellcheck.sh`. Change a setting here and both
+# consumers see it -- nothing else to edit.
+#
+# Policy:
 #   - shell=bash, bash 4+. The whole codebase requires Bash 4+ (associative
 #     arrays, ${v,,}, mapfile, BASH_REMATCH); pinning the dialect avoids
 #     spurious POSIX-mode findings.
