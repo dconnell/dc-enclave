@@ -1,0 +1,26 @@
+# =============================================================================
+# .shellcheckrc - Repo-wide ShellCheck defaults.
+#
+# Mirrors the flags hard-coded in tests/lint/shellcheck.sh so that:
+#   - editor integrations (which auto-load this file) see the same dialect and
+#     include search path as the test runner;
+#   - running `shellcheck <file>` from the repo root with no extra args produces
+#     the same verdict as `bash tests/lint/shellcheck.sh`.
+#
+# Policy (do NOT change without also editing tests/lint/shellcheck.sh):
+#   - shell=bash, bash 4+. The whole codebase requires Bash 4+ (associative
+#     arrays, ${v,,}, mapfile, BASH_REMATCH); pinning the dialect avoids
+#     spurious POSIX-mode findings.
+#   - external-sources=false. Dynamic `source "$var"` is pervasive (lib files
+#     are resolved at runtime); chasing those adds noise. Each dynamic source
+#     carries an inline `# shellcheck disable=SC1090/SC1091` directive.
+#   - no global disable= list. Suppressions live as inline
+#     `# shellcheck disable=SCxxxx` directives at each call site so the
+#     justification travels with the suppressed code.
+# =============================================================================
+shell=bash
+external-sources=false
+
+# Calibrate which checks are in scope. The default style severity (style) keeps
+# the readable-by-default findings; nothing is silenced globally.
+minimum-severity=style
