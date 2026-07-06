@@ -103,10 +103,8 @@ dce_validate_ip_value() {
   fi
 
   local octet=""
-  local IFS=.
   local -a octets=()
-  # shellcheck disable=SC2206
-  octets=($value)
+  IFS=. read -r -a octets <<< "$value"
   for octet in "${octets[@]}"; do
     # Reject leading zeros like 010 (ambiguous octal) while allowing single 0.
     if [[ "$octet" =~ ^0[0-9]+$ ]]; then

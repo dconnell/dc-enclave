@@ -574,9 +574,8 @@ do_list() {
   local snap_prefix="dce-snap-"
   local -a rows=()
   local repo="" tag=""
-  # shellcheck disable=SC2034
   # image_id (3rd field) is read to keep `tag` clean but is not used here.
-  while IFS=$'\t' read -r repo tag id; do
+  while IFS=$'\t' read -r repo tag _id; do
     [[ "$repo" == "$snap_prefix"* ]] || continue
     [[ "$tag" == "latest" ]] || continue
 

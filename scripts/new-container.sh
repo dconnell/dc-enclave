@@ -466,7 +466,6 @@ _dce_new_repo_path_chars_unsafe() {  # <value>
   # is not double-bracketed. Kept unquoted in the =~ so it is treated as a
   # character class, not a literal string.
   local _safe='[:alnum:]/._~+@, -'
-  # shellcheck disable=SC2250
   [[ "$v" =~ [^$_safe] ]]
 }
 
