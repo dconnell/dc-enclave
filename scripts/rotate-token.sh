@@ -37,8 +37,7 @@ source "$ROOT_DIR/lib/container-backend.sh"
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'."
-  exit 1
+  dce_die "No config for '$PROJECT'."
 fi
 
 dce_load_project_config "$CONFIG"

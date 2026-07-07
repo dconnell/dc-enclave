@@ -110,6 +110,14 @@ Reclaim snapshots with:
 EOF
 }
 
+usage_die() {
+  local msg="$1"
+  dce_die "$msg
+Usage: dce snapshot <project> [<label>] [--exclude-volumes] [--exclude-volume <path>...] [--yes|-y]
+       dce snapshot rm <project> <label>
+       dce snapshots list [<project>]"
+}
+
 # Human-readable byte count (1024-based) for display. Empty input -> "?".
 _fmt_size() {
   local bytes="$1"
@@ -164,9 +172,7 @@ do_create() {
         ;;
       --exclude-volume)
         [[ $# -ge 2 && "$2" != --* ]] || {
-          echo "ERROR: --exclude-volume requires a path (or comma-separated list)." >&2
-          USAGE >&2
-          exit 1
+          usage_die "--exclude-volume requires a path (or comma-separated list)."
         }
         exclude_volume_args+=("$2")
         shift 2
@@ -180,9 +186,7 @@ do_create() {
         exit 0
         ;;
       --*)
-        echo "ERROR: Unknown option: $1" >&2
-        USAGE >&2
-        exit 1
+        usage_die "Unknown option: $1"
         ;;
       *)
         if [[ -z "$project" ]]; then
@@ -190,31 +194,27 @@ do_create() {
         elif [[ -z "$label" ]]; then
           label="$1"
         else
-          echo "ERROR: Unexpected argument: $1" >&2
-          USAGE >&2
-          exit 1
+          usage_die "Unexpected argument: $1"
         fi
         shift
         ;;
     esac
   done
 
-  [[ -n "$project" ]] || { echo "ERROR: snapshot requires a <project>." >&2; USAGE >&2; exit 1; }
+  [[ -n "$project" ]] || usage_die "snapshot requires a <project>."
 
   if [[ -z "$label" ]]; then
     label="$(date -u +%Y%m%d-%H%M%S)"
   else
     if ! dce_validate_snapshot_label "$label"; then
-      echo "ERROR: Invalid snapshot label '$label'." >&2
-      echo "  Allowed pattern: ^[A-Za-z0-9_.-]+\$ (no spaces, '/', or ':')." >&2
-      exit 1
+      dce_die "Invalid snapshot label '$label'.
+  Allowed pattern: ^[A-Za-z0-9_.-]+\$ (no spaces, '/', or ':')."
     fi
   fi
 
   local config="$HOME/.config/dce-enclave/$project/config"
   if [[ ! -f "$config" ]]; then
-    echo "ERROR: No project '$project' (config not found)." >&2
-    exit 1
+    dce_die "No project '$project' (config not found)."
   fi
 
   dce_load_project_config "$config"
@@ -232,16 +232,14 @@ do_create() {
   local backend; backend="$(backend_name)"
 
   if ! backend_exists "$project"; then
-    echo "ERROR: container '$project' does not exist on backend '$backend'." >&2
-    echo "       Snapshots commit a running container's filesystem." >&2
-    exit 1
+    dce_die "container '$project' does not exist on backend '$backend'.
+       Snapshots commit a running container's filesystem."
   fi
 
   if backend_image_exists "$snap_ref"; then
-    echo "ERROR: a snapshot with label '$label' already exists for '$project':" >&2
-    echo "         $snap_ref" >&2
-    echo "       Reclaim it first with: dce snapshot rm $project $label" >&2
-    exit 1
+    dce_die "a snapshot with label '$label' already exists for '$project':
+         $snap_ref
+       Reclaim it first with: dce snapshot rm $project $label"
   fi
 
   # Resolve the per-path exclusion set from --exclude-volume args. Each must be a
@@ -358,12 +356,11 @@ do_create() {
         "dce.snapshot.base=$base_ref" \
         "dce.snapshot.utc=$snap_utc" \
         "dce.snapshot.cred_scrub=$cred_scrub_status"; then
-    echo "ERROR: snapshot commit failed." >&2
     if $was_running; then
       echo "  (restarting container to restore its running state)" >&2
       backend_start "$project" || true
     fi
-    exit 1
+    dce_die "snapshot commit failed."
   fi
 
   # --- Hidden-volume capture (DEFAULT; --exclude-volumes / --exclude-volume) -
@@ -479,16 +476,13 @@ do_rm() {
   local project="${1:-}"
   local label="${2:-}"
 
-  [[ -n "$project" ]] || { echo "ERROR: snapshot rm requires <project> <label>." >&2; USAGE >&2; exit 1; }
-  [[ -n "$label" ]]   || { echo "ERROR: snapshot rm requires <project> <label>." >&2; USAGE >&2; exit 1; }
+  [[ -n "$project" ]] || usage_die "snapshot rm requires <project> <label>."
+  [[ -n "$label" ]]   || usage_die "snapshot rm requires <project> <label>."
   if [[ $# -gt 2 ]]; then
-    echo "ERROR: Unexpected argument(s): ${*:3}" >&2
-    USAGE >&2
-    exit 1
+    usage_die "Unexpected argument(s): ${*:3}"
   fi
   if ! dce_validate_snapshot_label "$label"; then
-    echo "ERROR: Invalid snapshot label '$label'." >&2
-    exit 1
+    dce_die "Invalid snapshot label '$label'."
   fi
 
   backend_use "${CONTAINER_BACKEND:-}"
@@ -497,9 +491,8 @@ do_rm() {
   snap_ref="$(dce_snapshot_ref "$project" "$label")"
 
   if ! backend_image_exists "$snap_ref"; then
-    echo "ERROR: no snapshot '$label' for '$project' ($snap_ref)." >&2
-    echo "       Run: dce snapshots list $project" >&2
-    exit 1
+    dce_die "no snapshot '$label' for '$project' ($snap_ref).
+       Run: dce snapshots list $project"
   fi
 
   backend_remove_image "$snap_ref"
@@ -532,9 +525,7 @@ do_list() {
   local project="${1:-}"
 
   if [[ $# -gt 1 ]]; then
-    echo "ERROR: Unexpected argument(s): ${*:2}" >&2
-    USAGE >&2
-    exit 1
+    usage_die "Unexpected argument(s): ${*:2}"
   fi
 
   backend_use "${CONTAINER_BACKEND:-}"
@@ -560,8 +551,7 @@ do_list() {
   if [[ -n "$project" ]]; then
     target_slug="$(dce_project_slug "$project")"
     if [[ ! -d "$cfg_dir/$project" ]]; then
-      echo "ERROR: No project '$project' (config not found)." >&2
-      exit 1
+      dce_die "No project '$project' (config not found)."
     fi
   fi
 

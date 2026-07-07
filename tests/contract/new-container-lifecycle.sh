@@ -311,7 +311,7 @@ if run_script "$ROOT_DIR/scripts/new-container.sh" "badhost" --git-host bitbucke
   >"$WORK/bad.stdout" 2>"$WORK/bad.stderr"; then
   fail "gitlab: unknown provider must fail fast"
 fi
-grep -Fq "Unknown git host 'bitbucket'" "$WORK/bad.stdout" || fail "gitlab: unknown-provider error message"
+grep -Fq "Unknown git host 'bitbucket'" "$WORK/bad.stderr" || fail "gitlab: unknown-provider error message"
 
 pass "dce new --git-host gitlab: provider token file, sentinel, config key, fail-fast"
 
@@ -371,8 +371,9 @@ if printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJEC
       >"$WORK/ff.stdout" 2>"$WORK/ff.stderr"; then
   fail "rebuild: must fail fast when derived image missing"
 fi
-# The "Run: dce rebuild-image all" guidance is echoed on stdout by rebuild.
-grep -Fqi 'rebuild-image all' "$WORK/ff.stdout" \
+# The "Run: dce rebuild-image all" guidance is part of the fatal error, which
+# routes through dce_die (stderr).
+grep -Fqi 'rebuild-image all' "$WORK/ff.stderr" \
   || fail "rebuild: fail-fast error should instruct dce rebuild-image all"
 if grep -qE 'rm -f myapp|create --name myapp|stop myapp' "$LOG"; then
   fail "rebuild: fail-fast must NOT issue destructive calls

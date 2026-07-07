@@ -127,6 +127,7 @@ _csv_lines() {
 # contract is identical to `new`/`rebuild-container`.
 _cfg_normalize_value() {
   local key="$1" value="$2"
+  local msg=""
   case "$key" in
     cpus)
       dce_validate_cpus_value "$value" || return 1
@@ -146,8 +147,8 @@ _cfg_normalize_value() {
       while IFS= read -r p; do
         [[ -z "$p" ]] && continue
         if [[ ! "$p" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
-          printf 'ERROR: invalid port %q (expected N or N:N)\n' "$p" >&2
-          return 1
+          printf -v msg 'invalid port %q (expected N or N:N)' "$p"
+          dce_die "$msg"
         fi
         printf '%s\n' "$p"
       done < <(_csv_lines "$value")
@@ -171,8 +172,8 @@ _cfg_normalize_value() {
         [[ -z "$n" ]] && continue
         if [[ "$n" == *:* ]]; then name="${n%%:*}"; ip="${n#*:}"; else name="$n"; ip=""; fi
         if ! dce_validate_network_name "$name"; then
-          printf 'ERROR: invalid network name in %q\n' "$n" >&2
-          return 1
+          printf -v msg 'invalid network name in %q' "$n"
+          dce_die "$msg"
         fi
         if [[ -n "$ip" ]] && ! dce_validate_ip_value "$ip" >&2; then
           return 1
@@ -181,8 +182,8 @@ _cfg_normalize_value() {
       done < <(_csv_lines "$value")
       ;;
     *)
-      printf 'ERROR: unknown key %q\n' "$key" >&2
-      return 1
+      printf -v msg 'unknown key %q' "$key"
+      dce_die "$msg"
       ;;
   esac
 }
@@ -215,7 +216,8 @@ _join_array_or_none() {
 # --- show --------------------------------------------------------------------
 do_show() {
   local project="${1:-}"
-  [[ -n "$project" ]] || { echo "ERROR: 'dce config show' requires <name>" >&2; USAGE >&2; exit 1; }
+  [[ -n "$project" ]] || dce_die "'dce config show' requires <name>.
+Usage: dce config show <name>"
   local config=""
   config="$(_cfg_require_config "$project")"
   dce_load_project_config "$config"
@@ -248,9 +250,8 @@ do_show() {
 do_get() {
   local project="${1:-}" friendly="${2:-}"
   if [[ -z "$project" || -z "$friendly" ]]; then
-    echo "ERROR: 'dce config get' requires <name> <key>" >&2
     printf '  Valid keys: %s\n' "$(_cfg_all_keys)" >&2
-    exit 1
+    dce_die "'dce config get' requires <name> <key>"
   fi
   local config=""
   config="$(_cfg_require_config "$project")"
@@ -284,24 +285,22 @@ do_set() {
   local friendly="" value=""
 
   if [[ -z "$project" || -z "$second" ]]; then
-    echo "ERROR: 'dce config set' requires <name> <key>=<value>" >&2
-    USAGE >&2
-    exit 1
+    dce_die "'dce config set' requires <name> <key>=<value>.
+Usage: dce config set <name> <key>=<value>
+       dce config set <name> <key> <value>"
   fi
 
   if [[ "$second" == *=* ]]; then
     # equals form: project + key=value (no extra args)
     if [[ $# -ne 2 ]]; then
-      echo "ERROR: 'key=value' form takes no extra args" >&2
-      exit 1
+      dce_die "'key=value' form takes no extra args"
     fi
     friendly="${second%%=*}"
     value="${second#*=}"
   else
     # space form: project key value
     if [[ $# -ne 3 ]]; then
-      echo "ERROR: 'dce config set' needs <name> <key> <value> (or <key>=<value>)" >&2
-      exit 1
+      dce_die "'dce config set' needs <name> <key> <value> (or <key>=<value>)"
     fi
     friendly="$second"
     value="${3:-}"
@@ -380,9 +379,8 @@ do_sync_vscode() {
   local dry_run="false"
 
   if [[ -z "$project" ]]; then
-    echo "ERROR: 'dce config sync-vscode' requires <name>" >&2
-    USAGE >&2
-    exit 1
+    dce_die "'dce config sync-vscode' requires <name>.
+Usage: dce config sync-vscode <name> [--dry-run]"
   fi
   shift
   while [[ $# -gt 0 ]]; do
@@ -393,9 +391,8 @@ do_sync_vscode() {
         return 0
         ;;
       *)
-        echo "ERROR: Unknown option for sync-vscode: $1" >&2
-        echo "  Usage: dce config sync-vscode <name> [--dry-run]" >&2
-        exit 1
+        dce_die "Unknown option for sync-vscode: $1
+  Usage: dce config sync-vscode <name> [--dry-run]"
         ;;
     esac
   done

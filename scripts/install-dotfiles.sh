@@ -27,35 +27,30 @@ source "$ROOT_DIR/lib/container-backend.sh"
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'."
-  exit 1
+  dce_die "No config for '$PROJECT'."
 fi
 
 dce_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 
 DOTFILES_SRC="$(dce_resolve_path "$DOTFILES_SRC")" || {
-  echo "ERROR: Dotfiles path could not be resolved: $DOTFILES_SRC"
-  exit 1
+  dce_die "Dotfiles path could not be resolved: $DOTFILES_SRC"
 }
 
 if [[ ! -d "$DOTFILES_SRC" ]]; then
-  echo "ERROR: Dotfiles directory not found: $DOTFILES_SRC"
-  exit 1
+  dce_die "Dotfiles directory not found: $DOTFILES_SRC"
 fi
 
 INSTALL_CMD=""
 if [[ -f "$DOTFILES_SRC/install.sh" ]]; then
   INSTALL_CMD="install.sh"
 else
-  echo "ERROR: No install.sh found in $DOTFILES_SRC"
-  exit 1
+  dce_die "No install.sh found in $DOTFILES_SRC"
 fi
 
 if ! backend_is_running "$PROJECT"; then
-  echo "ERROR: Container '$PROJECT' is not running."
-  echo "  Start it first: dce start $PROJECT"
-  exit 1
+  dce_die "Container '$PROJECT' is not running.
+  Start it first: dce start $PROJECT"
 fi
 
 # Stream the dotfiles into a temp dir inside the container (no host path

@@ -32,6 +32,13 @@ usage() {
   echo "       dce provenance <project> --help|-h"
 }
 
+usage_die() {
+  local msg="$1"
+  dce_die "$msg
+Usage: dce provenance <project> [--history|--all]
+       dce provenance <project> --help|-h"
+}
+
 HISTORY=false
 PROJECT=""
 
@@ -46,15 +53,11 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     --*)
-      echo "ERROR: Unknown option: $1" >&2
-      usage >&2
-      exit 1
+      usage_die "Unknown option: $1"
       ;;
     *)
       if [[ -n "$PROJECT" ]]; then
-        echo "ERROR: Unexpected argument: $1" >&2
-        usage >&2
-        exit 1
+        usage_die "Unexpected argument: $1"
       fi
       PROJECT="$1"
       shift
@@ -63,15 +66,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$PROJECT" ]]; then
-  echo "ERROR: Project name is required." >&2
-  usage >&2
-  exit 1
+  usage_die "Project name is required."
 fi
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No project '$PROJECT' (config not found)." >&2
-  exit 1
+  dce_die "No project '$PROJECT' (config not found)."
 fi
 
 LOG="$(dce_provenance_log_path "$PROJECT")"

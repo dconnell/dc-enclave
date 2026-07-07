@@ -15,6 +15,21 @@
 set -euo pipefail
 shopt -s nullglob
 
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/container-backend.sh"
+
 DRY_RUN=false
 CLEAN_HIDDEN_VOLUMES=false
 CLEAN_SNAPSHOTS=false
@@ -59,24 +74,8 @@ if [[ -n "$TARGET_PROJECT" && "$CLEAN_HIDDEN_VOLUMES" == "false" && "$CLEAN_SNAP
 fi
 
 if [[ "$CLEAN_HIDDEN_VOLUMES" == "true" && "$CLEAN_SNAPSHOTS" == "true" ]]; then
-  echo "ERROR: --hidden-volumes and --snapshots are mutually exclusive." >&2
-  exit 1
+  dce_die "--hidden-volumes and --snapshots are mutually exclusive."
 fi
-
-_src="${BASH_SOURCE[0]}"
-while [[ -L "$_src" ]]; do
-  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
-  _src="$(readlink "$_src")"
-  [[ "$_src" != /* ]] && _src="$_dir/$_src"
-done
-SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
-unset _src _dir
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/common.sh"
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/container-backend.sh"
 
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
@@ -87,24 +86,21 @@ case "$ACTIVE_BACKEND" in
     ;;
   colima)
     if ! backend_system_start; then
-      echo "ERROR: Colima runtime is not reachable."
-      echo "Ensure Colima uses Docker runtime and Docker context points to Colima."
-      echo "Try: colima start --runtime docker && docker context use colima"
-      exit 1
+      dce_die "Colima runtime is not reachable.
+Ensure Colima uses Docker runtime and Docker context points to Colima.
+Try: colima start --runtime docker && docker context use colima"
     fi
     ;;
   docker|orbstack)
     if ! backend_system_start 2>/dev/null; then
-      echo "ERROR: Docker-compatible runtime is not reachable."
-      echo "Start Docker Desktop or OrbStack and retry."
-      exit 1
+      dce_die "Docker-compatible runtime is not reachable.
+Start Docker Desktop or OrbStack and retry."
     fi
     ;;
   podman)
     if ! backend_system_start 2>/dev/null; then
-      echo "ERROR: Podman runtime is not reachable."
-      echo "Start Podman (for macOS: podman machine start) and retry."
-      exit 1
+      dce_die "Podman runtime is not reachable.
+Start Podman (for macOS: podman machine start) and retry."
     fi
     ;;
 esac

@@ -18,159 +18,6 @@
 # =============================================================================
 set -euo pipefail
 
-# 1. Parse arguments: project name, optional scope, flags, and port mappings.
-PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--config <path>|--config=<path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--yes|-y] [port:port ...]}"
-shift
-SCOPE_INPUT=""
-CLI_SET_SCOPE=false
-if [[ $# -gt 0 && "$1" != -* && ! "$1" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
-  SCOPE_INPUT="$1"
-  CLI_SET_SCOPE=true
-  shift
-fi
-
-if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-  echo "ERROR: Invalid project name '$PROJECT'."
-  echo "  Allowed characters: letters, numbers, dot, underscore, hyphen"
-  exit 1
-fi
-
-PORTS=()
-REPO_PATH_OVERRIDE=""
-HIDDEN_PATH_INPUTS=()
-NETWORK_INPUT=""
-NETWORK_IP=""
-RECIPE_CONFIG_PATH=""
-SAVE_TEAM_RECIPE=false
-SAVE_USER_RECIPE=false
-GIT_HOST_INPUT=""
-CLI_SET_CPUS=false
-CLI_SET_MEMORY=false
-CLI_SET_HIDE=false
-CLI_SET_NETWORK=false
-CLI_SET_IP=false
-CLI_SET_REPO_PATH=false
-CLI_SET_PORTS=false
-ASSUME_YES=false
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --config)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        echo "ERROR: --config requires a recipe file path"
-        exit 1
-      fi
-      RECIPE_CONFIG_PATH="$2"
-      shift 2
-      ;;
-    --config=*)
-      RECIPE_CONFIG_PATH="${1#--config=}"
-      if [[ -z "$RECIPE_CONFIG_PATH" ]]; then
-        echo "ERROR: --config requires a non-empty recipe file path"
-        exit 1
-      fi
-      shift
-      ;;
-    --repo-path)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        echo "ERROR: --repo-path requires a path argument"
-        exit 1
-      fi
-      REPO_PATH_OVERRIDE="$2"
-      CLI_SET_REPO_PATH=true
-      shift 2
-      ;;
-    --cpus)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        echo "ERROR: --cpus requires a value (e.g. 2, 1.5)"
-        exit 1
-      fi
-      CONTAINER_CPUS="$2"
-      CLI_SET_CPUS=true
-      shift 2
-      ;;
-    --memory)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        echo "ERROR: --memory requires a value (e.g. 4g, 512m)"
-        exit 1
-      fi
-      CONTAINER_MEMORY="$2"
-      CLI_SET_MEMORY=true
-      shift 2
-      ;;
-    --hide)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        echo "ERROR: --hide requires a value (e.g. node_modules or apps/web/node_modules,apps/api/node_modules)"
-        exit 1
-      fi
-      HIDDEN_PATH_INPUTS+=("$2")
-      CLI_SET_HIDE=true
-      shift 2
-      ;;
-    --network)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        echo "ERROR: --network requires a value (e.g. myapp or myapp,obs or myapp:10.0.0.5)"
-        exit 1
-      fi
-      NETWORK_INPUT="$2"
-      CLI_SET_NETWORK=true
-      shift 2
-      ;;
-    --ip)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        echo "ERROR: --ip requires an IPv4 address (e.g. 10.0.0.5)"
-        exit 1
-      fi
-      NETWORK_IP="$2"
-      CLI_SET_IP=true
-      shift 2
-      ;;
-    --save-team)
-      SAVE_TEAM_RECIPE=true
-      shift
-      ;;
-    --save-user)
-      SAVE_USER_RECIPE=true
-      shift
-      ;;
-    --yes|-y)
-      ASSUME_YES=true
-      shift
-      ;;
-    --git-host)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        echo "ERROR: --git-host requires a provider name (e.g. github, gitlab)"
-        exit 1
-      fi
-      GIT_HOST_INPUT="$2"
-      shift 2
-      ;;
-    --git-host=*)
-      GIT_HOST_INPUT="${1#--git-host=}"
-      if [[ -z "$GIT_HOST_INPUT" ]]; then
-        echo "ERROR: --git-host requires a provider name (e.g. github, gitlab)"
-        exit 1
-      fi
-      shift
-      ;;
-    *)
-      PORTS+=("$1")
-      CLI_SET_PORTS=true
-      shift
-      ;;
-  esac
-done
-
-# Preserve the raw CLI-supplied values so --save-team/--save-user can persist the
-# exact user inputs (not recipe defaults merged in later).
-CLI_SCOPE_INPUT="$SCOPE_INPUT"
-CLI_CONTAINER_CPUS="${CONTAINER_CPUS:-}"
-CLI_CONTAINER_MEMORY="${CONTAINER_MEMORY:-}"
-CLI_NETWORK_INPUT="$NETWORK_INPUT"
-CLI_NETWORK_IP="$NETWORK_IP"
-CLI_REPO_PATH_OVERRIDE="$REPO_PATH_OVERRIDE"
-CLI_HIDDEN_PATH_INPUTS=("${HIDDEN_PATH_INPUTS[@]}")
-CLI_PORTS=("${PORTS[@]}")
-
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"
@@ -196,14 +43,155 @@ source "$ROOT_DIR/lib/devcontainer.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/extensions.sh"
 
+# 1. Parse arguments: project name, optional scope, flags, and port mappings.
+PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--config <path>|--config=<path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--yes|-y] [port:port ...]}"
+shift
+SCOPE_INPUT=""
+CLI_SET_SCOPE=false
+if [[ $# -gt 0 && "$1" != -* && ! "$1" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
+  SCOPE_INPUT="$1"
+  CLI_SET_SCOPE=true
+  shift
+fi
+
+if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  dce_die "Invalid project name '$PROJECT'.
+  Allowed characters: letters, numbers, dot, underscore, hyphen"
+fi
+
+PORTS=()
+REPO_PATH_OVERRIDE=""
+HIDDEN_PATH_INPUTS=()
+NETWORK_INPUT=""
+NETWORK_IP=""
+RECIPE_CONFIG_PATH=""
+SAVE_TEAM_RECIPE=false
+SAVE_USER_RECIPE=false
+GIT_HOST_INPUT=""
+CLI_SET_CPUS=false
+CLI_SET_MEMORY=false
+CLI_SET_HIDE=false
+CLI_SET_NETWORK=false
+CLI_SET_IP=false
+CLI_SET_REPO_PATH=false
+CLI_SET_PORTS=false
+ASSUME_YES=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --config)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        dce_die "--config requires a recipe file path"
+      fi
+      RECIPE_CONFIG_PATH="$2"
+      shift 2
+      ;;
+    --config=*)
+      RECIPE_CONFIG_PATH="${1#--config=}"
+      if [[ -z "$RECIPE_CONFIG_PATH" ]]; then
+        dce_die "--config requires a non-empty recipe file path"
+      fi
+      shift
+      ;;
+    --repo-path)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        dce_die "--repo-path requires a path argument"
+      fi
+      REPO_PATH_OVERRIDE="$2"
+      CLI_SET_REPO_PATH=true
+      shift 2
+      ;;
+    --cpus)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        dce_die "--cpus requires a value (e.g. 2, 1.5)"
+      fi
+      CONTAINER_CPUS="$2"
+      CLI_SET_CPUS=true
+      shift 2
+      ;;
+    --memory)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        dce_die "--memory requires a value (e.g. 4g, 512m)"
+      fi
+      CONTAINER_MEMORY="$2"
+      CLI_SET_MEMORY=true
+      shift 2
+      ;;
+    --hide)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        dce_die "--hide requires a value (e.g. node_modules or apps/web/node_modules,apps/api/node_modules)"
+      fi
+      HIDDEN_PATH_INPUTS+=("$2")
+      CLI_SET_HIDE=true
+      shift 2
+      ;;
+    --network)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        dce_die "--network requires a value (e.g. myapp or myapp,obs or myapp:10.0.0.5)"
+      fi
+      NETWORK_INPUT="$2"
+      CLI_SET_NETWORK=true
+      shift 2
+      ;;
+    --ip)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        dce_die "--ip requires an IPv4 address (e.g. 10.0.0.5)"
+      fi
+      NETWORK_IP="$2"
+      CLI_SET_IP=true
+      shift 2
+      ;;
+    --save-team)
+      SAVE_TEAM_RECIPE=true
+      shift
+      ;;
+    --save-user)
+      SAVE_USER_RECIPE=true
+      shift
+      ;;
+    --yes|-y)
+      ASSUME_YES=true
+      shift
+      ;;
+    --git-host)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        dce_die "--git-host requires a provider name (e.g. github, gitlab)"
+      fi
+      GIT_HOST_INPUT="$2"
+      shift 2
+      ;;
+    --git-host=*)
+      GIT_HOST_INPUT="${1#--git-host=}"
+      if [[ -z "$GIT_HOST_INPUT" ]]; then
+        dce_die "--git-host requires a provider name (e.g. github, gitlab)"
+      fi
+      shift
+      ;;
+    *)
+      PORTS+=("$1")
+      CLI_SET_PORTS=true
+      shift
+      ;;
+  esac
+done
+
+# Preserve the raw CLI-supplied values so --save-team/--save-user can persist the
+# exact user inputs (not recipe defaults merged in later).
+CLI_SCOPE_INPUT="$SCOPE_INPUT"
+CLI_CONTAINER_CPUS="${CONTAINER_CPUS:-}"
+CLI_CONTAINER_MEMORY="${CONTAINER_MEMORY:-}"
+CLI_NETWORK_INPUT="$NETWORK_INPUT"
+CLI_NETWORK_IP="$NETWORK_IP"
+CLI_REPO_PATH_OVERRIDE="$REPO_PATH_OVERRIDE"
+CLI_HIDDEN_PATH_INPUTS=("${HIDDEN_PATH_INPUTS[@]}")
+CLI_PORTS=("${PORTS[@]}")
+
 # Resolve the git host provider (github default). Validated against the registry
 # so an unknown id fails fast with the known set, before any backend work.
 GIT_HOST="$(dce_git_host_default)"
 if [[ -n "$GIT_HOST_INPUT" ]]; then
   if ! dce_git_host_is_known "$GIT_HOST_INPUT"; then
-    echo "ERROR: Unknown git host '$GIT_HOST_INPUT'."
-    echo "  Known providers: $(dce_git_host_known_providers | tr '\n' ' ')"
-    exit 1
+    dce_die "Unknown git host '$GIT_HOST_INPUT'.
+  Known providers: $(dce_git_host_known_providers | tr '\n' ' ')"
   fi
   GIT_HOST="$GIT_HOST_INPUT"
 fi
@@ -263,8 +251,7 @@ if $SAVE_TEAM_RECIPE || $SAVE_USER_RECIPE; then
       if [[ "$SAVE_PORT_MAPPING" =~ ^[0-9]+(:[0-9]+)?$ ]]; then
         SAVE_RECIPE_LINES+=("port=$SAVE_PORT_MAPPING")
       else
-        echo "ERROR: Invalid port mapping '$SAVE_PORT_MAPPING'. Use host:container (e.g., 5173:5173)."
-        exit 1
+        dce_die "Invalid port mapping '$SAVE_PORT_MAPPING'. Use host:container (e.g., 5173:5173)."
       fi
     done
   fi
@@ -312,8 +299,7 @@ fi
 
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
-  echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
-  exit 1
+  dce_die "Compose helper not found at $COMPOSE_SCRIPT"
 fi
 
 # 2. Resolve the derived image for these scopes (dce-base:latest when none).
@@ -339,14 +325,12 @@ fi
 if [[ -n "$NETWORK_IP" ]]; then
   dce_validate_ip_value "$NETWORK_IP" || exit 1
   if [[ ${#CONTAINER_NETWORKS[@]} -eq 0 ]]; then
-    echo "ERROR: --ip requires --network (no networks requested)."
-    exit 1
+    dce_die "--ip requires --network (no networks requested)."
   fi
   primary="${CONTAINER_NETWORKS[0]}"
   if [[ "$primary" == *:* ]]; then
-    echo "ERROR: --ip conflicts with an explicit IP on the primary network ('$primary')."
-    echo "       Use either --ip <addr> or the 'name:ip' syntax, not both."
-    exit 1
+    dce_die "--ip conflicts with an explicit IP on the primary network ('$primary').
+       Use either --ip <addr> or the 'name:ip' syntax, not both."
   fi
   CONTAINER_NETWORKS[0]="${primary}:${NETWORK_IP}"
 fi
@@ -365,8 +349,7 @@ for port_mapping in "${PORTS[@]}"; do
     PORT_ARGS+=(--publish "$port_mapping:$port_mapping")
     FORWARD_PORTS+=("$port_mapping")
   else
-    echo "ERROR: Invalid port mapping '$port_mapping'. Use host:container (e.g., 5173:5173)."
-    exit 1
+    dce_die "Invalid port mapping '$port_mapping'. Use host:container (e.g., 5173:5173)."
   fi
 done
 
@@ -377,9 +360,8 @@ CONFIG_FILE="$HOME/.config/dce-enclave/$PROJECT/config"
 CONFIG_FILE_DISPLAY="~/.config/dce-enclave/$PROJECT/config"
 
 if [[ -f "$CONFIG_FILE" ]]; then
-  echo "ERROR: Project '$PROJECT' already exists (config: $CONFIG_FILE_DISPLAY)"
-  echo "Choose a different name or remove the existing project config."
-  exit 1
+  dce_die "Project '$PROJECT' already exists (config: $CONFIG_FILE_DISPLAY)
+Choose a different name or remove the existing project config."
 fi
 
 backend_use "${CONTAINER_BACKEND:-}"
@@ -390,15 +372,13 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
 fi
 
 if ! backend_image_exists "dce-base:latest"; then
-  echo "ERROR: Base image 'dce-base:latest' not found on backend '$ACTIVE_BACKEND'."
-  echo "  Run setup first: CONTAINER_BACKEND=$ACTIVE_BACKEND scripts/setup.sh"
-  exit 1
+  dce_die "Base image 'dce-base:latest' not found on backend '$ACTIVE_BACKEND'.
+  Run setup first: CONTAINER_BACKEND=$ACTIVE_BACKEND scripts/setup.sh"
 fi
 
 if backend_exists "$PROJECT"; then
-  echo "ERROR: Container '$PROJECT' already exists."
-  echo "To rebuild: dce rebuild-container $PROJECT"
-  exit 1
+  dce_die "Container '$PROJECT' already exists.
+To rebuild: dce rebuild-container $PROJECT"
 fi
 
 # Validate the requested network membership against the selected backend: enforce
@@ -499,24 +479,25 @@ fi
 # with characters unsafe for a bind-mount source (`:` splits the mount spec, etc.)
 # is refused regardless of whether it came from the CLI or a recipe.
 if _dce_new_repo_path_chars_unsafe "$repo_target"; then
-  echo "ERROR: repo-path contains characters that are unsafe for a bind-mount source: $repo_target" >&2
-  echo "       (Allowed: letters, digits, and  / . _ - ~ + @ , and space.)" >&2
+  _new_repo_err="repo-path contains characters that are unsafe for a bind-mount source: $repo_target
+       (Allowed: letters, digits, and  / . _ - ~ + @ , and space.)"
   if [[ -n "$REPO_PATH_OVERRIDE" && "$CLI_SET_REPO_PATH" == true ]]; then
-    echo "       (--repo-path was: $REPO_PATH_OVERRIDE)" >&2
+    _new_repo_err+="
+       (--repo-path was: $REPO_PATH_OVERRIDE)"
   elif [[ -n "$REPO_PATH_OVERRIDE" ]]; then
-    echo "       (recipe repo-path was: $REPO_PATH_OVERRIDE)" >&2
+    _new_repo_err+="
+       (recipe repo-path was: $REPO_PATH_OVERRIDE)"
   fi
-  exit 1
+  dce_die "$_new_repo_err"
 fi
 
 mkdir -p "$repo_target"
 REPOS_DIR="$(dce_resolve_path "$repo_target")" || {
   if [[ -n "$REPO_PATH_OVERRIDE" ]]; then
-    echo "ERROR: --repo-path could not be resolved: $REPO_PATH_OVERRIDE"
+    dce_die "--repo-path could not be resolved: $REPO_PATH_OVERRIDE"
   else
-    echo "ERROR: Default repo path could not be resolved: $repo_target"
+    dce_die "Default repo path could not be resolved: $repo_target"
   fi
-  exit 1
 }
 
 # Canonical anchors (symlinks resolved) so the trust boundary reasons about where
@@ -531,10 +512,9 @@ DEFAULT_REPOS_ROOT_CANON="$(dce_resolve_path "$DEFAULT_REPOS_ROOT_CANON" 2>/dev/
 # skips this layer entirely.
 if [[ -n "$REPO_PATH_OVERRIDE" && "$CLI_SET_REPO_PATH" != true ]]; then
   if _dce_new_repo_path_is_sensitive_root "$REPOS_DIR" "$HOME_CANON" "$DEFAULT_REPOS_ROOT_CANON"; then
-    echo "ERROR: recipe repo-path resolves to '$REPOS_DIR', a sensitive root" >&2
-    echo "       (/, your home, the repos root, or a parent of it); refusing to widen the bind mount." >&2
-    echo "       (recipe repo-path was: $REPO_PATH_OVERRIDE)" >&2
-    exit 1
+    dce_die "recipe repo-path resolves to '$REPOS_DIR', a sensitive root
+       (/, your home, the repos root, or a parent of it); refusing to widen the bind mount.
+       (recipe repo-path was: $REPO_PATH_OVERRIDE)"
   fi
   if [[ "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON" && "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON/"* ]]; then
     echo "Recipe 'repo-path' resolves outside the default repos directory:"
@@ -559,8 +539,7 @@ DEVCONTAINER_BUILD_FILE="$ROOT_DIR/Containerfiles/Containerfile.base"
 # If scopes select a derived image, compose+build it once (reuse if present).
 if [[ "$IMAGE" != "dce-base:latest" ]]; then
   IMAGE_HASH="$(dce_image_hash_from_ref "$IMAGE")" || {
-    echo "ERROR: Could not derive image hash from image ref: $IMAGE"
-    exit 1
+    dce_die "Could not derive image hash from image ref: $IMAGE"
   }
 
   COMPOSED_CONTAINERFILE="$ROOT_DIR/Containerfiles/generated/Containerfile.${IMAGE_HASH}"
@@ -787,8 +766,7 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
     target="/workspace/$hidden_path"
     backend_exec_as_root "$PROJECT" sh -lc "mkdir -p '$target' && chown -R dev:dev '$target'"
     if ! backend_exec "$PROJECT" sh -lc "test -w '$target'"; then
-      echo "ERROR: Hidden path is not writable by dev: $target"
-      exit 1
+      dce_die "Hidden path is not writable by dev: $target"
     fi
   done
 fi

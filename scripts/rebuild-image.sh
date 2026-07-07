@@ -101,8 +101,7 @@ dce_load_global_config
 CONFIG_DIR="$HOME/.config/dce-enclave"
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
-  echo "ERROR: Compose helper not found at $COMPOSE_SCRIPT"
-  exit 1
+  dce_die "Compose helper not found at $COMPOSE_SCRIPT"
 fi
 
 # Scan every project config, derive its image, and build each unique derived
@@ -131,8 +130,7 @@ while IFS= read -r config_file; do
   # Build each unique derived repo once; other projects sharing it reuse it.
   if [[ -z "${BUILT_REPOS[$image_repo]-}" ]]; then
     image_hash="$(dce_image_hash_from_ref "$image_ref")" || {
-      echo "ERROR: Could not derive image hash from image ref: $image_ref"
-      exit 1
+      dce_die "Could not derive image hash from image ref: $image_ref"
     }
 
     composed_file="$ROOT_DIR/Containerfiles/generated/Containerfile.${image_hash}"

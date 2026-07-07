@@ -528,7 +528,7 @@ if printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJEC
       >"$WORK/rbmiss.stdout" 2>"$WORK/rbmiss.stderr"; then
   fail "rebuild --from-snap: must fail when the snapshot is missing"
 fi
-grep -Fqi 'snapshot' "$WORK/rbmiss.stdout" || fail "rebuild --from-snap: missing-snapshot error should name the snapshot"
+grep -Fqi 'snapshot' "$WORK/rbmiss.stderr" || fail "rebuild --from-snap: missing-snapshot error should name the snapshot"
 if grep -qE 'rm -f myapp|create --name myapp' "$LOG"; then
   fail "rebuild --from-snap: must NOT issue destructive calls when the snapshot is missing"
 fi

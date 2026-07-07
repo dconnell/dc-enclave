@@ -18,6 +18,21 @@
 # =============================================================================
 set -euo pipefail
 
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/container-backend.sh"
+
 PROJECT=""
 ASSUME_YES=false
 KEEP_CONFIG=false
@@ -42,17 +57,15 @@ while [[ $# -gt 0 ]]; do
       break
       ;;
     -*)
-      echo "ERROR: Unknown option: $1" >&2
-      echo "Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
-      exit 1
+      dce_die "Unknown option: $1
+Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]"
       ;;
     *)
       if [[ -z "$PROJECT" ]]; then
         PROJECT="$1"
       else
-        echo "ERROR: Unexpected argument: $1" >&2
-        echo "Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
-        exit 1
+        dce_die "Unexpected argument: $1
+Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]"
       fi
       shift
       ;;
@@ -60,32 +73,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$PROJECT" ]]; then
-  echo "ERROR: Project name is required." >&2
-  echo "Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]" >&2
-  exit 1
+  dce_die "Project name is required.
+Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]"
 fi
 
 # Reject anything outside the identifier grammar new-container accepts, so the
 # constructed secrets path can never contain traversal/escape sequences.
 if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-  echo "ERROR: Invalid project name: $PROJECT" >&2
-  exit 1
+  dce_die "Invalid project name: $PROJECT"
 fi
-
-_src="${BASH_SOURCE[0]}"
-while [[ -L "$_src" ]]; do
-  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
-  _src="$(readlink "$_src")"
-  [[ "$_src" != /* ]] && _src="$_dir/$_src"
-done
-SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
-unset _src _dir
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/common.sh"
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/container-backend.sh"
 
 SECRET_DIR="$HOME/.config/dce-enclave/$PROJECT"
 CONFIG="$SECRET_DIR/config"
@@ -237,8 +233,7 @@ if ! $KEEP_CONFIG; then
     secret_real="$(cd -P "$SECRET_DIR" 2>/dev/null && pwd)"
     if [[ -n "$dce_root_real" && -n "$secret_real" ]]; then
       if [[ "$secret_real" != "$dce_root_real" && "$secret_real" != "$dce_root_real"/* ]]; then
-        echo "ERROR: Refusing to remove '$SECRET_DIR': resolves outside the DC Enclave config root." >&2
-        exit 1
+        dce_die "Refusing to remove '$SECRET_DIR': resolves outside the DC Enclave config root."
       fi
     fi
     rm -rf "$SECRET_DIR"

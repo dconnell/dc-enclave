@@ -18,6 +18,29 @@
 # =============================================================================
 set -euo pipefail
 
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/container-backend.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/network.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/vscode.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/devcontainer.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/extensions.sh"
+
 if [[ $# -lt 1 ]]; then
   echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
   exit 1
@@ -49,22 +72,20 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --from-snap)
-      [[ $# -ge 2 && "$2" != --* ]] || { echo "ERROR: --from-snap requires a <label> argument"; exit 1; }
+      [[ $# -ge 2 && "$2" != --* ]] || dce_die "--from-snap requires a <label> argument"
       FROM_SNAP="$2"
       shift 2
       ;;
     --*)
-      echo "ERROR: Unknown option: $1"
-      echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
-      exit 1
+      dce_die "Unknown option: $1
+Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
       ;;
     *)
       if [[ -z "$PROJECT" ]]; then
         PROJECT="$1"
       else
-        echo "ERROR: Unexpected argument: $1"
-        echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
-        exit 1
+        dce_die "Unexpected argument: $1
+Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
       fi
       shift
       ;;
@@ -72,38 +93,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$PROJECT" ]]; then
-  echo "ERROR: Project name is required."
-  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
-  exit 1
+  dce_die "Project name is required.
+Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
 fi
-
-_src="${BASH_SOURCE[0]}"
-while [[ -L "$_src" ]]; do
-  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
-  _src="$(readlink "$_src")"
-  [[ "$_src" != /* ]] && _src="$_dir/$_src"
-done
-SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
-unset _src _dir
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/common.sh"
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/container-backend.sh"
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/network.sh"
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/vscode.sh"
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/devcontainer.sh"
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/extensions.sh"
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'."
-  exit 1
+  dce_die "No config for '$PROJECT'."
 fi
 
 dce_load_project_config "$CONFIG"
@@ -144,16 +140,14 @@ RB_GIT_DEPLOY_DOC="$(dce_git_host_field "$RB_GIT_HOST" deploy_url_doc)"
 if [[ -n "$FROM_SNAP" ]]; then
   # --- restore path: image = the named snapshot ------------------------------
   if ! dce_validate_snapshot_label "$FROM_SNAP"; then
-    echo "ERROR: Invalid snapshot label '$FROM_SNAP'." >&2
-    echo "  Allowed pattern: ^[A-Za-z0-9_.-]+\$" >&2
-    exit 1
+    dce_die "Invalid snapshot label '$FROM_SNAP'.
+  Allowed pattern: ^[A-Za-z0-9_.-]+\$"
   fi
   CONTAINER_IMAGE="$(dce_snapshot_ref "$PROJECT" "$FROM_SNAP")"
   if ! backend_image_exists "$CONTAINER_IMAGE"; then
-    echo "ERROR: snapshot '$FROM_SNAP' is not present on backend '$ACTIVE_BACKEND'." >&2
-    echo "         $CONTAINER_IMAGE" >&2
-    echo "Run: dce snapshots list $PROJECT"
-    exit 1
+    dce_die "snapshot '$FROM_SNAP' is not present on backend '$ACTIVE_BACKEND'.
+         $CONTAINER_IMAGE
+Run: dce snapshots list $PROJECT"
   fi
   # Under --from-snap, hidden volumes are ALWAYS isolated from the live
   # originals: each is mounted from a snapshot volume (populated if the snapshot
@@ -174,9 +168,8 @@ else
   DERIVED_IMAGE="$(dce_image_ref_from_scopes "$(dce_team_overlays_dir)" "$(dce_user_overlays_dir)" "$OVERLAY_SCOPES_CSV")" || exit 1
 
   if ! backend_image_exists "$DERIVED_IMAGE"; then
-    echo "ERROR: Required image '$DERIVED_IMAGE' is not present on backend '$ACTIVE_BACKEND'."
-    echo "Run: dce rebuild-image all"
-    exit 1
+    dce_die "Required image '$DERIVED_IMAGE' is not present on backend '$ACTIVE_BACKEND'.
+Run: dce rebuild-image all"
   fi
 
   if [[ "${CONTAINER_IMAGE:-}" != "$DERIVED_IMAGE" ]]; then
@@ -406,9 +399,8 @@ if declare -p PORTS >/dev/null 2>&1; then
     elif [[ "$p" =~ ^[0-9]+$ ]]; then
       PORT_ARGS+=(--publish "$p:$p")
     else
-      echo "ERROR: Invalid port mapping '$p' in project config."
-      echo "  Expected formats: host:container or single port"
-      exit 1
+      dce_die "Invalid port mapping '$p' in project config.
+  Expected formats: host:container or single port"
     fi
   done
 fi
@@ -467,8 +459,7 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
     target="/workspace/$hidden_path"
     backend_exec_as_root "$PROJECT" sh -lc "mkdir -p '$target' && chown -R dev:dev '$target'"
     if ! backend_exec "$PROJECT" sh -lc "test -w '$target'"; then
-      echo "ERROR: Hidden path is not writable by dev: $target"
-      exit 1
+      dce_die "Hidden path is not writable by dev: $target"
     fi
   done
 fi

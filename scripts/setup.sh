@@ -156,23 +156,20 @@ _dce_setup_normalize() {
 
 if ! DC_TEAM_DIR="$(dce_config_extract_scalar "$GLOBAL_CONFIG" DC_TEAM_DIR)" \
    || [[ -z "${DC_TEAM_DIR:-}" ]]; then
-  echo "ERROR: DC_TEAM_DIR is not set (or is malformed) in ~/.config/dce-enclave/config"
-  echo "Set DC_TEAM_DIR and rerun scripts/setup.sh"
-  exit 1
+  dce_die "DC_TEAM_DIR is not set (or is malformed) in ~/.config/dce-enclave/config
+Set DC_TEAM_DIR and rerun scripts/setup.sh"
 fi
 if ! DC_USER_DIR="$(dce_config_extract_scalar "$GLOBAL_CONFIG" DC_USER_DIR)" \
    || [[ -z "${DC_USER_DIR:-}" ]]; then
-  echo "ERROR: DC_USER_DIR is not set (or is malformed) in ~/.config/dce-enclave/config"
-  echo "Set DC_USER_DIR and rerun scripts/setup.sh"
-  exit 1
+  dce_die "DC_USER_DIR is not set (or is malformed) in ~/.config/dce-enclave/config
+Set DC_USER_DIR and rerun scripts/setup.sh"
 fi
 _dce_setup_normalize DC_TEAM_DIR
 _dce_setup_normalize DC_USER_DIR
 
 for _r in "$DC_TEAM_DIR" "$DC_USER_DIR"; do
   if [[ -e "$_r" && ! -d "$_r" ]]; then
-    echo "ERROR: Root path is not a directory: $_r"
-    exit 1
+    dce_die "Root path is not a directory: $_r"
   fi
 done
 unset _r

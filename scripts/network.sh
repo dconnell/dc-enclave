@@ -58,6 +58,13 @@ Addressing:
 EOF
 }
 
+usage_die() {
+  local msg="$1"
+  dce_die "$msg
+Usage: dce network <subcommand> [args]
+Subcommands: create, ls|list, members, rm, add, remove"
+}
+
 SUBACTION="${1:-}"
 [[ $# -gt 0 ]] && shift
 
@@ -71,33 +78,32 @@ do_create() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --subnet)
-        [[ $# -ge 2 ]] || { echo "ERROR: --subnet requires a CIDR argument" >&2; exit 1; }
+        [[ $# -ge 2 ]] || dce_die "--subnet requires a CIDR argument"
         dce_validate_subnet_value "$2" || exit 1
         subnet_args+=(--subnet "$2")
         shift 2
         ;;
       --subnet-v6)
-        [[ $# -ge 2 && "$2" != --* ]] || { echo "ERROR: --subnet-v6 requires a CIDR argument" >&2; exit 1; }
+        [[ $# -ge 2 && "$2" != --* ]] || dce_die "--subnet-v6 requires a CIDR argument"
         # Validated/translated per-backend below (docker-family has no --subnet-v6
         # flag; dce_validate_subnet_value is IPv4-only so it is not applied here).
         subnet_v6="$2"
         shift 2
         ;;
       --*)
-        echo "ERROR: Unknown option: $1" >&2; exit 1
+        dce_die "Unknown option: $1"
         ;;
       *)
-        [[ -z "$name" ]] || { echo "ERROR: Unexpected argument: $1" >&2; exit 1; }
+        [[ -z "$name" ]] || dce_die "Unexpected argument: $1"
         name="$1"; shift
         ;;
     esac
   done
 
-  [[ -n "$name" ]] || { echo "ERROR: network create requires a <name>" >&2; USAGE >&2; exit 1; }
+  [[ -n "$name" ]] || usage_die "network create requires a <name>"
   if ! dce_validate_network_name "$name"; then
-    echo "ERROR: Invalid network name '$name'." >&2
-    echo "  Allowed pattern: ^[a-z0-9][a-z0-9._-]*$" >&2
-    exit 1
+    dce_die "Invalid network name '$name'.
+  Allowed pattern: ^[a-z0-9][a-z0-9._-]*$"
   fi
 
   backend_use "${CONTAINER_BACKEND:-}"
@@ -127,12 +133,13 @@ do_create() {
     if ! backend_network_create "$name"; then create_failed=1; fi
   fi
   if [[ "${create_failed:-0}" -eq 1 ]]; then
-    echo "ERROR: Failed to create network '$name'." >&2
+    local _msg="Failed to create network '$name'."
     if [[ "$backend" == "apple" ]]; then
-      echo "       apple/container requires macOS 26+ for user-defined networks." >&2
-      echo "       Verify macOS version, or use a Docker-compatible backend." >&2
+      _msg+="
+       apple/container requires macOS 26+ for user-defined networks.
+       Verify macOS version, or use a Docker-compatible backend."
     fi
-    exit 1
+    dce_die "$_msg"
   fi
   echo "  ✓ Created network '$name'"
 }
@@ -168,8 +175,8 @@ do_list() {
 # --- members -----------------------------------------------------------------
 do_members() {
   local name="${1:-}"
-  [[ -n "$name" ]] || { echo "ERROR: network members requires a <name>" >&2; exit 1; }
-  dce_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
+  [[ -n "$name" ]] || dce_die "network members requires a <name>"
+  dce_validate_network_name "$name" || dce_die "Invalid network name '$name'"
 
   local p ip any=0
   echo "Members of network '$name':"
@@ -189,14 +196,14 @@ do_rm() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --force|-f) force=true; shift ;;
-      --*) echo "ERROR: Unknown option: $1" >&2; exit 1 ;;
-      *) [[ -z "$name" ]] || { echo "ERROR: Unexpected argument: $1" >&2; exit 1; }
+      --*) dce_die "Unknown option: $1" ;;
+      *) [[ -z "$name" ]] || dce_die "Unexpected argument: $1"
          name="$1"; shift ;;
     esac
   done
 
-  [[ -n "$name" ]] || { echo "ERROR: network rm requires a <name>" >&2; exit 1; }
-  dce_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
+  [[ -n "$name" ]] || dce_die "network rm requires a <name>"
+  dce_validate_network_name "$name" || dce_die "Invalid network name '$name'"
 
   backend_use "${CONTAINER_BACKEND:-}"
   local backend; backend="$(backend_name)"
@@ -205,16 +212,14 @@ do_rm() {
 
   if [[ -n "$refs" ]]; then
     if ! $force; then
-      echo "ERROR: Network '$name' still has dce members: $refs" >&2
-      echo "       Detach them first: dce network remove $name <project>" >&2
-      echo "       Or force removal with: dce network rm $name --force" >&2
-      exit 1
+      dce_die "Network '$name' still has dce members: $refs
+       Detach them first: dce network remove $name <project>
+       Or force removal with: dce network rm $name --force"
     fi
     echo "WARNING: --force disconnecting live containers: $refs" >&2
     if [[ "$backend" == "apple" ]]; then
-      echo "ERROR: apple/container cannot detach networks from existing containers." >&2
-      echo "       Remove the network from each project's config and rebuild them." >&2
-      exit 1
+      dce_die "apple/container cannot detach networks from existing containers.
+       Remove the network from each project's config and rebuild them."
     fi
     local p
     for p in $refs; do
@@ -236,25 +241,25 @@ do_add() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ip)
-        [[ $# -ge 2 && "$2" != --* ]] || { echo "ERROR: --ip requires an address" >&2; exit 1; }
+        [[ $# -ge 2 && "$2" != --* ]] || dce_die "--ip requires an address"
         ip="$2"; shift 2
         ;;
-      --*) echo "ERROR: Unknown option: $1" >&2; exit 1 ;;
+      --*) dce_die "Unknown option: $1" ;;
       *)
         if [[ -z "$name" ]]; then name="$1"
         elif [[ -z "$project" ]]; then project="$1"
-        else echo "ERROR: Unexpected argument: $1" >&2; exit 1; fi
+        else dce_die "Unexpected argument: $1"; fi
         shift
         ;;
     esac
   done
 
-  [[ -n "$name" && -n "$project" ]] || { echo "ERROR: network add requires <name> <project>" >&2; exit 1; }
-  dce_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
+  [[ -n "$name" && -n "$project" ]] || dce_die "network add requires <name> <project>"
+  dce_validate_network_name "$name" || dce_die "Invalid network name '$name'"
   [[ -z "$ip" ]] || dce_validate_ip_value "$ip" || exit 1
 
   local config="$HOME/.config/dce-enclave/$project/config"
-  [[ -f "$config" ]] || { echo "ERROR: No config for project '$project'." >&2; exit 1; }
+  [[ -f "$config" ]] || dce_die "No config for project '$project'."
 
   PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
   dce_load_project_config "$config"
@@ -262,22 +267,19 @@ do_add() {
   local backend; backend="$(backend_name)"
 
   if ! backend_is_docker_compatible "$backend"; then
-    echo "ERROR: 'dce network add' is unsupported on backend '$backend'." >&2
-    echo "       apple/container sets networks only at create time." >&2
-    echo "       Add the network at creation: dce new $project --network $name" >&2
-    echo "       Or rebuild with it: edit config, then dce rebuild-container $project" >&2
-    exit 1
+    dce_die "'dce network add' is unsupported on backend '$backend'.
+       apple/container sets networks only at create time.
+       Add the network at creation: dce new $project --network $name
+       Or rebuild with it: edit config, then dce rebuild-container $project"
   fi
 
   if ! backend_network_exists "$name"; then
-    echo "ERROR: Network '$name' does not exist on backend '$backend'." >&2
-    echo "       Create it first: dce network create $name" >&2
-    exit 1
+    dce_die "Network '$name' does not exist on backend '$backend'.
+       Create it first: dce network create $name"
   fi
 
   if ! backend_exists "$project"; then
-    echo "ERROR: Container '$project' does not exist on backend '$backend'." >&2
-    exit 1
+    dce_die "Container '$project' does not exist on backend '$backend'."
   fi
 
   # Skip silently if already a member (idempotent), but still apply the IP if given.
@@ -315,11 +317,11 @@ do_add() {
 do_remove() {
   local name="${1:-}"
   local project="${2:-}"
-  [[ -n "$name" && -n "$project" ]] || { echo "ERROR: network remove requires <name> <project>" >&2; exit 1; }
-  dce_validate_network_name "$name" || { echo "ERROR: Invalid network name '$name'" >&2; exit 1; }
+  [[ -n "$name" && -n "$project" ]] || dce_die "network remove requires <name> <project>"
+  dce_validate_network_name "$name" || dce_die "Invalid network name '$name'"
 
   local config="$HOME/.config/dce-enclave/$project/config"
-  [[ -f "$config" ]] || { echo "ERROR: No config for project '$project'." >&2; exit 1; }
+  [[ -f "$config" ]] || dce_die "No config for project '$project'."
 
   # shellcheck disable=SC2034
   # Reset before dce_load_project_config repopulates them; cleared to avoid
@@ -330,9 +332,8 @@ do_remove() {
   local backend; backend="$(backend_name)"
 
   if ! backend_is_docker_compatible "$backend"; then
-    echo "ERROR: 'dce network remove' is unsupported on backend '$backend'." >&2
-    echo "       Rebuild the container without this network instead." >&2
-    exit 1
+    dce_die "'dce network remove' is unsupported on backend '$backend'.
+       Rebuild the container without this network instead."
   fi
 
   # Persist removal regardless of live state, but attempt live disconnect first.

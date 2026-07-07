@@ -13,6 +13,21 @@
 # =============================================================================
 set -euo pipefail
 
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/container-backend.sh"
+
 USE_ROOT=false
 PROJECT=""
 
@@ -34,9 +49,8 @@ while [[ $# -gt 0 ]]; do
       break
       ;;
     -*)
-      echo "ERROR: Unknown option: $1" >&2
-      echo "Usage: dce exec [--root] <name> <command...>" >&2
-      exit 1
+      dce_die "Unknown option: $1
+Usage: dce exec [--root] <name> <command...>"
       ;;
     *)
       PROJECT="$1"
@@ -49,45 +63,26 @@ done
 CMD=("$@")
 
 if [[ -z "$PROJECT" ]]; then
-  echo "ERROR: Project name is required." >&2
-  echo "Usage: dce exec [--root] <name> <command...>" >&2
-  exit 1
+  dce_die "Project name is required.
+Usage: dce exec [--root] <name> <command...>"
 fi
 
 if [[ ${#CMD[@]} -eq 0 ]]; then
-  echo "ERROR: No command specified." >&2
-  echo "  For an interactive shell, use: dce shell $PROJECT" >&2
-  exit 1
+  dce_die "No command specified.
+  For an interactive shell, use: dce shell $PROJECT"
 fi
-
-_src="${BASH_SOURCE[0]}"
-while [[ -L "$_src" ]]; do
-  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
-  _src="$(readlink "$_src")"
-  [[ "$_src" != /* ]] && _src="$_dir/$_src"
-done
-SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
-unset _src _dir
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/common.sh"
-# shellcheck disable=SC1091  # lib include, runtime-resolved path
-source "$ROOT_DIR/lib/container-backend.sh"
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'. Run: dce new $PROJECT" >&2
-  exit 1
+  dce_die "No config for '$PROJECT'. Run: dce new $PROJECT"
 fi
 
 dce_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 
 if ! backend_is_running "$PROJECT"; then
-  echo "ERROR: Container '$PROJECT' is not running." >&2
-  echo "  Start it first: dce start $PROJECT" >&2
-  exit 1
+  dce_die "Container '$PROJECT' is not running.
+  Start it first: dce start $PROJECT"
 fi
 
 if $USE_ROOT; then

@@ -16,50 +16,6 @@
 # =============================================================================
 set -euo pipefail
 
-EXPLICIT_EDITOR=""
-PROJECT=""
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --editor)
-      [[ $# -ge 2 ]] || { echo "ERROR: --editor requires a value" >&2; exit 1; }
-      EXPLICIT_EDITOR="$2"
-      shift 2
-      ;;
-    --editor=*)
-      EXPLICIT_EDITOR="${1#--editor=}"
-      shift
-      ;;
-    -h|--help|help)
-      sed -n '3,18p' "$0" 2>/dev/null || true
-      exit 0
-      ;;
-    --*)
-      echo "ERROR: Unknown option: $1" >&2
-      exit 1
-      ;;
-    *)
-      if [[ -z "$PROJECT" ]]; then
-        PROJECT="$1"
-      else
-        echo "ERROR: Unexpected argument: $1" >&2
-        exit 1
-      fi
-      shift
-      ;;
-  esac
-done
-
-if [[ -z "$PROJECT" ]]; then
-  echo "Usage: dce editor [--editor <id>] <project>" >&2
-  echo "" >&2
-  echo "Launch your editor attached to a running dev container at /workspace." >&2
-  echo "Docker-compatible backends only (docker/orbstack/colima/podman)." >&2
-  echo "" >&2
-  echo "Editor selection: --editor <id> > \$DCE_EDITOR > global DCE_EDITOR > \$VISUAL > \$EDITOR > default" >&2
-  exit 1
-fi
-
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"
@@ -81,10 +37,51 @@ source "$ROOT_DIR/lib/editor.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/extensions.sh"
 
+EXPLICIT_EDITOR=""
+PROJECT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --editor)
+      [[ $# -ge 2 ]] || dce_die "--editor requires a value"
+      EXPLICIT_EDITOR="$2"
+      shift 2
+      ;;
+    --editor=*)
+      EXPLICIT_EDITOR="${1#--editor=}"
+      shift
+      ;;
+    -h|--help|help)
+      sed -n '3,18p' "$0" 2>/dev/null || true
+      exit 0
+      ;;
+    --*)
+      dce_die "Unknown option: $1"
+      ;;
+    *)
+      if [[ -z "$PROJECT" ]]; then
+        PROJECT="$1"
+      else
+        dce_die "Unexpected argument: $1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "$PROJECT" ]]; then
+  echo "Usage: dce editor [--editor <id>] <project>" >&2
+  echo "" >&2
+  echo "Launch your editor attached to a running dev container at /workspace." >&2
+  echo "Docker-compatible backends only (docker/orbstack/colima/podman)." >&2
+  echo "" >&2
+  echo "Editor selection: --editor <id> > \$DCE_EDITOR > global DCE_EDITOR > \$VISUAL > \$EDITOR > default" >&2
+  exit 1
+fi
+
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: No config for '$PROJECT'. Run: dce new $PROJECT <scope>" >&2
-  exit 1
+  dce_die "No config for '$PROJECT'. Run: dce new $PROJECT <scope>"
 fi
 
 # shellcheck disable=SC2034
@@ -100,14 +97,13 @@ if ! backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   # Hard refuse on apple/container. dce editor is an attach command; on a
   # backend with no attach path, refuse rather than silently opening the host
   # folder (which is a different command than the user invoked).
-  echo "ERROR: 'dce editor' is unsupported on backend '$ACTIVE_BACKEND'." >&2
-  echo "       apple/container is not Docker-API compatible, so the VS Code Dev" >&2
-  echo "       Containers extension cannot attach to it." >&2
-  echo "       To open the host repo folder directly, launch your editor yourself" >&2
-  echo "       on: ${REPOS_DIR:-<repos-dir>}" >&2
-  echo "       To use 'dce editor', switch to a Docker-compatible backend" >&2
-  echo "       (docker/orbstack/colima/podman)." >&2
-  exit 1
+  dce_die "'dce editor' is unsupported on backend '$ACTIVE_BACKEND'.
+       apple/container is not Docker-API compatible, so the VS Code Dev
+       Containers extension cannot attach to it.
+       To open the host repo folder directly, launch your editor yourself
+       on: ${REPOS_DIR:-<repos-dir>}
+       To use 'dce editor', switch to a Docker-compatible backend
+       (docker/orbstack/colima/podman)."
 fi
 
 EDITOR_ID="$(dce_editor_select "$EXPLICIT_EDITOR")"

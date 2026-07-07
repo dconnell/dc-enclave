@@ -90,6 +90,12 @@ Examples:
 EOF
 }
 
+usage_die() {
+  local msg="$1"
+  dce_die "$msg
+Usage: dce extensions <subcommand> [flags] [<project>] [ids...]"
+}
+
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
@@ -109,17 +115,17 @@ SET_TEAM=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --editor)        [[ $# -ge 2 ]] || { echo "ERROR: --editor requires a value" >&2; exit 1; }; EDITOR_OPT="$2"; shift 2 ;;
+    --editor)        [[ $# -ge 2 ]] || dce_die "--editor requires a value"; EDITOR_OPT="$2"; shift 2 ;;
     --editor=*)      EDITOR_OPT="${1#--editor=}"; shift ;;
-    --format)        [[ $# -ge 2 ]] || { echo "ERROR: --format requires a value" >&2; exit 1; }; FORMAT="$2"; shift 2 ;;
+    --format)        [[ $# -ge 2 ]] || dce_die "--format requires a value"; FORMAT="$2"; shift 2 ;;
     --format=*)      FORMAT="${1#--format=}"; shift ;;
-    --scope)         [[ $# -ge 2 ]] || { echo "ERROR: --scope requires a value" >&2; exit 1; }; SCOPE="$2"; shift 2 ;;
+    --scope)         [[ $# -ge 2 ]] || dce_die "--scope requires a value"; SCOPE="$2"; shift 2 ;;
     --scope=*)       SCOPE="${1#--scope=}"; shift ;;
     --user)          SET_USER=true; TARGET=user; shift ;;
     --team)          SET_TEAM=true; TARGET=team; shift ;;
     --all)           ALL=true; shift ;;
     -h|--help|help)  WANT_HELP=true; shift ;;
-    --*)             echo "ERROR: Unknown option: $1" >&2; USAGE >&2; exit 1 ;;
+    --*)             usage_die "Unknown option: $1" ;;
     *)
       if [[ -z "$PROJECT" ]]; then
         PROJECT="$1"
@@ -144,8 +150,7 @@ esac
 # silently let "last one wins" mask a typo. This semantic validation runs only
 # after help handling, so `--help` always exits 0 even with extra flags.
 if $SET_USER && $SET_TEAM; then
-  echo "ERROR: --user and --team are mutually exclusive (pick one manifest root)." >&2
-  exit 1
+  dce_die "--user and --team are mutually exclusive (pick one manifest root)."
 fi
 
 # Resolve the editor id: default -> normalize -> validate against the
@@ -156,9 +161,8 @@ else
   EDITOR="$(dce_ext_normalize_editor "$EDITOR_OPT")"
 fi
 if ! dce_ext_is_supported "$EDITOR"; then
-  echo "ERROR: extension management for editor '$EDITOR' is not supported." >&2
-  echo "  Supported editors: $(tr '\n' ' ' <<<"$(dce_ext_supported_editors)")" >&2
-  exit 1
+  dce_die "extension management for editor '$EDITOR' is not supported.
+  Supported editors: $(tr '\n' ' ' <<<"$(dce_ext_supported_editors)")"
 fi
 
 # ---------------------------------------------------------------------------
@@ -171,9 +175,8 @@ _load_project() {
   local project="$1"
   local config="$HOME/.config/dce-enclave/$project/config"
   if [[ ! -f "$config" ]]; then
-    echo "ERROR: No config for project '$project'." >&2
-    echo "       Run 'dce new $project ...' first, or 'dce config ls' for projects." >&2
-    exit 1
+    dce_die "No config for project '$project'.
+       Run 'dce new $project ...' first, or 'dce config ls' for projects."
   fi
   dce_load_project_config "$config"
 }
@@ -188,11 +191,10 @@ _select_backend() {
 # project is already loaded.
 _refuse_apple() {
   if ! backend_is_docker_compatible "$ACTIVE_BACKEND"; then
-    echo "ERROR: 'dce extensions $SUBACTION' is unsupported on backend '$ACTIVE_BACKEND'." >&2
-    echo "       apple/container is not Docker-API compatible, so the editor cannot" >&2
-    echo "       attach and there is no container extension store to read." >&2
-    echo "       Use a Docker-compatible backend (docker/orbstack/colima/podman)." >&2
-    exit 1
+    dce_die "'dce extensions $SUBACTION' is unsupported on backend '$ACTIVE_BACKEND'.
+       apple/container is not Docker-API compatible, so the editor cannot
+       attach and there is no container extension store to read.
+       Use a Docker-compatible backend (docker/orbstack/colima/podman)."
   fi
 }
 
@@ -205,8 +207,7 @@ _skip_diff() {
 _reject_unexpected_ids() {
   local cmd="$1"
   if [[ ${#IDS[@]} -gt 0 ]]; then
-    echo "ERROR: 'dce extensions $cmd' does not accept extra positional arguments: ${IDS[*]}" >&2
-    exit 1
+    dce_die "'dce extensions $cmd' does not accept extra positional arguments: ${IDS[*]}"
   fi
 }
 
@@ -214,9 +215,8 @@ _reject_unexpected_ids() {
 # ops are read-only snapshots; a stale start decision is left to the user).
 _require_running() {
   if ! backend_is_running "$PROJECT"; then
-    echo "ERROR: container '$PROJECT' is not running." >&2
-    echo "       Start it first: dce start $PROJECT" >&2
-    exit 1
+    dce_die "container '$PROJECT' is not running.
+       Start it first: dce start $PROJECT"
   fi
 }
 
@@ -272,14 +272,13 @@ case "$SUBACTION" in
   # show: merged effective manifest set (static; backend-agnostic).
   # -------------------------------------------------------------------------
   show)
-    [[ -n "$PROJECT" ]] || { echo "ERROR: 'dce extensions show' requires <project>" >&2; exit 1; }
+    [[ -n "$PROJECT" ]] || dce_die "'dce extensions show' requires <project>"
     _reject_unexpected_ids show
     _load_project "$PROJECT"
     _load_global
     SET=()
     if ! _load_lines SET dce_ext_resolve_set "$EDITOR" "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}"; then
-      echo "ERROR: could not resolve the extension manifest set for '$PROJECT'." >&2
-      exit 1
+      dce_die "could not resolve the extension manifest set for '$PROJECT'."
     fi
     dce_ext_format "$FORMAT" "$EDITOR" "${SET[@]}"
     ;;
@@ -288,7 +287,7 @@ case "$SUBACTION" in
   # list: installed in the container (runtime; docker-only + running).
   # -------------------------------------------------------------------------
   list)
-    [[ -n "$PROJECT" ]] || { echo "ERROR: 'dce extensions list' requires <project>" >&2; exit 1; }
+    [[ -n "$PROJECT" ]] || dce_die "'dce extensions list' requires <project>"
     _reject_unexpected_ids list
     _load_project "$PROJECT"
     _select_backend
@@ -296,12 +295,11 @@ case "$SUBACTION" in
     _require_running
     INSTALLED=()
     if ! _load_lines INSTALLED dce_ext_list_installed "$EDITOR" "$PROJECT"; then
-      echo "ERROR: could not list extensions in '$PROJECT'." >&2
-      echo "       Could not resolve a VS Code Server 'code' CLI inside the container." >&2
-      echo "       Attach in VS Code once (Dev Containers: Attach to Running Container)," >&2
-      echo "       then rerun. If already attached, ensure ~/.vscode-server exists for" >&2
-      echo "       the runtime user and contains bin/*/bin/code." >&2
-      exit 1
+      dce_die "could not list extensions in '$PROJECT'.
+       Could not resolve a VS Code Server 'code' CLI inside the container.
+       Attach in VS Code once (Dev Containers: Attach to Running Container),
+       then rerun. If already attached, ensure ~/.vscode-server exists for
+       the runtime user and contains bin/*/bin/code."
     fi
     dce_ext_format "$FORMAT" "$EDITOR" "${INSTALLED[@]}"
     ;;
@@ -311,16 +309,14 @@ case "$SUBACTION" in
   # -------------------------------------------------------------------------
   host)
     if [[ -n "$PROJECT" || ${#IDS[@]} -gt 0 ]]; then
-      echo "ERROR: 'dce extensions host' takes no <project> or positional arguments." >&2
-      exit 1
+      dce_die "'dce extensions host' takes no <project> or positional arguments."
     fi
-    if ! tmp_host="$(mktemp)"; then echo "ERROR: mktemp failed" >&2; exit 1; fi
+    if ! tmp_host="$(mktemp)"; then dce_die "mktemp failed"; fi
     trap 'rm -f "$tmp_host"' EXIT
     if ! dce_ext_list_host "$EDITOR" > "$tmp_host" 2>/dev/null; then
-      echo "ERROR: host 'code' binary not found." >&2
       _host_bin_hint >&2
       rm -f "$tmp_host"
-      exit 1
+      dce_die "host 'code' binary not found."
     fi
     mapfile -t HOST < <(cat "$tmp_host")
     dce_ext_format "$FORMAT" "$EDITOR" "${HOST[@]}"
@@ -330,7 +326,7 @@ case "$SUBACTION" in
   # available: host minus container (runtime; docker-only + running).
   # -------------------------------------------------------------------------
   available)
-    [[ -n "$PROJECT" ]] || { echo "ERROR: 'dce extensions available' requires <project>" >&2; exit 1; }
+    [[ -n "$PROJECT" ]] || dce_die "'dce extensions available' requires <project>"
     _reject_unexpected_ids available
     _load_project "$PROJECT"
     _select_backend
@@ -338,21 +334,19 @@ case "$SUBACTION" in
     _require_running
     INSTALLED=()
     if ! _load_lines INSTALLED dce_ext_list_installed "$EDITOR" "$PROJECT"; then
-      echo "ERROR: could not list extensions in '$PROJECT'." >&2
-      echo "       Could not resolve a VS Code Server 'code' CLI inside the container." >&2
-      echo "       Attach in VS Code once (Dev Containers: Attach to Running Container)," >&2
-      echo "       then rerun. If already attached, ensure ~/.vscode-server exists for" >&2
-      echo "       the runtime user and contains bin/*/bin/code." >&2
-      exit 1
+      dce_die "could not list extensions in '$PROJECT'.
+       Could not resolve a VS Code Server 'code' CLI inside the container.
+       Attach in VS Code once (Dev Containers: Attach to Running Container),
+       then rerun. If already attached, ensure ~/.vscode-server exists for
+       the runtime user and contains bin/*/bin/code."
     fi
     # Host list is best-effort; if the host binary is missing, available is
     # meaningless -> surface the same guidance as `host`.
-    if ! tmp_avail="$(mktemp)"; then echo "ERROR: mktemp failed" >&2; exit 1; fi
+    if ! tmp_avail="$(mktemp)"; then dce_die "mktemp failed"; fi
     if ! dce_ext_list_host "$EDITOR" > "$tmp_avail" 2>/dev/null; then
-      echo "ERROR: host 'code' binary not found; cannot compute available set." >&2
       _host_bin_hint >&2
       rm -f "$tmp_avail"
-      exit 1
+      dce_die "host 'code' binary not found; cannot compute available set."
     fi
     mapfile -t AVAIL < <(cat "$tmp_avail" | dce_ext_minus "${INSTALLED[@]}")
     rm -f "$tmp_avail"
@@ -363,7 +357,7 @@ case "$SUBACTION" in
   # diff: runtime drift both directions (runtime; docker-only + running).
   # -------------------------------------------------------------------------
   diff)
-    [[ -n "$PROJECT" ]] || { echo "ERROR: 'dce extensions diff' requires <project>" >&2; exit 1; }
+    [[ -n "$PROJECT" ]] || dce_die "'dce extensions diff' requires <project>"
     _reject_unexpected_ids diff
     _load_project "$PROJECT"
     _select_backend
@@ -376,8 +370,7 @@ case "$SUBACTION" in
     _load_global
     DECLARED=()
     if ! _load_lines DECLARED dce_ext_resolve_set "$EDITOR" "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}"; then
-      echo "ERROR: could not resolve the extension manifest set for '$PROJECT'." >&2
-      exit 1
+      dce_die "could not resolve the extension manifest set for '$PROJECT'."
     fi
     INSTALLED=()
     if ! _load_lines INSTALLED dce_ext_list_installed "$EDITOR" "$PROJECT"; then
@@ -414,19 +407,17 @@ case "$SUBACTION" in
   # capture: merge IDs into a manifest (selective default; --all = snapshot).
   # -------------------------------------------------------------------------
   capture)
-    [[ -n "$PROJECT" ]] || { echo "ERROR: 'dce extensions capture' requires <project>" >&2; exit 1; }
-    [[ -n "$SCOPE" ]] || { echo "ERROR: 'dce extensions capture' requires --scope <scope>" >&2; exit 1; }
+    [[ -n "$PROJECT" ]] || dce_die "'dce extensions capture' requires <project>"
+    [[ -n "$SCOPE" ]] || dce_die "'dce extensions capture' requires --scope <scope>"
     if ! dce_validate_scope_name "$SCOPE"; then
-      echo "ERROR: invalid scope name '$SCOPE'." >&2
-      echo "  Allowed pattern: ^[a-z0-9][a-z0-9._-]*\$" >&2
-      exit 1
+      dce_die "invalid scope name '$SCOPE'.
+  Allowed pattern: ^[a-z0-9][a-z0-9._-]*\$"
     fi
     _load_project "$PROJECT"
     _load_global
 
     if $ALL && [[ ${#IDS[@]} -gt 0 ]]; then
-      echo "ERROR: 'dce extensions capture' accepts either --all OR explicit <id>..., not both." >&2
-      exit 1
+      dce_die "'dce extensions capture' accepts either --all OR explicit <id>..., not both."
     fi
 
     # Determine the source of IDs: --all reads from the running container;
@@ -438,19 +429,17 @@ case "$SUBACTION" in
       _require_running
       NEW_IDS=()
       if ! _load_lines NEW_IDS dce_ext_list_installed "$EDITOR" "$PROJECT"; then
-        echo "ERROR: could not list extensions in '$PROJECT'." >&2
-        echo "       Could not resolve a VS Code Server 'code' CLI inside the container." >&2
-        echo "       Attach in VS Code once (Dev Containers: Attach to Running Container)," >&2
-        echo "       then rerun. If already attached, ensure ~/.vscode-server exists for" >&2
-        echo "       the runtime user and contains bin/*/bin/code." >&2
-        exit 1
+        dce_die "could not list extensions in '$PROJECT'.
+       Could not resolve a VS Code Server 'code' CLI inside the container.
+       Attach in VS Code once (Dev Containers: Attach to Running Container),
+       then rerun. If already attached, ensure ~/.vscode-server exists for
+       the runtime user and contains bin/*/bin/code."
       fi
     else
       NEW_IDS=("${IDS[@]}")
       if [[ ${#NEW_IDS[@]} -eq 0 ]]; then
-        echo "ERROR: 'dce extensions capture' needs explicit <id>... or --all." >&2
-        echo "       (refusing to bulk-dump host extensions; the manifest is curated)" >&2
-        exit 1
+        dce_die "'dce extensions capture' needs explicit <id>... or --all.
+       (refusing to bulk-dump host extensions; the manifest is curated)"
       fi
     fi
 
@@ -478,8 +467,7 @@ case "$SUBACTION" in
     for id in "${NEW_IDS[@]}"; do
       [[ -n "$id" ]] || continue
       if ! dce_ext_is_valid_id "$id"; then
-        echo "ERROR: '$id' is not a valid extension id (expected publisher.name)." >&2
-        exit 1
+        dce_die "'$id' is not a valid extension id (expected publisher.name)."
       fi
       [[ -n "${existing[$id]:-}" ]] && continue
       [[ -n "${seen_new[$id]:-}" ]] && continue
