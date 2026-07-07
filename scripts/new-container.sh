@@ -444,15 +444,11 @@ fi
 
 # Expand a leading ~ to $HOME (literal-char match, not shell expansion), so a
 # value like '~/repos' or '~' behaves the same whether it came from a recipe, the
-# CLI, or $DC_REPOS_DIR.
+# CLI, or $DC_REPOS_DIR. Delegates to dce_expand_tilde (tilde-only: relative
+# paths are left untouched, since repo paths are resolved against $REPOS_DIR
+# elsewhere, not the config dir).
 _dce_new_repo_path_expand_tilde() {  # <path>
-  local p="$1"
-  # shellcheck disable=SC2088
-  if [[ "$p" == "~" || "$p" == "~/"* ]]; then
-    printf '%s' "$HOME${p#\~}"
-  else
-    printf '%s' "$p"
-  fi
+  dce_expand_tilde "$1"
 }
 
 # Return 0 (true) if the value contains any character outside the path-safe
@@ -797,21 +793,18 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   done
 fi
 
-echo "==> Injecting SSH deploy key..."
-backend_exec "$PROJECT" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
-backend_exec_stdin "$PROJECT" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY"
-# Git host keys are pinned in the base image; no runtime ssh-keyscan.
-
-echo "==> Configuring git in container..."
-# SSH_KEY_PATH is a local here (config persists it as SSH_KEY_PATH); expose the
-# key path to dce_ensure_git_credentials so it can pick the auth method. At
-# `dce new` time the token is still the placeholder, so this resolves to the
-# legacy SSH insteadOf; it flips to HTTPS+PAT once the user fills the token.
-# CONTAINER_GIT_HOST is likewise exported so dce_project_git_host resolves the
-# active provider for the auth-method + insteadOf wiring.
-# Exported because the consumer is the sourced lib helper, not this file.
+# Expose SSH_KEY_PATH / CONTAINER_GIT_HOST so the inject + git-auth helpers read
+# through the same env the persisted config will use. At `dce new` time the
+# token is still the placeholder, so dce_ensure_git_credentials resolves to the
+# SSH insteadOf; it flips to HTTPS+PAT once the user fills the token.
+# Exported because the consumers are the sourced lib helpers, not this file.
 export SSH_KEY_PATH="$SSH_KEY"
 export CONTAINER_GIT_HOST="$GIT_HOST"
+
+echo "==> Injecting SSH deploy key..."
+dce_inject_ssh_deploy_key "$PROJECT"
+
+echo "==> Configuring git in container..."
 dce_ensure_git_credentials "$PROJECT"
 
 if $DOCKER_COMPATIBLE; then

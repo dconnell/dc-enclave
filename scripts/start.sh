@@ -82,14 +82,9 @@ _start_container() {
     fi
   fi
 
-  if [[ -n "${SSH_KEY_PATH:-}" ]] && [[ -f "$SSH_KEY_PATH" ]]; then
-    if ! backend_exec "$project" test -f ~/.ssh/id_ed25519 2>/dev/null; then
-      backend_exec "$project" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
-      backend_exec_stdin "$project" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY_PATH"
-      # GitHub host keys are pinned in the base image; no runtime ssh-keyscan.
-      echo "  ✓ SSH key injected"
-    fi
-  fi
+  # Re-inject the SSH deploy key only if the container lost it (e.g. after a
+  # host reboot). No-op when no key is configured; idempotent otherwise.
+  dce_inject_ssh_deploy_key "$project"
 
   # (Re)wire git auth for the configured credential: HTTPS+PAT or SSH deploy key.
   # Idempotent, so this also repairs containers created before this wiring existed.

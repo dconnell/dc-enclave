@@ -58,6 +58,25 @@ dce_resolve_path() {
   printf '%s/%s\n' "$parent" "$(basename "$input")"
 }
 
+# Expand a leading ~ to $HOME; when $base is "config", also resolve a relative
+# path against the dce config dir (~/.config/dce-enclave). When $base is empty
+# or any value other than "config", relative paths are left untouched. Pure
+# string handling, no I/O.
+dce_expand_tilde() {
+  local val="$1"
+  local base="${2:-}"
+
+  # shellcheck disable=SC2088
+  # ~ is a literal char being matched against user input, not an expansion.
+  if [[ "$val" == "~" || "$val" == "~/"* ]]; then
+    printf '%s' "$HOME${val#\~}"
+  elif [[ "$base" == "config" && -n "$val" && "$val" != /* ]]; then
+    printf '%s/%s' "$HOME/.config/dce-enclave" "$val"
+  else
+    printf '%s' "$val"
+  fi
+}
+
 # Echo the SHA-256 hex digest of a string.
 #
 # Tries sha256sum (Linux), shasum (macOS default), then openssl, so the same

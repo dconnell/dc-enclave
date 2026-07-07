@@ -151,15 +151,7 @@ _ensure_config_key DC_USER_DIR "$DEFAULT_USER_DIR"
 # hand-edited global config can't execute code during setup.
 _dce_setup_normalize() {
   local varname="$1"
-  local val="${!varname}"
-  # shellcheck disable=SC2088
-  # ~ is a literal char matched against user input, not an expansion.
-  if [[ "$val" == "~" || "$val" == "~/"* ]]; then
-    val="$HOME${val#\~}"
-  elif [[ "$val" != /* ]]; then
-    val="$HOME/.config/dce-enclave/$val"
-  fi
-  printf -v "$varname" '%s' "$val"
+  printf -v "$varname" '%s' "$(dce_expand_tilde "${!varname}" config)"
 }
 
 if ! DC_TEAM_DIR="$(dce_config_extract_scalar "$GLOBAL_CONFIG" DC_TEAM_DIR)" \

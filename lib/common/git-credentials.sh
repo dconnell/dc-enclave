@@ -64,6 +64,41 @@ dce_git_auth_method() {
   printf 'none'
 }
 
+# Inject (or re-inject) the project's SSH deploy key into the container's
+# ~/.ssh/id_ed25519, idempotently. No-op when SSH_KEY_PATH is unset or the key
+# file is absent on the host.
+#
+# The path test runs inside the container shell (sh -c) so ~ resolves to the
+# dev user's HOME there rather than being expanded on the host before the
+# backend ever sees it.
+#
+# Mode:
+#   default (no second arg) -> only-if-missing: skip when the container already
+#                              has the key. Forensics-safe; used by start /
+#                              snapshot so a restored image isn't rewritten.
+#   force                   -> always (over)write. Used by new-container and
+#                              rebuild-container (--inject-creds / --rotate-keys).
+#
+# Git host keys are pinned in the base image; no runtime ssh-keyscan.
+dce_inject_ssh_deploy_key() {
+  local project="$1"
+  local force="${2:-}"
+
+  [[ -n "${SSH_KEY_PATH:-}" ]] || return 0
+  [[ -f "$SSH_KEY_PATH" ]] || return 0
+
+  if [[ -z "$force" ]]; then
+    # shellcheck disable=SC2016
+    # sh -c runs in the container; ~ expands to dev's home there.
+    backend_exec "$project" sh -c 'test -f ~/.ssh/id_ed25519' 2>/dev/null && return 0
+  fi
+
+  # shellcheck disable=SC2016
+  backend_exec "$project" sh -c 'mkdir -p ~/.ssh && chmod 700 ~/.ssh'
+  # shellcheck disable=SC2016
+  backend_exec_stdin "$project" sh -c 'cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519' < "$SSH_KEY_PATH"
+}
+
 # Ensure git authentication is wired inside <project>'s container, idempotently.
 #
 # Replaces the unconditional HTTPS->SSH insteadOf that used to be baked into

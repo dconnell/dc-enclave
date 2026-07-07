@@ -176,14 +176,7 @@ _chk_root() {  # <varname>
     return 1
   }
   [[ -n "$val" ]] || { echo "$varname is empty in $cfg" >&2; return 1; }
-  # shellcheck disable=SC2088
-  # ~ is a literal char matched against user input, not an expansion.
-  case "$val" in
-    "~")   val="$HOME" ;;
-    "~/"*) val="$HOME${val#\~}" ;;
-    /*)    : ;;
-    *)     val="$HOME/.config/dce-enclave/$val" ;;
-  esac
+  val="$(dce_expand_tilde "$val" config)"
   [[ -d "$val" ]] || { echo "$varname root does not exist: $val" >&2; return 1; }
 }
 
@@ -369,20 +362,8 @@ _doctor_extension_drift() {
       team_root="$(dce_config_extract_scalar "$global_cfg" DC_TEAM_DIR 2>/dev/null || true)"
       user_root="$(dce_config_extract_scalar "$global_cfg" DC_USER_DIR 2>/dev/null || true)"
       if [[ -n "$team_root" && -n "$user_root" ]]; then
-        # shellcheck disable=SC2088
-        # ~ is matched as a literal in user config input, then expanded safely.
-        if [[ "$team_root" == "~" || "$team_root" == "~/"* ]]; then
-          team_root="$HOME${team_root#\~}"
-        elif [[ "$team_root" != /* ]]; then
-          team_root="$HOME/.config/dce-enclave/$team_root"
-        fi
-        # shellcheck disable=SC2088
-        # Same normalization rule for DC_USER_DIR.
-        if [[ "$user_root" == "~" || "$user_root" == "~/"* ]]; then
-          user_root="$HOME${user_root#\~}"
-        elif [[ "$user_root" != /* ]]; then
-          user_root="$HOME/.config/dce-enclave/$user_root"
-        fi
+        team_root="$(dce_expand_tilde "$team_root" config)"
+        user_root="$(dce_expand_tilde "$user_root" config)"
         if [[ -d "$team_root" && -d "$user_root" ]]; then
           DC_TEAM_DIR="$team_root"
           DC_USER_DIR="$user_root"

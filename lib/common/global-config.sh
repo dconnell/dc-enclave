@@ -51,19 +51,11 @@ dce_user_recipes_dir() {
 }
 
 # Normalize a global-config root path in place by variable name: expand a leading
-# ~ and resolve a relative path against the config dir. Shared by the two-root
-# loader so the exact rule lives in one place (previously it was triplicated).
+# ~ and resolve a relative path against the config dir. Delegates the actual
+# transform to dce_expand_tilde (lib/common/core.sh).
 _dce_normalize_config_root() {
   local varname="$1"
-  local val="${!varname}"
-  # shellcheck disable=SC2088
-  # ~ is a literal char being matched against user input, not an expansion.
-  if [[ "$val" == "~" || "$val" == "~/"* ]]; then
-    val="$HOME${val#\~}"
-  elif [[ "$val" != /* ]]; then
-    val="$HOME/.config/dce-enclave/$val"
-  fi
-  printf -v "$varname" '%s' "$val"
+  printf -v "$varname" '%s' "$(dce_expand_tilde "${!varname}" config)"
 }
 
 # Load and validate the global config, exporting DC_TEAM_DIR and DC_USER_DIR.

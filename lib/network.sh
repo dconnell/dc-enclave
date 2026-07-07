@@ -64,7 +64,7 @@ dce_normalize_network_arg() {
 
   IFS=',' read -r -a raw_tokens <<< "$input"
   for raw in "${raw_tokens[@]}"; do
-    token="${raw//"$(printf '\t')"/}"
+    token="${raw//$'\t'/}"
     # trim leading/trailing whitespace
     token="${token#"${token%%[![:space:]]*}"}"
     token="${token%"${token##*[![:space:]]}"}"

@@ -443,12 +443,7 @@ do_create() {
     # working git/ssh (mirrors `dce start`). A container that was already stopped
     # before the snapshot is left stopped; its credentials are re-injected by the
     # next `dce start`.
-    if [[ -n "${SSH_KEY_PATH:-}" ]] && [[ -f "$SSH_KEY_PATH" ]]; then
-      if ! backend_exec "$project" test -f ~/.ssh/id_ed25519 2>/dev/null; then
-        backend_exec "$project" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
-        backend_exec_stdin "$project" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY_PATH"
-      fi
-    fi
+    dce_inject_ssh_deploy_key "$project"
     dce_ensure_git_credentials "$project"
   fi
 

@@ -31,6 +31,10 @@ chmod 700 "$WORK"
 # ===========================================================================
 [[ "$(dce_normalize_network_arg "myapp,obs")" == "myapp,obs" ]] || fail "normalize plain"
 [[ "$(dce_normalize_network_arg " A : 10.0.0.5 , b ")" == "a:10.0.0.5,b" ]] || fail "normalize spaced/ip"
+# Embedded tabs are stripped from each token (not just trimmed at the edges),
+# so a name containing a tab normalizes cleanly instead of failing validation.
+[[ "$(dce_normalize_network_arg $'my\tapp,obs')" == "myapp,obs" ]] || fail "normalize strips embedded tab"
+[[ "$(dce_normalize_network_arg $'a\t: 10.0.0.5')" == "a:10.0.0.5" ]] || fail "normalize strips tab before :ip"
 [[ -z "$(dce_normalize_network_arg "")" ]] || fail "normalize empty"
 [[ "$(dce_normalize_network_arg "x,x")" == "x" ]] || fail "normalize dedupe"
 dce_normalize_network_arg "bad name" >/dev/null 2>&1 && fail "normalize rejects whitespace" || true

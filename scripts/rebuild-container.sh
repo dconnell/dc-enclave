@@ -483,9 +483,7 @@ fi
 # force-written (overwrite if it differs), never only-if-missing -- the SSH key
 # is always overwritten and dce_ensure_git_credentials is called with `force`.
 if [[ -z "$FROM_SNAP" ]] || $INJECT_CREDS || $ROTATE_KEYS; then
-  backend_exec "$PROJECT" zsh -c "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
-  backend_exec_stdin "$PROJECT" zsh -c "cat > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519" < "$SSH_KEY_PATH"
-  # GitHub host keys are pinned in the base image; no runtime ssh-keyscan.
+  dce_inject_ssh_deploy_key "$PROJECT" force
   echo "  ✓ SSH key injected"
   dce_ensure_git_credentials "$PROJECT" force
   echo "  ✓ git configured (credential-aware insteadOf)"

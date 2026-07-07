@@ -166,7 +166,10 @@ dce_complete_scopes() {
 
 # Apply the same ~ / relative-path resolution the runtime loader does.
 # Used by dce_complete_scopes so completion resolves the same root the runtime
-# would.
+# would. dce_expand_tilde (lib/common/core.sh) implements the same rule, but
+# complete-data.sh is sourced into zsh completion, which cannot source core.sh
+# (it uses bash-only constructs elsewhere); keep the two in sync if the rule
+# changes.
 _dce_complete_resolve_root() {
   local val="$1"
   # shellcheck disable=SC2088
@@ -225,7 +228,7 @@ dce_complete_config_keys() {
 # project happens to share one, but completion offers both.
 dce_complete_doctor_targets() {
   local cur="${1:-}"
-  local name
+  local d name
   printf '%s\n' apple docker orbstack colima podman
   for d in "$HOME/.config/dce-enclave"/*; do
     [[ -d "$d" && -f "$d/config" ]] || continue
