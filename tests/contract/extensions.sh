@@ -545,11 +545,16 @@ rm -f "$TEAM_DIR/extensions/vscode/all.txt" "$USER_DIR/extensions/vscode/all.txt
 TOK="$(with_backend; PATH="$STUB_DIR:$ORIG_PATH" HOME="$WORK/home" dce_ext_check_runtime_drift delta vscode "$TEAM_DIR" "$USER_DIR" "")"
 [[ "$TOK" == "skip" ]] || fail "runtime_drift(skip/pre-adoption): expected skip got [$TOK]"
 
-# skip: apple backend (non-docker-compatible). beta is apple.
+# skip: apple backend (non-docker-compatible). beta is apple. The helper's
+# contract is "caller has selected the backend via backend_use"; here we select
+# apple directly via DEV_CONTAINERS_BACKEND (the post-backend_use state) rather
+# than calling `backend_use apple`, which would fail: no `container` CLI stub is
+# on PATH, so it returns 1 and leaves the backend unset, causing backend_name to
+# auto-detect the docker stub and compute drift instead of skipping.
 TOK="$(DC_STUB_RUNNING="$RUNNING_FILE" DC_STUB_LOG="$DOCKER_LOG" \
   PATH="$STUB_DIR:$ORIG_PATH" HOME="$WORK/home" \
-  backend_use apple 2>/dev/null; \
-  PATH="$STUB_DIR:$ORIG_PATH" HOME="$WORK/home" dce_ext_check_runtime_drift beta vscode "$TEAM_DIR" "$USER_DIR" "nodejs")"
+  DEV_CONTAINERS_BACKEND=apple \
+  dce_ext_check_runtime_drift beta vscode "$TEAM_DIR" "$USER_DIR" "nodejs")"
 [[ "$TOK" == "skip" ]] || fail "runtime_drift(skip/apple): expected skip got [$TOK]"
 pass "dce_ext_check_runtime_drift: match/drift/absent/skip tokens (running/pre-adoption/apple)"
 

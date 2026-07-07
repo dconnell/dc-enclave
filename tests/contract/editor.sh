@@ -540,13 +540,17 @@ grep -Fq -- "git config --global --add credential.helper store" "$DOCKER_LOG" \
 grep -Fq -- "url.https://${web_github}/.insteadOf git@${ssh_github}:" "$DOCKER_LOG" \
   && fail "kappa: PAT insteadOf set for a placeholder (unset) token"
 
-# Resolve the VS Code Remote-Containers nameConfig dir for the active platform
-# (macOS writes under Library/Application Support; Linux under .config). Both
-# parent dirs were created in the harness setup so the seed finds a live target
-# on either OS.
-_rc_storage="$HOME/.config/Code/User/globalStorage/ms-vscode-remote.remote-containers"
-[[ -d "$HOME/Library/Application Support/Code/User" ]] \
-  && _rc_storage="$HOME/Library/Application Support/Code/User/globalStorage/ms-vscode-remote.remote-containers"
+# Resolve the VS Code Remote-Containers nameConfig dir for the ACTIVE platform
+# (the seed writes under .config on Linux/WSL2, under Library/Application Support
+# on macOS). The harness pre-creates BOTH User dirs so the seed finds a live
+# parent on either OS, which makes a "which dir exists?" heuristic resolve to
+# the macOS path on Linux (the macOS dir always exists) and miss the file the
+# Linux seed wrote. Drive this off uname so it matches the seed's platform_os.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  _rc_storage="$HOME/Library/Application Support/Code/User/globalStorage/ms-vscode-remote.remote-containers"
+else
+  _rc_storage="$HOME/.config/Code/User/globalStorage/ms-vscode-remote.remote-containers"
+fi
 
 cfg_kappa="$_rc_storage/nameConfigs/kappa.json"
 [[ -f "$cfg_kappa" ]] || fail "kappa: named attach config not written"

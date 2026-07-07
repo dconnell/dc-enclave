@@ -360,10 +360,14 @@ case "$SUBACTION" in
     [[ -n "$PROJECT" ]] || dce_die "'dce extensions diff' requires <project>"
     _reject_unexpected_ids diff
     _load_project "$PROJECT"
-    _select_backend
-    if ! backend_is_docker_compatible "$ACTIVE_BACKEND"; then
-      _skip_diff "runtime drift unavailable on backend '$ACTIVE_BACKEND' (apple/container has no attach-mode extension store)"
+    # The apple skip is decided by backend TYPE, not by CLI availability, so check
+    # docker-compatibility from the loaded config value before _select_backend
+    # (which validates the backend CLI is installed). Otherwise an apple project
+    # whose `container` CLI is absent dies here instead of skipping cleanly.
+    if ! backend_is_docker_compatible "${CONTAINER_BACKEND:-}"; then
+      _skip_diff "runtime drift unavailable on backend '${CONTAINER_BACKEND:-(unknown)}' (apple/container has no attach-mode extension store)"
     fi
+    _select_backend
     if ! backend_is_running "$PROJECT"; then
       _skip_diff "container '$PROJECT' is not running (start it first to check runtime drift)"
     fi

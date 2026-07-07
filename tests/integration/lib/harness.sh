@@ -190,11 +190,15 @@ it_run_case() {  # <backend> <case-id> <fn> [fn-args...]
   local backend="$1" case_id="$2" fn="$3"; shift 3
 
   _IT_CASE_FAILED=0
+  _IT_CASE_SKIPPED=0
   _IT_CASE_DETAIL=""
 
   # shellcheck disable=SC1091  # case fn is caller-supplied, invoked by name
   if ! "$fn" "$backend" "$case_id" "$@"; then
-    [[ $_IT_CASE_FAILED -eq 0 ]] && { _IT_CASE_FAILED=1; _IT_CASE_DETAIL="${_IT_CASE_DETAIL:-case fn returned non-zero}"; }
+    if [[ $_IT_CASE_SKIPPED -eq 0 && $_IT_CASE_FAILED -eq 0 ]]; then
+      _IT_CASE_FAILED=1
+      _IT_CASE_DETAIL="${_IT_CASE_DETAIL:-case fn returned non-zero}"
+    fi
   fi
 
   # Per-case cleanup: rm --yes every project in the registry. Cases run
@@ -208,7 +212,10 @@ it_run_case() {  # <backend> <case-id> <fn> [fn-args...]
       >>"$(it_log_path "$pback" "$case_id")" 2>&1 || true
   done < "$IT_REGISTRY"
 
-  if [[ $_IT_CASE_FAILED -eq 0 ]]; then
+  if [[ $_IT_CASE_SKIPPED -eq 1 ]]; then
+    it_record "$backend" SKIP "$case_id" "${_IT_CASE_DETAIL:-skipped}"
+    printf '    - %s  (skipped: %s)\n' "$case_id" "${_IT_CASE_DETAIL:-skipped}"
+  elif [[ $_IT_CASE_FAILED -eq 0 ]]; then
     it_record "$backend" PASS "$case_id"
     printf '    \xe2\x9c\x93 %s\n' "$case_id"
   else
@@ -217,6 +224,21 @@ it_run_case() {  # <backend> <case-id> <fn> [fn-args...]
     printf '        backend: %s\n' "$backend"
     printf '        log:     %s\n' "$(it_log_path "$backend" "$case_id")"
   fi
+}
+
+# Case functions call this to mark the current case SKIPPED with a reason. Use
+# when a case cannot meaningfully run on the current backend configuration (a
+# documented capability gap, e.g. IPv6 disabled by default on OrbStack) -- never
+# to hide a real regression. Always returns 0 so a `return $(it_case_skip ...)`
+# exits the case cleanly without it_run_case treating the non-zero it_case_fail
+# path as a failure.
+it_case_skip() {  # [detail...]
+  _IT_CASE_SKIPPED=1
+  _IT_CASE_FAILED=0
+  if [[ -n "$1" ]]; then
+    if [[ -n "${_IT_CASE_DETAIL:-}" ]]; then _IT_CASE_DETAIL+="; $*"; else _IT_CASE_DETAIL="$*"; fi
+  fi
+  return 0
 }
 
 # Case functions call this to mark the current case failed with a reason. Always
