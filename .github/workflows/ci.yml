@@ -1,0 +1,237 @@
+# DC Enclave CI
+#
+# Five jobs, all required to merge to main:
+#   contract / lint / unit  - fast bash tiers, matrixed on Linux + macOS
+#   integration-linux       - real docker + podman + colima backends
+#   integration-windows     - real docker + podman via WSL2
+#
+# The integration suite refuses to run inside a container
+# (tests/integration/lib/backend-discovery.sh:36 -> it_assert_not_in_container),
+# so integration jobs install real runtimes on the bare host and never use the
+# `container:` key or service containers.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Standard hosted runners for a public repository keep CI at zero cost.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref (but never cancel main).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Fast tiers. OS-agnostic bash. Matrixed on Linux + macOS so the macOS bash
+  # orchestration path is exercised; Windows is excluded because WSL2 runs the
+  # same Ubuntu bash as Linux (no added tier signal).
+  # ---------------------------------------------------------------------------
+  contract:
+    name: contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-tier
+      - name: Run contract tier
+        run: tests/contract/run-all.sh
+
+  lint:
+    name: lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-tier
+        with:
+          shellcheck: "true"
+      - name: Run lint tier
+        run: tests/lint/run-all.sh
+
+  unit:
+    name: unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-tier
+      - name: Run unit tier
+        run: tests/unit/run-all.sh
+
+  # ---------------------------------------------------------------------------
+  # Real-backend integration on Linux, split into one PARALLEL job per backend
+  # (docker / podman / colima) via a matrix. Each job installs only what its
+  # backend needs, restores its OWN dce-base cache entry, and runs the suite
+  # against that single backend. There is deliberately NO serial "build base
+  # first" gate: the per-backend cache key (Containerfile.base + backend) gives
+  # build-once/reuse across runs, and on a public repo a parallel cold rebuild
+  # is free -- serializing would only delay the warm (common) path.
+  #
+  #   docker  - preinstalled; no extra setup
+  #   podman  - apt + rootless subuid/subgid
+  #   colima  - release binary (NOT in Ubuntu apt) + QEMU, KVM-accelerated VM
+  # ---------------------------------------------------------------------------
+  integration-linux:
+    name: integration-linux (${{ matrix.backend }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [docker, podman, colima]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install backend (${{ matrix.backend }})
+        run: |
+          case "${{ matrix.backend }}" in
+            docker)
+              docker info
+              ;;
+            podman)
+              sudo apt-get update
+              sudo apt-get install -y podman uidmap
+              # dce drives `podman` without sudo, so rootless podman must work
+              # for the runner user. Idempotent: only add subuid/subgid if absent.
+              user="$(id -un)"
+              grep -q "^${user}:" /etc/subuid \
+                || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$user"
+              podman info >/dev/null
+              ;;
+            colima)
+              # Colima runs a Lima VM on QEMU; hosted Linux runners expose KVM,
+              # so the nested VM is hardware-accelerated. Do NOT `docker context
+              # use colima` globally -- the suite pins the Colima context per
+              # backend call, and a globally-active one breaks the docker backend.
+              sudo apt-get update
+              sudo apt-get install -y qemu-system qemu-utils
+              curl -fsSL -o colima \
+                https://github.com/abiosoft/colima/releases/latest/download/colima-Linux-x86_64
+              sudo install -m 0755 colima /usr/local/bin/colima
+              colima start --runtime docker --cpu 2 --memory 2 --disk 10
+              ;;
+          esac
+
+      - name: Restore dce-base cache (${{ matrix.backend }})
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/dce-base
+          # Per-backend key: an immutable cache key can't be appended to by
+          # parallel jobs, so each backend owns its own entry (its image lives
+          # in its own store anyway). Containerfile.base in the hash => a recipe
+          # change rebuilds. 7-day-since-last-access retention, 10 GB repo quota.
+          key: dce-base-${{ runner.os }}-${{ runner.arch }}-${{ matrix.backend }}-${{ hashFiles('Containerfiles/Containerfile.base') }}
+
+      - name: Load cached dce-base
+        run: |
+          archive="/tmp/dce-base/${{ matrix.backend }}.tar"
+          [[ -f "$archive" ]] || exit 0
+          case "${{ matrix.backend }}" in
+            docker) docker load -i "$archive" ;;
+            podman) podman load -i "$archive" ;;
+            colima) DOCKER_CONTEXT=colima docker load -i "$archive" ;;
+          esac
+
+      - name: Run integration (${{ matrix.backend }})
+        env:
+          INTEGRATION_BACKENDS: ${{ matrix.backend }}
+          INTEGRATION_MODE: full
+        run: tests/integration/run-all.sh
+
+      - name: Save dce-base (only on cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/dce-base
+          archive="/tmp/dce-base/${{ matrix.backend }}.tar"
+          case "${{ matrix.backend }}" in
+            docker) docker save dce-base:latest -o "$archive" ;;
+            podman) podman save -o "$archive" dce-base:latest ;;
+            colima) DOCKER_CONTEXT=colima docker save dce-base:latest -o "$archive" ;;
+          esac
+
+  # ---------------------------------------------------------------------------
+  # Real-backend integration on Windows: docker + podman, both via WSL2 (no
+  # Colima/OrbStack/apple on Windows). Per plans/ghactions.md this path is
+  # UNPROVEN in this project and is required from day one as the forcing
+  # function to surface and fix WSL2-specific issues.
+  #
+  # The repo is cloned fresh INSIDE WSL (Linux git -> LF preserved, files on the
+  # WSL ext4 filesystem) rather than using the Windows checkout, which avoids
+  # CRLF shebang corruption. refs/pull/<n>/merge exists on the base repo even for
+  # fork PRs, so the same clone works for push and pull_request triggers.
+  # dce-base caching is deferred until the WSL2 base is green.
+  # ---------------------------------------------------------------------------
+  integration-windows:
+    name: integration (windows)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Bootstrap WSL (Ubuntu + docker + podman) and clone repo
+        shell: bash
+        env:
+          WSLENV: "DC_REPO_URL:DC_REF:DC_SHA"
+          DC_REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
+          DC_REF: ${{ github.ref }}
+          DC_SHA: ${{ github.sha }}
+        run: |
+          # Ensure a Ubuntu distro is present (windows-2022 ships none by default).
+          wsl --install -d Ubuntu-22.04 --no-launch || true
+          wsl --set-default Ubuntu-22.04 || true
+          wsl --set-default-version 2 || true
+          # Feed the bootstrap script to WSL bash over a QUOTED heredoc: the
+          # $DC_* vars are expanded by WSL bash (forwarded via WSLENV), not here.
+          wsl -u root -- bash -s <<'WSL_EOF'
+          set -euxo pipefail
+          apt-get update -y
+          DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io podman ca-certificates
+          service docker start || true
+          # Wait for dockerd to answer before continuing.
+          for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
+          docker info >/dev/null
+          podman info >/dev/null
+          rm -rf ~/dce
+          git clone --no-checkout "$DC_REPO_URL" ~/dce
+          git -C ~/dce fetch --depth 1 origin "$DC_REF"
+          git -C ~/dce checkout "$DC_SHA"
+          WSL_EOF
+
+      - name: Run integration (docker, podman) inside WSL
+        shell: bash
+        run: |
+          wsl -u root -- bash -lc '
+            set -euxo pipefail
+            cd ~/dce
+            # Re-ensure dockerd is up (the VM may have idled between steps).
+            service docker start || true
+            export INTEGRATION_BACKENDS=docker,podman
+            export INTEGRATION_MODE=full
+            tests/integration/run-all.sh
+          '

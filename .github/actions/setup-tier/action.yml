@@ -1,0 +1,32 @@
+name: Setup tier environment
+description: >-
+  Ensure the Bash 4+ runtime that DC Enclave's tier runners hard-require
+  (they abort on Bash < 4 -- see tests/{contract,lint,unit}/run-all.sh), and
+  optionally install ShellCheck. Linux already ships Bash 5; macOS system
+  /bin/bash is 3.2, so Homebrew bash is installed and placed first on PATH for
+  every subsequent step in the job.
+inputs:
+  shellcheck:
+    description: Set to "true" to also install ShellCheck (the lint tier).
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: macOS - install Bash 4+ (and ShellCheck when requested)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install bash
+        # Put Homebrew first so shebangs (`#!/usr/bin/env bash`) and explicit
+        # `bash` invocations resolve to the Bash 5 we just installed.
+        echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+        if [ "${{ inputs.shellcheck }}" = "true" ]; then
+          brew install shellcheck
+        fi
+    - name: Linux - install ShellCheck (lint tier only)
+      if: runner.os == 'Linux' && inputs.shellcheck == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y shellcheck
