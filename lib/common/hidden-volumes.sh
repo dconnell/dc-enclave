@@ -250,11 +250,17 @@ dce_hidden_mounts_verified() {
     [[ -z "$hidden_path" ]] && continue
     target="/workspace/$hidden_path"
 
-    # shellcheck disable=SC2016
-    # Command runs in the container via sh -c; $(stat ...) must be evaluated by
-    # that inner shell, not expanded here. Only ${target} is host-side.
+    # Detect the mount point from the mount table (findmnt -M), NOT by comparing
+    # st_dev of the path vs /workspace: on a single-filesystem Linux host (most
+    # servers, CI runners, WSL2) the repo bind mount and the named-volume mount
+    # share one underlying device, so `stat -c %d` reads equal for both and the
+    # mount is falsely reported absent -- breaking `dce new --hide` there. macOS
+    # Docker Desktop only appeared to work because its host bind and VM volume
+    # sit on different devices. findmnt reads /proc/self/mountinfo, which is
+    # correct regardless of the underlying device layout.
+    # shellcheck disable=SC2016  # runs in the container's sh -c; only ${target} is host-side.
     backend_exec "$project" sh -c \
-      '[ -d "'"${target}"'" ] && [ "$(stat -c %d /workspace)" != "$(stat -c %d "'"${target}"'")" ]' \
+      'findmnt -M "'"${target}"'" >/dev/null 2>&1' \
       2>/dev/null || rc=1
   done
 

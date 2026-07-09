@@ -1,0 +1,328 @@
+# DC Enclave CI
+#
+# Five jobs, all required to merge to main:
+#   contract / lint / unit  - fast bash tiers, matrixed on Linux + macOS
+#   integration-linux       - real docker + podman + colima backends
+#   integration-windows     - real docker + podman via WSL2
+#
+# The integration suite refuses to run inside a container
+# (tests/integration/lib/backend-discovery.sh:36 -> it_assert_not_in_container),
+# so integration jobs install real runtimes on the bare host and never use the
+# `container:` key or service containers.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Standard hosted runners for a public repository keep CI at zero cost.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref (but never cancel main).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Fast tiers. OS-agnostic bash. Matrixed on Linux + macOS so the macOS bash
+  # orchestration path is exercised; Windows is excluded because WSL2 runs the
+  # same Ubuntu bash as Linux (no added tier signal).
+  # ---------------------------------------------------------------------------
+  contract:
+    name: contract (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-tier
+      - name: Run contract tier
+        run: tests/contract/run-all.sh
+
+  lint:
+    name: lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-tier
+        with:
+          shellcheck: "true"
+      - name: Run lint tier
+        run: tests/lint/run-all.sh
+
+  unit:
+    name: unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: ./.github/actions/setup-tier
+      - name: Run unit tier
+        run: tests/unit/run-all.sh
+
+  # ---------------------------------------------------------------------------
+  # Real-backend integration on Linux, split into one PARALLEL job per backend
+  # (docker / podman / colima) via a matrix. Each job installs only what its
+  # backend needs, restores its OWN dce-base cache entry, and runs the suite
+  # against that single backend. There is deliberately NO serial "build base
+  # first" gate: the per-backend cache key (Containerfile.base + backend) gives
+  # build-once/reuse across runs, and on a public repo a parallel cold rebuild
+  # is free -- serializing would only delay the warm (common) path.
+  #
+  #   docker  - preinstalled; no extra setup
+  #   podman  - apt + rootless subuid/subgid
+  #   colima  - release binary (NOT in Ubuntu apt) + QEMU, KVM-accelerated VM
+  # ---------------------------------------------------------------------------
+  integration-linux:
+    name: integration-linux (${{ matrix.backend }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [docker, podman, colima]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install backend (${{ matrix.backend }})
+        run: |
+          case "${{ matrix.backend }}" in
+            docker)
+              docker info
+              ;;
+            podman)
+              # ubuntu-24.04 (noble) caps podman at 4.9.3, whose imagebuilder
+              # parser mishandles heredocs in RUN. Pull a current 5.x from a
+              # newer Ubuntu release (plucky/25.04) instead. Pin that release low
+              # so it only supplies packages explicitly requested with -t plucky,
+              # leaving the noble base otherwise untouched. plucky is interim and
+              # may have moved to old-releases after EOL, so probe the host.
+              if curl -fsSL "http://archive.ubuntu.com/ubuntu/dists/plucky/Release" >/dev/null 2>&1; then
+                repo_host="archive.ubuntu.com/ubuntu"
+              else
+                repo_host="old-releases.ubuntu.com/ubuntu"
+              fi
+              echo "deb http://$repo_host plucky main universe" \
+                | sudo tee /etc/apt/sources.list.d/plucky.list >/dev/null
+              printf 'Package: *\nPin: release n=plucky\nPin-Priority: 100\n' \
+                | sudo tee /etc/apt/preferences.d/plucky >/dev/null
+              sudo apt-get update
+              sudo apt-get install -y uidmap
+              # Pull podman AND its runtime/networking stack together from plucky:
+              # mixing plucky podman with noble's crun/libseccomp2 fails with an
+              # ABI mismatch ("unknown version specified"), so pull crun, conmon,
+              # and libseccomp2 from plucky too. passt/slirp4netns keep rootless
+              # container networking current. (Rootless podman still cannot
+              # live-attach a running container to a network with --ip regardless
+              # of passt version -- that case is skipped in the suite.)
+              # (containers-common is a Fedora package name; Ubuntu's podman
+              # bundles that config, so it is not installed separately.)
+              sudo apt-get install -y -t plucky podman crun conmon libseccomp2 passt slirp4netns
+              podman --version
+              # dce drives `podman` without sudo, so rootless podman must work
+              # for the runner user. Idempotent: only add subuid/subgid if absent.
+              user="$(id -un)"
+              grep -q "^${user}:" /etc/subuid \
+                || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$user"
+              podman info >/dev/null
+              ;;
+            colima)
+              # Colima runs a Lima VM on QEMU; hosted Linux runners expose KVM,
+              # so the nested VM is hardware-accelerated. Do NOT `docker context
+              # use colima` globally -- the suite pins the Colima context per
+              # backend call, and a globally-active one breaks the docker backend.
+              sudo apt-get update
+              sudo apt-get install -y qemu-system qemu-utils
+              # Colima on Linux drives Lima but does NOT bundle limactl (the
+              # macOS brew formula pulls lima as a dep; the standalone binary
+              # does not), so install lima from its releases too. Install the
+              # WHOLE tarball (bin/ + share/lima/templates/ + libexec/) into
+              # /usr/local, not just the binaries: limactl looks up its templates
+              # relative to the binary, so binaries alone fail with
+              # `template "default.yaml" not found`. The asset name is versioned,
+              # so resolve the latest tag first (bash regex, to avoid a noisy pipe).
+              lima_json="$(curl -fsSL https://api.github.com/repos/lima-vm/lima/releases/latest)"
+              lima_re='"tag_name":[[:space:]]*"([^"]+)"'
+              if ! [[ "$lima_json" =~ $lima_re ]]; then
+                echo "ERROR: could not parse lima latest release tag" >&2
+                exit 1
+              fi
+              lima_tag="${BASH_REMATCH[1]}"
+              lima_ver="${lima_tag#v}"
+              curl -fsSL -o lima.tgz \
+                "https://github.com/lima-vm/lima/releases/download/${lima_tag}/lima-${lima_ver}-Linux-x86_64.tar.gz"
+              sudo tar -xzf lima.tgz -C /usr/local
+              rm -f lima.tgz
+              limactl --version
+              curl -fsSL -o colima \
+                https://github.com/abiosoft/colima/releases/latest/download/colima-Linux-x86_64
+              sudo install -m 0755 colima /usr/local/bin/colima
+              # Ensure the runner user can use /dev/kvm: if QEMU cannot access KVM
+              # it exits at launch and lima's hostagent panics ("send on closed
+              # channel") while waiting for SSH.
+              sudo chmod 666 /dev/kvm 2>/dev/null || true
+              if ! colima start --runtime docker --cpu 2 --memory 2 --disk 10; then
+                # The nested-VM boot error is otherwise trapped on the ephemeral
+                # runner; dump colima's serial + hostagent logs to the job output
+                # so the cause (KVM, firmware, OOM, ...) is visible without a rerun.
+                echo "===== colima serial/hostagent logs (start failed) ====="
+                shopt -s nullglob
+                for f in "$HOME"/.config/colima/_lima/colima/serial*.log \
+                         "$HOME"/.config/colima/_lima/colima/ha*.log; do
+                  echo "----- $f -----"
+                  cat "$f" 2>/dev/null || true
+                done
+                shopt -u nullglob
+                echo "===== end colima logs ====="
+                exit 1
+              fi
+              ;;
+          esac
+
+      - name: Restore dce-base cache (${{ matrix.backend }})
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/dce-base
+          # Per-backend key: an immutable cache key can't be appended to by
+          # parallel jobs, so each backend owns its own entry (its image lives
+          # in its own store anyway). Containerfile.base in the hash => a recipe
+          # change rebuilds. 7-day-since-last-access retention, 10 GB repo quota.
+          key: dce-base-${{ runner.os }}-${{ runner.arch }}-${{ matrix.backend }}-${{ hashFiles('Containerfiles/Containerfile.base') }}
+
+      - name: Load cached dce-base
+        run: |
+          archive="/tmp/dce-base/${{ matrix.backend }}.tar"
+          [[ -f "$archive" ]] || exit 0
+          case "${{ matrix.backend }}" in
+            docker) docker load -i "$archive" ;;
+            podman) podman load -i "$archive" ;;
+            colima) DOCKER_CONTEXT=colima docker load -i "$archive" ;;
+          esac
+
+      - name: Run integration (${{ matrix.backend }})
+        env:
+          INTEGRATION_BACKENDS: ${{ matrix.backend }}
+          INTEGRATION_MODE: full
+          # colima's docker socket/context AND podman's rootless image store are
+          # HOME-relative, so run those backends under the real HOME -- matching
+          # the separate cache load/save steps, which run under the real HOME --
+          # instead of the suite's isolated one. (docker's store is system-wide,
+          # so it stays hermetic.) Without this, podman's dce-base is built into
+          # the isolated home's store and the save step can't find it.
+          DCE_TEST_REAL_HOME: ${{ (matrix.backend == 'colima' || matrix.backend == 'podman') && '1' || '0' }}
+        run: tests/integration/run-all.sh
+
+      - name: Save dce-base (only on cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/dce-base
+          archive="/tmp/dce-base/${{ matrix.backend }}.tar"
+          case "${{ matrix.backend }}" in
+            docker) docker save dce-base:latest -o "$archive" ;;
+            podman) podman save -o "$archive" dce-base:latest ;;
+            colima) DOCKER_CONTEXT=colima docker save dce-base:latest -o "$archive" ;;
+          esac
+
+      # Per-case logs land on the ephemeral runner and are otherwise lost; upload
+      # them on failure so integration failures are diagnosable without reruns.
+      - name: Upload integration logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-${{ matrix.backend }}-${{ github.run_id }}
+          path: tests/integration/artifacts/
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Real-backend integration on Windows: docker + podman, both via WSL2 (no
+  # Colima/OrbStack/apple on Windows). Per plans/ghactions.md this path is
+  # UNPROVEN in this project. It is currently NON-BLOCKING (continue-on-error,
+  # not a required check): `wsl --install -d` does not work headless on Windows
+  # Server / GHA runners (no Microsoft Store distro list), so the bootstrap needs
+  # a `wsl --import`-from-rootfs rewrite that is still pending. It stays in-tree
+  # as an informational signal and a forcing function for that follow-up; flip it
+  # to required once the WSL bootstrap is green.
+  #
+  # The repo is cloned fresh INSIDE WSL (Linux git -> LF preserved, files on the
+  # WSL ext4 filesystem) rather than using the Windows checkout, which avoids
+  # CRLF shebang corruption. refs/pull/<n>/merge exists on the base repo even for
+  # fork PRs, so the same clone works for push and pull_request triggers.
+  # dce-base caching is deferred until the WSL2 base is green.
+  # ---------------------------------------------------------------------------
+  integration-windows:
+    name: integration (windows)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    # Skipped (gray, not red) on push/PR until the WSL bootstrap is reworked to
+    # `wsl --import` from a rootfs. Runs only on manual workflow_dispatch so the
+    # WSL fix can be iterated on without failing normal runs. Remove this `if`
+    # (and re-add to required checks) once the WSL bootstrap is green.
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Bootstrap WSL (Ubuntu + docker + podman) and clone repo
+        shell: bash
+        env:
+          WSLENV: "DC_REPO_URL:DC_REF:DC_SHA"
+          DC_REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
+          DC_REF: ${{ github.ref }}
+          DC_SHA: ${{ github.sha }}
+        run: |
+          # Ensure a Ubuntu distro is present (windows-2022 ships none by default).
+          wsl --install -d Ubuntu-22.04 --no-launch || true
+          wsl --set-default Ubuntu-22.04 || true
+          wsl --set-default-version 2 || true
+          # Feed the bootstrap script to WSL bash over a QUOTED heredoc: the
+          # $DC_* vars are expanded by WSL bash (forwarded via WSLENV), not here.
+          wsl -u root -- bash -s <<'WSL_EOF'
+          set -euxo pipefail
+          apt-get update -y
+          DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io podman ca-certificates
+          service docker start || true
+          # Wait for dockerd to answer before continuing.
+          for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
+          docker info >/dev/null
+          podman info >/dev/null
+          rm -rf ~/dce
+          git clone --no-checkout "$DC_REPO_URL" ~/dce
+          git -C ~/dce fetch --depth 1 origin "$DC_REF"
+          git -C ~/dce checkout "$DC_SHA"
+          WSL_EOF
+
+      - name: Run integration (docker, podman) inside WSL
+        shell: bash
+        run: |
+          wsl -u root -- bash -lc '
+            set -euxo pipefail
+            cd ~/dce
+            # Re-ensure dockerd is up (the VM may have idled between steps).
+            service docker start || true
+            export INTEGRATION_BACKENDS=docker,podman
+            export INTEGRATION_MODE=full
+            tests/integration/run-all.sh
+          '

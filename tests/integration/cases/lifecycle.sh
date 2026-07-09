@@ -171,6 +171,16 @@ _it_lc_config_roundtrip() {  # <backend> <case_id>
 # no such flag -- see that case for the documented gap.)
 _it_lc_network_lifecycle() {  # <backend> <case_id>
   local b="$1" c="$2" net p1 p2
+  # Rootless podman cannot live-attach a running container to a user-defined
+  # network with a static IP: `podman network connect --ip` fails with "pasta is
+  # not supported: invalid network mode" (a pasta-netns limitation, not a dce
+  # bug). Static IP at create time works; only the live `network add --ip` step
+  # in this case is unsupported, so skip the whole case on podman rather than
+  # weaken it. (docker/colima/orbstack run it in full.)
+  if [[ "$b" == "podman" ]]; then
+    it_case_skip "rootless podman: live network attach with --ip is unsupported (pasta netns limitation)"
+    return 0
+  fi
   net="$(it_network_name "$b" "$c")"
   # Unusual subnet to reduce the chance of colliding with a host network.
   it_dce "$b" "$c" network create "$net" --subnet 10.200.0.0/24 \

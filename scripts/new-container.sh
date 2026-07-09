@@ -516,6 +516,17 @@ if [[ -n "$REPO_PATH_OVERRIDE" && "$CLI_SET_REPO_PATH" != true ]]; then
        (/, your home, the repos root, or a parent of it); refusing to widen the bind mount.
        (recipe repo-path was: $REPO_PATH_OVERRIDE)"
   fi
+  # A RELATIVE recipe repo-path must resolve UNDER the repos root. One whose
+  # `..` escapes it is unambiguous traversal and is hard-rejected -- NOT routed
+  # to the confirmation path. Without this the verdict depends on $PWD depth: a
+  # deep CWD (e.g. CI) resolves `../../..` to a non-sensitive intermediate dir
+  # that slips past the sensitive-root check into the outside-default flow,
+  # which `exit 0`s on decline. Legit outside-default usage is absolute, so it
+  # still reaches the confirmation below untouched.
+  if [[ "$REPO_PATH_OVERRIDE" != /* ]] \
+     && [[ "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON" && "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON/"* ]]; then
+    dce_die "recipe repo-path '$REPO_PATH_OVERRIDE' resolves outside the repos root ('$REPOS_DIR') via a relative path; refusing to widen the bind mount."
+  fi
   if [[ "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON" && "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON/"* ]]; then
     echo "Recipe 'repo-path' resolves outside the default repos directory:"
     echo "  resolved path : $REPOS_DIR"
