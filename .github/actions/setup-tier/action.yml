@@ -1,0 +1,48 @@
+name: Setup tier environment
+description: >-
+  Ensure the Bash 4+ runtime that DC Enclave's tier runners hard-require
+  (they abort on Bash < 4 -- see tests/{contract,lint,unit}/run-all.sh), and
+  optionally install a PINNED ShellCheck 0.11.0. Linux already ships Bash 5;
+  macOS system /bin/bash is 3.2, so Homebrew bash is installed and placed first
+  on PATH for every subsequent step in the job. ShellCheck is downloaded from
+  the koalaman/shellcheck release (not apt/brew) so both OSes run the exact
+  version the repo is validated against -- package-manager versions skew and
+  produce different heuristics (e.g. ubuntu's 0.9.0 is too old).
+inputs:
+  shellcheck:
+    description: Set to "true" to also install ShellCheck (the lint tier).
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: macOS - install Bash 4+
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install bash
+        # Put Homebrew first so shebangs (`#!/usr/bin/env bash`) and explicit
+        # `bash` invocations resolve to the Bash 5 we just installed.
+        echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+
+    - name: Install pinned ShellCheck 0.11.0 (lint tier)
+      if: inputs.shellcheck == 'true'
+      shell: bash
+      run: |
+        ver=v0.11.0
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64)   asset="shellcheck-${ver}.linux.x86_64.tar.gz" ;;
+          Linux-ARM64) asset="shellcheck-${ver}.linux.aarch64.tar.gz" ;;
+          macOS-ARM64) asset="shellcheck-${ver}.darwin.aarch64.tar.gz" ;;
+          macOS-X64)   asset="shellcheck-${ver}.darwin.x86_64.tar.gz" ;;
+          *) echo "Unsupported runner: ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1 ;;
+        esac
+        curl -fsSL -o sc.tgz "https://github.com/koalaman/shellcheck/releases/download/${ver}/${asset}"
+        # The release nests the binary under a versioned dir (shellcheck-vX.Y.Z/);
+        # extract into a temp dir with --strip-components=1 so the binary lands at
+        # its root and the workspace is not polluted.
+        scdir="$(mktemp -d)"
+        tar -xzf sc.tgz -C "$scdir" --strip-components=1
+        sudo install -m 0755 "$scdir/shellcheck" /usr/local/bin/shellcheck
+        rm -rf "$scdir" sc.tgz
+        shellcheck --version | grep -E '^version:'
