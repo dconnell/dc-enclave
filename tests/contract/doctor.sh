@@ -178,6 +178,24 @@ BASH_BIN="$WORK/bin_bash"
 mkdir -p "$BASH_BIN"
 ln -sf "$BASH" "$BASH_BIN/bash"
 
+# path_without_cmd strips the WHOLE directory holding a container CLI; on Linux
+# CI runners docker lives in /usr/bin (and /bin symlinks to it on merged-usr),
+# so coreutils (dirname, cut, grep, ...) go with it and `dce doctor` can't even
+# start. On macOS dev this is harmless (Docker is in a Homebrew dir, coreutils
+# in /usr/bin). Expose those coreutils WITHOUT the container CLIs by symlinking
+# every executable in the system bin dirs except docker/podman/container/colima.
+COREUTILS_BIN="$WORK/bin_coreutils"
+mkdir -p "$COREUTILS_BIN"
+for _src in /usr/bin /bin; do
+  [[ -d "$_src" ]] || continue
+  for _f in "$_src"/*; do
+    [[ -f "$_f" && -x "$_f" ]] || continue
+    _b="${_f##*/}"
+    case "$_b" in docker|podman|container|colima) continue ;; esac
+    [[ -e "$COREUTILS_BIN/$_b" ]] || ln -s "$_f" "$COREUTILS_BIN/$_b"
+  done
+done
+
 # Default to a healthy Colima state (colima context listed + active, docker up)
 # so the colima stub always present on PATH does not read as "drifted" by default.
 # Drift scenarios below override these inline.
@@ -193,7 +211,7 @@ RUN_OUT=""
 run_doctor() {
   local out
   set +e
-  out="$(HOME="$HOME" env -u CONTAINER_BACKEND "$DC_BIN" doctor "$@" 2>&1)"
+  out="$(HOME="$HOME" /usr/bin/env -u CONTAINER_BACKEND "$DC_BIN" doctor "$@" 2>&1)"
   RUN_RC=$?
   set -e
   RUN_OUT="$out"
@@ -357,7 +375,7 @@ pass "unknown scope: nonzero + guidance"
 
 # `dce doctor <backend with CLI missing>`: docker absent from PATH -> fail.
 set +e
-out="$(PATH="$BASH_BIN:$STUB_NODOCKER:$ORIG_PATH_NO_DOCKER" HOME="$HOME" env -u CONTAINER_BACKEND \
+out="$(PATH="$BASH_BIN:$STUB_NODOCKER:$ORIG_PATH_NO_DOCKER:$COREUTILS_BIN" HOME="$HOME" /usr/bin/env -u CONTAINER_BACKEND \
         "$DC_BIN" doctor docker 2>&1)"
 RUN_RC=$?
 set -e
@@ -432,7 +450,7 @@ pass "project with missing image: reported + nonzero"
 # Project whose recorded backend CLI is missing -> failure.
 make_project delta podman dce-base:latest "ghp_realtoken"
 set +e
-out="$(PATH="$BASH_BIN:$STUB_NOP:$ORIG_PATH_NO_PODMAN" HOME="$HOME" env -u CONTAINER_BACKEND \
+out="$(PATH="$BASH_BIN:$STUB_NOP:$ORIG_PATH_NO_PODMAN:$COREUTILS_BIN" HOME="$HOME" /usr/bin/env -u CONTAINER_BACKEND \
         "$DC_BIN" doctor delta 2>&1)"
 RUN_RC=$?
 set -e
@@ -636,11 +654,11 @@ pass "docker-unreachable hint is OS-specific (linux vs macos)"
 # path_without_cmd strips the Homebrew dir that holds BOTH colima and Bash 5;
 # without it, dce's subcommand shebang would resolve to /bin/bash 3.2 and abort.
 set +e
-out="$(PATH="$BASH_BIN:$WORK/bin_linux:$STUB_NOCOLIMA:$ORIG_PATH_NO_COLIMA" HOME="$HOME" \
-        env -u CONTAINER_BACKEND "$DC_BIN" doctor colima 2>&1)"
+out="$(PATH="$BASH_BIN:$WORK/bin_linux:$STUB_NOCOLIMA:$ORIG_PATH_NO_COLIMA:$COREUTILS_BIN" HOME="$HOME" \
+        /usr/bin/env -u CONTAINER_BACKEND "$DC_BIN" doctor colima 2>&1)"
 RUN_RC=$?
-out_mac="$(PATH="$BASH_BIN:$WORK/bin_macos:$STUB_NOCOLIMA:$ORIG_PATH_NO_COLIMA" HOME="$HOME" \
-        env -u CONTAINER_BACKEND "$DC_BIN" doctor colima 2>&1)"
+out_mac="$(PATH="$BASH_BIN:$WORK/bin_macos:$STUB_NOCOLIMA:$ORIG_PATH_NO_COLIMA:$COREUTILS_BIN" HOME="$HOME" \
+        /usr/bin/env -u CONTAINER_BACKEND "$DC_BIN" doctor colima 2>&1)"
 set -e
 [[ "$RUN_RC" -ne 0 ]] || fail "colima CLI missing: expected nonzero"
 printf '%s' "$out" | grep -q 'colima' || fail "linux colima-missing hint dropped backend name"
