@@ -46,6 +46,10 @@ touch "$USER_DIR/overlays/Containerfile.node" "$USER_DIR/overlays/Containerfile.
 # ---------------------------------------------------------------------------
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/complete-data.sh"
+# Portable SHA-256 (dce_sha256_file: sha256sum -> shasum -> openssl) so the
+# change-detection hashes below work on macOS too, which lacks sha256sum.
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/common.sh"
 
 expect_sorted() {
   local label="$1" got="$2"; shift 2
@@ -588,7 +592,7 @@ if grep -Fxq "$legacy_alias" "$sim_rc"; then
 fi
 
 # Re-run simulation: no duplicates should be appended.
-before_hash="$(sha256sum "$sim_rc" | cut -d' ' -f1)"
+before_hash="$(dce_sha256_file "$sim_rc")"
 if ! grep -Fxq "$dce_func" "$sim_rc"; then
   {
     echo ""
@@ -602,7 +606,7 @@ if grep -Fxq "$legacy_alias" "$sim_rc"; then
   grep -Fxv "$legacy_alias" "$sim_rc" > "$tmp"
   cat "$tmp" > "$sim_rc"
 fi
-after_hash="$(sha256sum "$sim_rc" | cut -d' ' -f1)"
+after_hash="$(dce_sha256_file "$sim_rc")"
 
 grep -Fxq "$dce_unalias" "$sim_rc" || fail "zsh setup simulation missing unalias line"
 grep -Fxq "$dce_func" "$sim_rc" || fail "zsh setup simulation missing dce function"
