@@ -148,8 +148,17 @@ it_preflight_backend() {  # <backend>
 
   if ! _it_base_image_present "$backend"; then
     printf '  preflight: %s building dce-base:latest ...\n' "$backend"
-    if ! CONTAINER_BACKEND="$backend" "$_IT_DCE" rebuild-image base >/dev/null 2>&1; then
-      printf '  preflight: %s rebuild-image base FAILED\n' "$backend"
+    # Capture the build log (NOT >/dev/null) so a failure is diagnosable: strict
+    # mode otherwise marks the backend FAILED with zero clue why the image build
+    # broke. Echo the tail to stderr (visible in the CI step output) + keep the
+    # full log under the run's artifacts.
+    local _build_log
+    _build_log="$(it_log_path "$backend" preflight-build)"
+    if ! CONTAINER_BACKEND="$backend" "$_IT_DCE" rebuild-image base >"$_build_log" 2>&1; then
+      printf '  preflight: %s rebuild-image base FAILED (full log: %s)\n' "$backend" "$_build_log" >&2
+      printf '  ----- tail of preflight build log -----\n' >&2
+      tail -n 40 "$_build_log" >&2 2>/dev/null || true
+      printf '  ---------------------------------------\n' >&2
       return 1
     fi
   fi
