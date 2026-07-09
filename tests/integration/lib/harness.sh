@@ -60,6 +60,51 @@ mkdir -p "$IT_REPOS_DIR" "$IT_ARTIFACTS_ROOT"
 # Isolate repo mounts so host projects are never touched by the suite.
 export DC_REPOS_DIR="$IT_REPOS_DIR"
 
+# Isolate HOME + the global config too, not just repos. `dce new` calls
+# dce_load_global_config, which hard-requires ~/.config/dce-enclave/config: it
+# IGNORES env DC_TEAM_DIR (roots are unset first) and dce_die's if the file or
+# the team/user roots are missing. A host that never ran scripts/setup.sh (e.g.
+# CI) therefore sees every `dce new` fail. Two modes:
+#   - Default (docker/podman): isolate HOME under the run workspace and write a
+#     minimal global config, so the suite is hermetic and never touches the
+#     operator's real config. Cleanup wipes IT_ROOT_WS, which holds this HOME.
+#   - DCE_TEST_REAL_HOME=1 (colima): colima's docker socket/context are created
+#     under the real home by `colima start`, so the suite must run there too.
+#     Keep the real HOME and only seed the config when it is MISSING -- never
+#     overwrite, so a developer's real setup on macOS is left intact.
+_it_ensure_global_config() {  # <home>
+  local h="$1" team user cfg
+  team="$h/.config/dce-enclave/team"
+  user="$h/.config/dce-enclave/user"
+  cfg="$h/.config/dce-enclave/config"
+  if [[ -f "$cfg" ]]; then
+    return 0
+  fi
+  mkdir -p "$team/overlays" "$team/container-recipes" \
+           "$user/overlays" "$user/container-recipes"
+  cat > "$cfg" <<EOF
+DC_TEAM_DIR="$team"
+DC_USER_DIR="$user"
+EOF
+}
+
+if [[ "${DCE_TEST_REAL_HOME:-0}" == "1" ]]; then
+  _it_ensure_global_config "$HOME"
+else
+  _IT_REAL_HOME="$HOME"
+  export HOME="$IT_ROOT_WS/home"
+  # Safety guard: the isolated HOME must be a fresh path UNDER the run workspace
+  # and distinct from the operator's real home. If IT_ROOT_WS were ever empty the
+  # assignment above would collapse HOME to "/home" (a real/system dir); refuse
+  # to proceed before writing anything so the suite can never land in a real home.
+  if [[ -z "$IT_ROOT_WS" || "$HOME" == "$_IT_REAL_HOME" || "$HOME" != "$IT_ROOT_WS"/* ]]; then
+    echo "ERROR: integration harness refusing unsafe isolated HOME" >&2
+    echo "  IT_ROOT_WS='${IT_ROOT_WS:-<empty>}'  new HOME='$HOME'  real HOME='$_IT_REAL_HOME'" >&2
+    exit 1
+  fi
+  _it_ensure_global_config "$HOME"
+fi
+
 # cleanup.sh pulls in the lib (for leak sweeps) and defines it_cleanup, which is
 # the trap body. Sourced here (after _IT_DCE / globals exist) so it sees them.
 # shellcheck disable=SC1091  # sibling lib, path resolved above
