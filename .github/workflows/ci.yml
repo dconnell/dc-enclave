@@ -229,6 +229,10 @@ jobs:
         env:
           INTEGRATION_BACKENDS: ${{ matrix.backend }}
           INTEGRATION_MODE: full
+          # Reclaim dangling layers + build cache between cases so the engine
+          # store doesn't bloat and slow successive calls over a long run
+          # (worst on podman). system prune -f keeps tagged dce-base + volumes.
+          INTEGRATION_PRUNE: "1"
           # colima's docker socket/context AND podman's rootless image store are
           # HOME-relative, so run those backends under the real HOME -- matching
           # the separate cache load/save steps, which run under the real HOME --
@@ -319,13 +323,17 @@ jobs:
       # Forwarded into every WSL step via WSLENV: DC_* for the clone, and
       # GITHUB_WORKSPACE so the cache save/load steps can translate it to its
       # WSL /mnt mount for the image archive. Shard vars drive the modulo split.
-      WSLENV: "DC_REPO_URL:DC_REF:DC_SHA:GITHUB_WORKSPACE:INTEGRATION_LOGS_FOLLOW_TIMEOUT:INTEGRATION_SHARD_INDEX:INTEGRATION_SHARD_TOTAL"
+      WSLENV: "DC_REPO_URL:DC_REF:DC_SHA:GITHUB_WORKSPACE:INTEGRATION_LOGS_FOLLOW_TIMEOUT:INTEGRATION_SHARD_INDEX:INTEGRATION_SHARD_TOTAL:INTEGRATION_PRUNE"
       DC_REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
       DC_REF: ${{ github.ref }}
       DC_SHA: ${{ github.sha }}
       INTEGRATION_LOGS_FOLLOW_TIMEOUT: ${{ matrix.backend == 'podman' && '10' || '4' }}
       INTEGRATION_SHARD_INDEX: ${{ matrix.shard_index }}
       INTEGRATION_SHARD_TOTAL: ${{ matrix.shard_total }}
+      # Reclaim dangling layers + build cache between cases so the engine store
+      # doesn't bloat and slow successive calls over a long run (worst on
+      # podman). system prune -f keeps tagged dce-base + volumes.
+      INTEGRATION_PRUNE: "1"
     steps:
       # Give WSL2 more RAM before its VM first starts: WSL2 defaults to ~50% of
       # host RAM (~8 GB of the 16 GB Windows runner), and dockerd + containers +

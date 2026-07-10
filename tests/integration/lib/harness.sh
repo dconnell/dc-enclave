@@ -278,6 +278,18 @@ it_run_case() {  # <backend> <case-id> <fn> [fn-args...]
   printf '[%s] case-duration=%ss\n' "$(date -u +%FT%TZ)" "$_it_elapsed" \
     >>"$(it_log_path "$backend" "$case_id")"
 
+  # Optional mid-run prune (opt-in via INTEGRATION_PRUNE=1; CI only). Podman's
+  # store -- and to a lesser degree docker's -- accumulates dangling layers +
+  # build cache that per-case rm doesn't reclaim, so each successive backend
+  # call re-scans a growing store and cases slow down over a run. `system prune
+  # -f` (NO --all/--volumes) clears that churn while keeping tagged images
+  # (dce-base) and named volumes. Placed AFTER timing so case durations stay a
+  # clean signal; its benefit accrues to the next case. Subshell-isolated so
+  # context/env never leaks across cases.
+  if [[ "${INTEGRATION_PRUNE:-0}" == "1" ]]; then
+    ( backend_use "$backend" >/dev/null 2>&1 && "$(backend_cli)" system prune -f >/dev/null 2>&1 ) || true
+  fi
+
   if [[ $_IT_CASE_SKIPPED -eq 1 ]]; then
     it_record "$backend" SKIP "$case_id" "${_IT_CASE_DETAIL:-skipped}"
     printf '    - %s  (skipped: %s; %ss)\n' "$case_id" "${_IT_CASE_DETAIL:-skipped}" "$_it_elapsed"
