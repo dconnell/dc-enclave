@@ -261,68 +261,266 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Real-backend integration on Windows: docker + podman, both via WSL2 (no
-  # Colima/OrbStack/apple on Windows). Per plans/ghactions.md this path is
-  # UNPROVEN in this project. It is currently NON-BLOCKING (continue-on-error,
-  # not a required check): `wsl --install -d` does not work headless on Windows
-  # Server / GHA runners (no Microsoft Store distro list), so the bootstrap needs
-  # a `wsl --import`-from-rootfs rewrite that is still pending. It stays in-tree
-  # as an informational signal and a forcing function for that follow-up; flip it
-  # to required once the WSL bootstrap is green.
+  # Colima/OrbStack/apple on Windows). REQUIRED. Split into one PARALLEL job per
+  # backend (mirrors integration-linux) so a slow/failed podman leg never masks
+  # docker signal and each leg reports its own status check.
+  #
+  # Bootstrap: Vampire/setup-wsl imports the Ubuntu-24.04 rootfs (no Microsoft
+  # Store dependency -- `wsl --install -d` does NOT work headless on Windows
+  # Server / GHA runners) and exposes a `wsl-bash` shell so each step runs
+  # natively inside WSL. Ubuntu-24.04 matches the ubuntu-24.04 Linux runner and
+  # the dce-base image, so all CI legs share one userspace.
+  #
+  #   docker leg: docker.io installed via setup-wsl; dockerd launched directly
+  #     (WSL has no systemd, so `service docker start` is unreliable).
+  #   podman leg: noble's apt caps podman at 4.9.3, whose imagebuilder parser
+  #     mishandles Containerfile heredocs (splits a `<<'EOF'` block into separate
+  #     instructions -> "Unknown instruction: ALIAS"; Containerfile.base:44).
+  #     podman 5.x is pulled from a newer Ubuntu (plucky/25.04) instead -- the
+  #     SAME workaround the Linux podman job uses, adapted to run as root in WSL
+  #     (no sudo).
+  #
+  # jq is installed for BOTH legs: `dce config sync-vscode` hard-requires it
+  # (it is optional everywhere else), and the minimal WSL rootfs ships none.
   #
   # The repo is cloned fresh INSIDE WSL (Linux git -> LF preserved, files on the
   # WSL ext4 filesystem) rather than using the Windows checkout, which avoids
-  # CRLF shebang corruption. refs/pull/<n>/merge exists on the base repo even for
-  # fork PRs, so the same clone works for push and pull_request triggers.
-  # dce-base caching is deferred until the WSL2 base is green.
+  # CRLF shebang corruption and /mnt/c bind-mount slowness. refs/pull/<n>/merge
+  # exists on the base repo even for fork PRs, so the same clone works for push
+  # and pull_request triggers. dce-base is cached per backend (mirrors
+  # integration-linux), shuttling the image archive through the WSL /mnt mount.
   # ---------------------------------------------------------------------------
   integration-windows:
-    name: integration (windows)
+    name: integration-windows (${{ matrix.backend }}${{ matrix.shard_label }})
     runs-on: windows-2022
-    timeout-minutes: 45
-    # Skipped (gray, not red) on push/PR until the WSL bootstrap is reworked to
-    # `wsl --import` from a rootfs. Runs only on manual workflow_dispatch so the
-    # WSL fix can be iterated on without failing normal runs. Remove this `if`
-    # (and re-add to required checks) once the WSL bootstrap is green.
-    if: github.event_name == 'workflow_dispatch'
+    # Podman-on-WSL2 is markedly slower than docker (daemonless: every `podman`
+    # call re-parses config + re-opens storage + spawns conmon, and the suite
+    # shells out hundreds of times). Podman is split into TWO parallel shards
+    # (cases divided by stable modulo) so each leg lands near ~1h instead of one
+    # ~2h run; docker is fast enough to run whole. Timeout scaled per shard.
+    timeout-minutes: ${{ matrix.backend == 'podman' && 90 || 60 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: docker
+            shard_index: 0
+            shard_total: 1
+            shard_label: ""
+          - backend: podman
+            shard_index: 0
+            shard_total: 2
+            shard_label: " 1/2"
+          - backend: podman
+            shard_index: 1
+            shard_total: 2
+            shard_label: " 2/2"
+    env:
+      # Forwarded into every WSL step via WSLENV: DC_* for the clone, and
+      # GITHUB_WORKSPACE so the cache save/load steps can translate it to its
+      # WSL /mnt mount for the image archive. Shard vars drive the modulo split.
+      WSLENV: "DC_REPO_URL:DC_REF:DC_SHA:GITHUB_WORKSPACE:INTEGRATION_LOGS_FOLLOW_TIMEOUT:INTEGRATION_SHARD_INDEX:INTEGRATION_SHARD_TOTAL"
+      DC_REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
+      DC_REF: ${{ github.ref }}
+      DC_SHA: ${{ github.sha }}
+      INTEGRATION_LOGS_FOLLOW_TIMEOUT: ${{ matrix.backend == 'podman' && '10' || '4' }}
+      INTEGRATION_SHARD_INDEX: ${{ matrix.shard_index }}
+      INTEGRATION_SHARD_TOTAL: ${{ matrix.shard_total }}
     steps:
-      - name: Bootstrap WSL (Ubuntu + docker + podman) and clone repo
+      # Give WSL2 more RAM before its VM first starts: WSL2 defaults to ~50% of
+      # host RAM (~8 GB of the 16 GB Windows runner), and dockerd + containers +
+      # the dce-base image can exceed that, paging to a swap.vhdx on the same
+      # slow disk and slowing everything uniformly. Native Linux has the full
+      # 16 GB. .wslconfig is read at VM start, so write it (and shut down any
+      # pre-started VM) BEFORE setup-wsl launches the distro.
+      - name: Tune WSL2 memory (.wslconfig)
         shell: bash
-        env:
-          WSLENV: "DC_REPO_URL:DC_REF:DC_SHA"
-          DC_REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
-          DC_REF: ${{ github.ref }}
-          DC_SHA: ${{ github.sha }}
         run: |
-          # Ensure a Ubuntu distro is present (windows-2022 ships none by default).
-          wsl --install -d Ubuntu-22.04 --no-launch || true
-          wsl --set-default Ubuntu-22.04 || true
-          wsl --set-default-version 2 || true
-          # Feed the bootstrap script to WSL bash over a QUOTED heredoc: the
-          # $DC_* vars are expanded by WSL bash (forwarded via WSLENV), not here.
-          wsl -u root -- bash -s <<'WSL_EOF'
-          set -euxo pipefail
-          apt-get update -y
-          DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io podman ca-certificates
-          service docker start || true
-          # Wait for dockerd to answer before continuing.
-          for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
-          docker info >/dev/null
-          podman info >/dev/null
-          rm -rf ~/dce
-          git clone --no-checkout "$DC_REPO_URL" ~/dce
-          git -C ~/dce fetch --depth 1 origin "$DC_REF"
-          git -C ~/dce checkout "$DC_SHA"
-          WSL_EOF
+          printf '[wsl2]\nmemory=12GB\nswap=2GB\n' > "$USERPROFILE/.wslconfig"
+          wsl --shutdown || true
 
-      - name: Run integration (docker, podman) inside WSL
+      # Shallow Windows-side checkout SOLELY so hashFiles('Containerfile.base')
+      # resolves for the dce-base cache key below. The suite itself runs from a
+      # fresh clone INSIDE WSL (LF-preserved, ext4) -- this checkout is never
+      # executed, only hashed.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # dce-base image cache, per backend (mirrors integration-linux). The cache
+      # lives on the Windows side; the save/load steps shuttle the image archive
+      # between the Windows workspace and WSL via its /mnt mount. Cold runs
+      # rebuild dce-base in-preflight; warm runs load it and skip the build.
+      - name: Restore dce-base cache (${{ matrix.backend }})
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: dce-base-${{ matrix.backend }}.tar
+          key: dce-base-${{ runner.os }}-${{ runner.arch }}-${{ matrix.backend }}-${{ hashFiles('Containerfiles/Containerfile.base') }}
+
+      # Install Ubuntu-24.04 in WSL2 (rootfs import -- no Store dependency).
+      # Common packages: curl (plucky-release probe in the podman leg), git
+      # (clone), jq (config sync-vscode), ca-certificates. The docker leg adds
+      # docker.io; the podman leg installs podman 5.x separately below (noble's
+      # 4.9.3 is broken for this repo's Containerfiles). Run as root (matches
+      # the former `wsl -u root` path): the docker socket needs no group
+      # juggling and podman runs rootful.
+      - name: Setup WSL (Ubuntu-24.04 + tooling)
+        uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          set-as-default: 'true'
+          wsl-shell-user: root
+          additional-packages: ${{ matrix.backend == 'docker' && 'docker.io ca-certificates curl git jq' || 'ca-certificates curl git jq' }}
+
+      # podman leg only: pull podman 5.x from plucky. Running as root in WSL, so
+      # no sudo. plucky is interim and may have moved to old-releases after EOL,
+      # so probe the host first.
+      - name: Install podman 5.x (plucky) inside WSL
+        if: matrix.backend == 'podman'
+        shell: wsl-bash {0}
+        run: |
+          set -euxo pipefail
+          if curl -fsSL "http://archive.ubuntu.com/ubuntu/dists/plucky/Release" >/dev/null 2>&1; then
+            repo_host="archive.ubuntu.com/ubuntu"
+          else
+            repo_host="old-releases.ubuntu.com/ubuntu"
+          fi
+          echo "deb http://$repo_host plucky main universe" \
+            > /etc/apt/sources.list.d/plucky.list
+          printf 'Package: *\nPin: release n=plucky\nPin-Priority: 100\n' \
+            > /etc/apt/preferences.d/plucky
+          apt-get update
+          apt-get install -y uidmap
+          # Pull podman AND its runtime/networking stack together from plucky:
+          # mixing plucky podman with noble's crun/libseccomp2 fails with an ABI
+          # mismatch, so pull crun, conmon, and libseccomp2 from plucky too.
+          apt-get install -y -t plucky podman crun conmon libseccomp2 passt slirp4netns
+          podman --version
+          # dce drives podman without sudo; rootful here, but seed subuid/subgid
+          # so a rootless path (if any) does not silently break.
+          user="$(id -un)"
+          grep -q "^${user}:" /etc/subuid \
+            || usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$user"
+          podman info >/dev/null
+
+      - name: Clone repo + start runtime (inside WSL)
+        shell: wsl-bash {0}
+        run: |
+          set -euxo pipefail
+          rm -rf "$HOME/dce"
+          git clone --no-checkout "$DC_REPO_URL" "$HOME/dce"
+          git -C "$HOME/dce" fetch --depth 1 origin "$DC_REF"
+          git -C "$HOME/dce" checkout "$DC_SHA"
+          case "${{ matrix.backend }}" in
+            docker)
+              # WSL ships no systemd, so launch dockerd directly and wait for the
+              # socket. Idempotent: a no-op if dockerd already answers.
+              docker info >/dev/null 2>&1 || {
+                mkdir -p /tmp/dockerd
+                nohup dockerd >/tmp/dockerd.log 2>&1 &
+                for i in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 1; done
+              }
+              docker info >/dev/null
+              # DIAGNOSTIC + FIX: the vfs storage driver has no copy-on-write and
+              # is catastrophically slow on WSL2 -- a prime suspect for the
+              # per-case slowdown. If dockerd fell back to vfs, restart it on
+              # overlay2. The data-root is empty at this point (no images yet),
+              # so a clean restart is safe.
+              drv="$(docker info -f '{{.Driver}}' 2>/dev/null || true)"
+              echo "docker storage driver (default): $drv"
+              if [ "$drv" = "vfs" ]; then
+                [ -f /var/run/docker.pid ] && kill "$(cat /var/run/docker.pid)" 2>/dev/null || true
+                for i in $(seq 1 20); do docker info >/dev/null 2>&1 || break; sleep 1; done
+                nohup dockerd --storage-driver=overlay2 >/tmp/dockerd.log 2>&1 &
+                for i in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 1; done
+                echo "docker storage driver (forced): $(docker info -f '{{.Driver}}' 2>/dev/null || true)"
+              fi
+              docker info >/dev/null
+              ;;
+            podman)
+              # DIAGNOSTIC: print podman's storage driver. overlay is the fast
+              # default; vfs would be pathologically slow. If it landed on vfs,
+              # force overlay via the system storage config and re-init storage.
+              drv="$(podman info --format '{{.Store.GraphDriverName}}' 2>/dev/null || true)"
+              echo "podman storage driver (default): $drv"
+              if [ "$drv" = "vfs" ]; then
+                podman system reset -f >/dev/null 2>&1 || true
+                printf '[storage]\ndriver = "overlay"\nrunroot = "/var/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' > /etc/containers/storage.conf
+                echo "podman storage driver (forced): $(podman info --format '{{.Store.GraphDriverName}}' 2>/dev/null || true)"
+              fi
+              podman info >/dev/null
+              ;;
+          esac
+
+      - name: Load cached dce-base (inside WSL)
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          # Translate the Windows workspace to its WSL /mnt mount, where the
+          # cache action restored the image archive.
+          win_ws="$(printf '%s' "$GITHUB_WORKSPACE" | sed 's|\\|/|g; s|^\([A-Za-z]\):|/mnt/\L\1|')"
+          tar="$win_ws/dce-base-${{ matrix.backend }}.tar"
+          [ -f "$tar" ] || { echo "no cached dce-base; preflight will build it"; exit 0; }
+          ${{ matrix.backend }} load -i "$tar"
+
+      - name: Run integration (${{ matrix.backend }}) inside WSL
+        shell: wsl-bash {0}
+        run: |
+          set -euxo pipefail
+          cd "$HOME/dce"
+          # Put the suite workspace on tmpfs (RAM): it does hundreds of small
+          # writes (config/secrets/SSH keys/repos bind-mounts, plus the isolated
+          # HOME) to /tmp/dce-integration on the VHDX; tmpfs removes that per-op
+          # disk latency. The image store stays on disk (overlay2), so the cached
+          # dce-base is unaffected. size is a cap, not a pre-allocation.
+          mkdir -p /tmp/dce-integration
+          mount -t tmpfs -o size=4g tmpfs /tmp/dce-integration
+          # Diagnostic: memory + swap. Heavy swap would mean WSL2 is still under
+          # provisioned even after the .wslconfig bump (memory=12GB) above.
+          free -h
+          case "${{ matrix.backend }}" in
+            docker)
+              # Re-ensure dockerd is up: WSL may idle-shut the VM between steps.
+              # Pin overlay2 on restart (the clone step already moved off vfs).
+              docker info >/dev/null 2>&1 || {
+                mkdir -p /tmp/dockerd
+                nohup dockerd --storage-driver=overlay2 >/tmp/dockerd.log 2>&1 &
+                for i in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 1; done
+              }
+              docker info >/dev/null
+              ;;
+          esac
+          export INTEGRATION_BACKENDS=${{ matrix.backend }}
+          export INTEGRATION_MODE=full
+          tests/integration/run-all.sh
+
+      # Persist the freshly-built dce-base back to the Windows workspace so the
+      # cache action's post step can store it. Only on a cache miss (the image
+      # is otherwise unchanged). Mirrors integration-linux's save step.
+      - name: Save dce-base (only on cache miss)
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          win_ws="$(printf '%s' "$GITHUB_WORKSPACE" | sed 's|\\|/|g; s|^\([A-Za-z]\):|/mnt/\L\1|')"
+          ${{ matrix.backend }} save dce-base:latest -o "$win_ws/dce-base-${{ matrix.backend }}.tar"
+
+      # Per-case logs live in the WSL ext4 filesystem; pull them out via a tar
+      # pipe (drive-letter independent) so upload-artifact -- a Windows-side
+      # action -- can read them. Mirrors the Linux integration jobs' failure
+      # upload so WSL failures are diagnosable without a rerun.
+      - name: Stage WSL integration artifacts on failure
+        if: failure()
         shell: bash
         run: |
-          wsl -u root -- bash -lc '
-            set -euxo pipefail
-            cd ~/dce
-            # Re-ensure dockerd is up (the VM may have idled between steps).
-            service docker start || true
-            export INTEGRATION_BACKENDS=docker,podman
-            export INTEGRATION_MODE=full
-            tests/integration/run-all.sh
-          '
+          mkdir -p artifacts
+          wsl bash -c 'tar -C "$HOME/dce/tests/integration/artifacts" -cf - .' 2>/dev/null \
+            | tar -xf - -C artifacts || true
+      - name: Upload integration logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-windows-${{ matrix.backend }}-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: ignore

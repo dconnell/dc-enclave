@@ -111,6 +111,7 @@ fi
 source "$_IT_HARNESS_DIR/cleanup.sh"
 
 _IT_CLEANUP_RAN=0
+_IT_CASE_SEQ=0
 # Arm the safety net: EXIT covers normal return + `exit`, INT/TERM cover Ctrl-C
 # and `kill`. The body is idempotent and re-entrant (guarded by _IT_CLEANUP_RAN).
 trap it_cleanup EXIT INT TERM
@@ -234,6 +235,21 @@ it_record() {  # <backend> <status> <case> [detail...]
 it_run_case() {  # <backend> <case-id> <fn> [fn-args...]
   local backend="$1" case_id="$2" fn="$3"; shift 3
 
+  # Shard support: split a backend's cases across parallel jobs (modulo) so a
+  # slow backend (e.g. podman on WSL2) can be parallelized without reducing
+  # coverage. The counter advances for EVERY case so the case->shard mapping
+  # is stable per run order; sharded-out cases return without running or
+  # recording. No-op when INTEGRATION_SHARD_TOTAL is unset (full run).
+  _IT_CASE_SEQ=$((_IT_CASE_SEQ + 1))
+  if [[ -n "${INTEGRATION_SHARD_TOTAL:-}" ]]; then
+    if (( _IT_CASE_SEQ % INTEGRATION_SHARD_TOTAL != ${INTEGRATION_SHARD_INDEX:-0} )); then
+      return 0
+    fi
+  fi
+
+  local _it_started _it_finished _it_elapsed
+  _it_started="$(date +%s)"
+
   _IT_CASE_FAILED=0
   _IT_CASE_SKIPPED=0
   _IT_CASE_DETAIL=""
@@ -257,16 +273,22 @@ it_run_case() {  # <backend> <case-id> <fn> [fn-args...]
       >>"$(it_log_path "$pback" "$case_id")" 2>&1 || true
   done < "$IT_REGISTRY"
 
+  _it_finished="$(date +%s)"
+  _it_elapsed=$((_it_finished - _it_started))
+  printf '[%s] case-duration=%ss\n' "$(date -u +%FT%TZ)" "$_it_elapsed" \
+    >>"$(it_log_path "$backend" "$case_id")"
+
   if [[ $_IT_CASE_SKIPPED -eq 1 ]]; then
     it_record "$backend" SKIP "$case_id" "${_IT_CASE_DETAIL:-skipped}"
-    printf '    - %s  (skipped: %s)\n' "$case_id" "${_IT_CASE_DETAIL:-skipped}"
+    printf '    - %s  (skipped: %s; %ss)\n' "$case_id" "${_IT_CASE_DETAIL:-skipped}" "$_it_elapsed"
   elif [[ $_IT_CASE_FAILED -eq 0 ]]; then
     it_record "$backend" PASS "$case_id"
-    printf '    \xe2\x9c\x93 %s\n' "$case_id"
+    printf '    \xe2\x9c\x93 %s  (%ss)\n' "$case_id" "$_it_elapsed"
   else
     it_record "$backend" FAIL "$case_id" "${_IT_CASE_DETAIL:-failed}"
     printf '    \xe2\x9c\x97 %s\n' "$case_id"
     printf '        backend: %s\n' "$backend"
+    printf '        duration: %ss\n' "$_it_elapsed"
     printf '        log:     %s\n' "$(it_log_path "$backend" "$case_id")"
   fi
 }

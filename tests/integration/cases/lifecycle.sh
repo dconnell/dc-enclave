@@ -76,14 +76,23 @@ _it_lc_new_repo_path() {  # <backend> <case_id>
 # --follow: bounded follow must not hang. Uses it_timeout so the suite never
 # blocks on a -f stream; PASS if it returns within budget (124 = timeout, the
 # expected "followed until killed" outcome) or 0.
+#
+# Budget is backend-aware: podman is daemonless and can be slower to attach a
+# follow stream (especially on WSL2), so it gets a larger default. A workflow
+# can override per-run via INTEGRATION_LOGS_FOLLOW_TIMEOUT.
 _it_lc_logs_follow() {  # <backend> <case_id>
-  local b="$1" c="$2" p
+  local b="$1" c="$2" p budget
   p="$(_it_mkproj "$b" "$c")" || { it_case_fail "dce new (baseline) failed"; return 1; }
+  budget="${INTEGRATION_LOGS_FOLLOW_TIMEOUT:-}"
+  if [[ -z "$budget" ]]; then
+    if [[ "$b" == "podman" ]]; then budget=8; else budget=4; fi
+  fi
+  [[ "$budget" =~ ^[0-9]+$ ]] || budget=4
   # The env assignment must PREFIX it_timeout (not be passed as an arg): the
   # function runs "$@" as a subprocess, so CONTAINER_BACKEND has to be in its
   # environment. 124 = followed until killed (the expected outcome); 0 = the
   # stream closed on its own. Either proves --follow does not hang the suite.
-  CONTAINER_BACKEND="$b" it_timeout 4 "$_IT_DCE" logs "$p" --follow \
+  CONTAINER_BACKEND="$b" it_timeout "$budget" "$_IT_DCE" logs "$p" --follow \
     >"$(it_log_path "$b" "$c")" 2>&1
   local rc=$?
   [[ $rc -eq 124 || $rc -eq 0 ]] || { it_case_fail "logs --follow exited $rc (expected 124/0)"; return 1; }
