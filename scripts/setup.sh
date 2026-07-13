@@ -3,11 +3,11 @@
 # scripts/setup.sh - One-time host setup for DC Enclave.
 #
 # Idempotent and safe to re-run. Per active backend it: starts/reaches the
-# runtime, picks a repos dir, creates the config + two-root overlay/recipe
-# directories, writes the global config (DC_TEAM_DIR / DC_USER_DIR), registers a
-# global gitignore for secrets, builds dce-base:latest into that backend's image
-# store, and adds the `dce` alias + completion + DC_REPOS_DIR to the shell
-# profile.
+# runtime, picks a repos dir, creates the config + two-root overlay/recipe/
+# extension directories, writes the global config (DC_TEAM_DIR / DC_USER_DIR),
+# registers a global gitignore for secrets, builds dce-base:latest into that
+# backend's image store, and adds the `dce` alias + completion + DC_REPOS_DIR to
+# the shell profile.
 #
 # Run once per backend you use - image stores are not shared across backends.
 # =============================================================================
@@ -175,7 +175,9 @@ done
 unset _r
 
 mkdir -p "$DC_TEAM_DIR/overlays" "$DC_TEAM_DIR/container-recipes" \
-         "$DC_USER_DIR/overlays" "$DC_USER_DIR/container-recipes"
+         "$DC_TEAM_DIR/extensions/vscode" \
+         "$DC_USER_DIR/overlays" "$DC_USER_DIR/container-recipes" \
+         "$DC_USER_DIR/extensions/vscode"
 DC_TEAM_DIR="$(cd -P "$DC_TEAM_DIR" && pwd)"
 DC_USER_DIR="$(cd -P "$DC_USER_DIR" && pwd)"
 
@@ -183,8 +185,10 @@ echo ""
 echo "==> Ensuring team/user root directories..."
 echo "  ✓ $DC_TEAM_DIR/overlays"
 echo "  ✓ $DC_TEAM_DIR/container-recipes"
+echo "  ✓ $DC_TEAM_DIR/extensions/vscode"
 echo "  ✓ $DC_USER_DIR/overlays"
 echo "  ✓ $DC_USER_DIR/container-recipes"
+echo "  ✓ $DC_USER_DIR/extensions/vscode"
 
 # Starter READMEs for each namespace, so the on-disk layout is self-documenting.
 _write_overlays_readme() {
@@ -235,10 +239,38 @@ EOF
     echo "  ✓ Created $dir/README.md"
   fi
 }
+_write_extensions_readme() {
+  local dir="$1" who="$2"
+  if [[ ! -f "$dir/README.md" ]]; then
+    cat > "$dir/README.md" <<EOF
+# ${who} VS Code extensions
+
+Optional ${who}-wide VS Code extension manifests. A manifest is a plain-text
+file named <scope>.txt (e.g. nodejs.txt) with one extension id per line in
+publisher.name form. Blank lines and # comments are allowed.
+
+These files are layered by dce new and dce config sync-vscode using the same
+model as overlays: an all.txt (if present) is prepended, then each effective
+project scope; the team file is read before the user file per scope, and first
+occurrence wins (de-duplicated, order-preserving). The merged set seeds and
+syncs customizations.vscode.extensions in .devcontainer/devcontainer.json.
+
+Inspect the resolved set, check runtime drift, and curate ids back into a
+manifest here:
+
+  dce extensions show <project>
+  dce extensions diff <project>
+  dce extensions capture <project> --scope <scope> <publisher.name>...
+EOF
+    echo "  ✓ Created $dir/README.md"
+  fi
+}
 _write_overlays_readme "$DC_TEAM_DIR/overlays" team
 _write_overlays_readme "$DC_USER_DIR/overlays" user
 _write_recipes_readme "$DC_TEAM_DIR/container-recipes" team
 _write_recipes_readme "$DC_USER_DIR/container-recipes" user
+_write_extensions_readme "$DC_TEAM_DIR/extensions/vscode" team
+_write_extensions_readme "$DC_USER_DIR/extensions/vscode" user
 
 # Register a global gitignore so per-project secrets (tokens, SSH keys, npmrc)
 # are never accidentally committed, and point git at it.
