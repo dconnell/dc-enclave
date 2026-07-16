@@ -22,6 +22,11 @@
 # =============================================================================
 set -uo pipefail
 
+# Per-reconciliation poll budget (seconds). 30s was tight on fast native
+# runners; WSL2's slower VHDX-backed docker store routinely exceeds it on the
+# first Mutagen reconcile, so default to 60 and allow CI to override.
+_IT_SYNC_SETTLE_BUDGET="${IT_SYNC_SETTLE_BUDGET:-60}"
+
 # Skip the whole suite when it cannot meaningfully run. Returns 0 (skip) or
 # leaves the case to run. Mirrors the shellcheck WARN-when-absent convention.
 _it_sync_skip_if_unsupported() {  # <backend>
@@ -141,21 +146,21 @@ _it_sync_lifecycle() {  # <backend> <case_id>
 
   # Two-way reconciliation: host -> container.
   printf 'host-marker-%s\n' "$RANDOM" > "$repo/host-marker.txt"
-  _it_sync_poll "$b" "$p" 'test -f /workspace/host-marker.txt' 30 \
-    || { it_case_fail "host->container sync did not settle in 30s"; return 1; }
+  _it_sync_poll "$b" "$p" 'test -f /workspace/host-marker.txt' "$_IT_SYNC_SETTLE_BUDGET" \
+    || { it_case_fail "host->container sync did not settle in ${_IT_SYNC_SETTLE_BUDGET}s"; return 1; }
 
   # Two-way reconciliation: container -> host (the data-loss-critical direction).
   it_dce "$b" "$c" exec "$p" sh -c 'echo container-marker > /workspace/container-marker.txt' >/dev/null \
     || { it_case_fail "dce exec write failed"; return 1; }
-  _it_sync_poll_host "$repo/container-marker.txt" 30 \
-    || { it_case_fail "container->host sync did not settle in 30s"; return 1; }
+  _it_sync_poll_host "$repo/container-marker.txt" "$_IT_SYNC_SETTLE_BUDGET" \
+    || { it_case_fail "container->host sync did not settle in ${_IT_SYNC_SETTLE_BUDGET}s"; return 1; }
 
   # Rebuild preserves the sync volume + reconciles back (no data loss). A marker
   # written in the container must survive the destroy/recreate because the volume
   # is preserved and the session reconnects.
   it_dce "$b" "$c" exec "$p" sh -c 'echo persist > /workspace/persist-marker.txt' >/dev/null \
     || { it_case_fail "dce exec write (persist) failed"; return 1; }
-  _it_sync_poll_host "$repo/persist-marker.txt" 30 >/dev/null \
+  _it_sync_poll_host "$repo/persist-marker.txt" "$_IT_SYNC_SETTLE_BUDGET" >/dev/null \
     || { it_case_fail "persist marker did not sync to host before rebuild"; return 1; }
   if ! it_dce_in "$b" "$c" $'yes\n' rebuild-container "$p" --yes >/dev/null; then
     it_case_fail "rebuild-container (synced) exited non-zero"; return 1
@@ -163,7 +168,7 @@ _it_sync_lifecycle() {  # <backend> <case_id>
   # Same volume name survived (not a fresh one).
   _it_volume_exists "$b" "$sync_vol" || { it_case_fail "sync volume not preserved across rebuild"; return 1; }
   _it_session_exists "$p" || { it_case_fail "sync session not present after rebuild"; return 1; }
-  _it_sync_poll "$b" "$p" 'test -f /workspace/persist-marker.txt' 30 \
+  _it_sync_poll "$b" "$p" 'test -f /workspace/persist-marker.txt' "$_IT_SYNC_SETTLE_BUDGET" \
     || { it_case_fail "persist marker lost across rebuild (data-loss regression)"; return 1; }
 
   # stop/start leaves the session intact and the workspace accessible.
