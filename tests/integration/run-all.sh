@@ -81,6 +81,7 @@ if $LIST_ONLY; then
   if [[ "$MODE" == "full" ]]; then
     echo "  lifecycle       : full flow + fixture flags (--config/--repo-path/"
     echo "                    --from-snap/--rotate-keys/--network/--ip/network subcmds)"
+    echo "  sync            : --sync Mutagen lifecycle (skipped if mutagen absent)"
     echo "  flags-matrix    : data-driven rows from matrix/flags.tsv (independent +"
     echo "                    pairwise flags + backend-specific expected failures)"
   fi
@@ -101,6 +102,8 @@ source "$_RUN_DIR/lib/matrix.sh"
 source "$_RUN_DIR/cases/command-surface.sh"
 # shellcheck disable=SC1091
 source "$_RUN_DIR/cases/lifecycle.sh"
+# shellcheck disable=SC1091
+source "$_RUN_DIR/cases/sync.sh"
 # shellcheck disable=SC1091
 source "$_RUN_DIR/cases/install.sh"
 # shellcheck disable=SC1091
@@ -164,6 +167,7 @@ while IFS= read -r backend; do
   it_cases_install "$backend"
   if [[ "$MODE" == "full" ]]; then
     it_cases_lifecycle "$backend"
+    it_cases_sync "$backend"
     it_cases_flags "$backend"
   fi
 done <<< "$selected"

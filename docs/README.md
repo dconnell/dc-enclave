@@ -12,6 +12,7 @@ The manual for DC Enclave, organized by what you're trying to do.
 | Change CPU / memory | [manage resources](how-to/manage-resources.md) |
 | Set the timezone | [set the timezone](how-to/set-timezone.md) |
 | Keep `node_modules` off my host | [hide generated paths](how-to/hide-generated-paths.md) |
+| Get a large repo performing well in a VM | [sync workspace](how-to/sync-workspace.md) (`--sync`) |
 | Manage VS Code extensions declaratively | [manage editor extensions](how-to/manage-editor-extensions.md) |
 | Connect two containers privately | [private networks](how-to/connect-private-networks.md) |
 | Reach my host Postgres | [connect to host PostgreSQL](how-to/connect-host-postgres.md) |

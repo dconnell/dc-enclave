@@ -19,6 +19,11 @@ A snapshot captures:
 It never captures:
 
 - **the bind-mounted repo** — your host working tree was never at risk anyway.
+  Under [`--sync`](sync-workspace.md) this is *stronger*: the host is explicitly
+  canonical, so the sync volume (`dce-sync-<slug>-<12hex>`) is also excluded from
+  snapshots — snapshotting it would be meaningless. A `--from-snap` restore
+  re-mounts the live sync volume and reconnects the session instead. (`--sync`
+  and `--from-snap` are mutually exclusive.)
 - **injected credentials** — the SSH deploy key (`~/.ssh/id_ed25519`) and, under
   PAT auth, `~/.git-credentials` are removed from the writable layer *before* the
   commit, so they are never baked into the snapshot image. (The read-only

@@ -56,7 +56,11 @@ ENV_VAR="$(dce_git_host_field "$(dce_project_git_host)" env_var)"
 
 echo "  Entering container: $PROJECT"
 echo "  Backend: $ACTIVE_BACKEND"
-echo "  Workspace: /workspace (-> $REPOS_DIR on host)"
+if [[ "${CONTAINER_SYNC:-0}" == "1" ]]; then
+  echo "  Workspace: /workspace (synced via mutagen — host canonical: $REPOS_DIR)"
+else
+  echo "  Workspace: /workspace (-> $REPOS_DIR on host)"
+fi
 if [[ -n "$GIT_TOKEN" ]]; then
   echo "  ${ENV_VAR}: set"
 else

@@ -27,8 +27,9 @@ declare -gra _DC_CONFIG_SCALAR_KEYS=(
   CONTAINER_GIT_HOST
   CONTAINER_CPUS CONTAINER_MEMORY REPOS_DIR SECRET_DIR
   SSH_KEY_PATH TOKEN_FILE NPMRC_PATH
+  CONTAINER_SYNC
 )
-declare -ga _DC_CONFIG_ARRAY_KEYS=(PORTS CONTAINER_HIDDEN_PATHS CONTAINER_NETWORKS)
+declare -ga _DC_CONFIG_ARRAY_KEYS=(PORTS CONTAINER_HIDDEN_PATHS CONTAINER_NETWORKS CONTAINER_SYNC_IGNORE_PATHS)
 
 # Supported container backend names (mirrors lib/container-backend.sh selection).
 declare -ga _DC_KNOWN_BACKENDS=(apple docker orbstack colima podman)
@@ -345,6 +346,15 @@ dce_validate_config_values() {
     fi
   fi
 
+  # CONTAINER_SYNC is the --sync opt-in flag persisted as "0"/"1". Anything else
+  # is rejected so a corrupt or hand-edited value fails at load, not mid-create.
+  if [[ -n "${CONTAINER_SYNC:-}" ]]; then
+    if [[ "${CONTAINER_SYNC}" != "0" && "${CONTAINER_SYNC}" != "1" ]]; then
+      printf 'ERROR: Invalid CONTAINER_SYNC in %s: %s (expected 0 or 1)\n' "$config_file" "${CONTAINER_SYNC}" >&2
+      return 1
+    fi
+  fi
+
   # CONTAINER_GIT_HOST selects the git-host provider (github/gitlab). Absent is
   # valid (defaults to github via dce_project_git_host); a present value must be
   # a known provider id so a typo fails at load time, not silently mid-auth.
@@ -391,6 +401,24 @@ dce_validate_config_values() {
     if ! dce_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]}" >/dev/null 2>&1; then
       printf 'ERROR: Invalid CONTAINER_HIDDEN_PATHS in %s.\n' "$config_file" >&2
       return 1
+    fi
+  fi
+
+  # --sync and --hide belong to different worlds and never compose. A config
+  # carrying both is rejected at load time (mirrors the parse-time rejection in
+  # new-container.sh): under --sync, generated paths are excluded with
+  # --sync-ignore on the single sync volume, not with separate hidden volumes.
+  if [[ "${CONTAINER_SYNC:-0}" == "1" ]]; then
+    if declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1 && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+      printf 'ERROR: CONTAINER_SYNC=1 is mutually exclusive with CONTAINER_HIDDEN_PATHS in %s.\n' "$config_file" >&2
+      printf '       Under --sync, exclude generated paths with CONTAINER_SYNC_IGNORE_PATHS instead.\n' >&2
+      return 1
+    fi
+    if declare -p CONTAINER_SYNC_IGNORE_PATHS >/dev/null 2>&1 && [[ ${#CONTAINER_SYNC_IGNORE_PATHS[@]} -gt 0 ]]; then
+      if ! dce_normalize_hidden_paths_values "${CONTAINER_SYNC_IGNORE_PATHS[@]}" >/dev/null 2>&1; then
+        printf 'ERROR: Invalid CONTAINER_SYNC_IGNORE_PATHS in %s.\n' "$config_file" >&2
+        return 1
+      fi
     fi
   fi
 
@@ -486,6 +514,7 @@ Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
   PORTS=()
   CONTAINER_HIDDEN_PATHS=()
   CONTAINER_NETWORKS=()
+  CONTAINER_SYNC_IGNORE_PATHS=()
 
   # shellcheck disable=SC1090
   source "$config_file"

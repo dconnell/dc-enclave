@@ -32,12 +32,17 @@ WORKDIR /workspace
 #   --volume dce-hide-<project>-<hash>:/workspace/node_modules
 #
 # This keeps node_modules off the host bind mount for native-filesystem speed
-# and platform-correct binaries.  This overlay installs a dependency-sync hook
-# (chained by the composed image's single ENTRYPOINT; see
-# scripts/compose-containerfile.sh) that:
+# and platform-correct binaries.  The same hook also serves the synced-workspace
+# (--sync) topology: under `dce new <project> nodejs --sync --sync-ignore
+# node_modules`, node_modules lives on the dce-sync volume's native ext4 and is
+# excluded from host reconciliation by a Mutagen ignore rule.  In both cases the
+# dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
+# scripts/compose-containerfile.sh) repopulates an empty/absent node_modules:
 # - skips install when package.json is absent,
 # - uses npm ci when lockfile exists, otherwise npm install,
 # - hashes package files + Node version to avoid unnecessary reinstalls,
+# - triggers on an empty/absent node_modules regardless of cause
+#   (hidden volume, --sync-ignore, or a fresh volume),
 # - fails soft by default, with strict mode opt-in (`DC_NODE_INSTALL_STRICT=1`),
 # - warns that install may run npm lifecycle scripts; set
 #   `DC_NODE_IGNORE_SCRIPTS=1` to install with `--ignore-scripts`.
@@ -52,6 +57,11 @@ IGNORE_SCRIPTS="${DC_NODE_IGNORE_SCRIPTS:-0}"
 HASH_FILE="$APP_DIR/node_modules/.dce-install-hash"
 
 log() { printf '%s\n' "[node-hide] $*"; }
+
+# True when a target dir is missing OR empty -- the install trigger fires
+# regardless of WHY it is empty (hidden volume, --sync-ignore path, or a fresh
+# volume), so this overlay composes with both dce topologies.
+_dir_empty() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
 
 compute_hash() {
   {
@@ -74,7 +84,7 @@ fi
 current_hash="$(compute_hash)"
 saved_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
 
-if [ "$saved_hash" != "$current_hash" ] || [ ! -d "$APP_DIR/node_modules" ]; then
+if [ "$saved_hash" != "$current_hash" ] || _dir_empty "$APP_DIR/node_modules"; then
   if ! mkdir -p "$APP_DIR/node_modules" 2>/dev/null; then
     log "warning: cannot write $APP_DIR/node_modules yet; skipping sync for this start"
     exit 0

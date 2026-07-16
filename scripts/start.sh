@@ -90,6 +90,13 @@ _start_container() {
   # Idempotent, so this also repairs containers created before this wiring existed.
   dce_ensure_git_credentials "$project"
 
+  # Synced projects: ensure the Mutagen session is reconciling. Mutagen auto-
+  # resumes, but an explicit ensure covers a host reboot between stop/start.
+  # No-op for non-synced projects (CONTAINER_SYNC absent or 0).
+  if [[ "${CONTAINER_SYNC:-0}" == "1" ]]; then
+    dce_sync_resume "$project"
+  fi
+
   echo "  ✓ $project - started"
 }
 

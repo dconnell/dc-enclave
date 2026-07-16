@@ -21,6 +21,7 @@
 #   common/git-credentials.sh   token/PAT/SSH insteadOf wiring + VS Code setting
 #   common/snapshots.sh         snapshot image/volume naming + volume manifests
 #   common/image-provenance.sh  provenance hashing, JSON escaping, JSONL logging
+#   common/sync.sh              synced-workspace (--sync) volume + Mutagen lifecycle
 #   common/config.sh            project config schema, validators, load/write
 #
 # Key concepts (unchanged from the historical single-file layout):
@@ -81,6 +82,8 @@ source "$_dce_common_lib_dir/common/git-credentials.sh"
 source "$_dce_common_lib_dir/common/snapshots.sh"
 # shellcheck disable=SC1091
 source "$_dce_common_lib_dir/common/image-provenance.sh"
+# shellcheck disable=SC1091
+source "$_dce_common_lib_dir/common/sync.sh"
 # shellcheck disable=SC1091
 source "$_dce_common_lib_dir/common/config.sh"
 

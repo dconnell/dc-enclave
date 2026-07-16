@@ -183,6 +183,42 @@ it_cleanup() {
     done < "$backends_file"
   fi
 
+  # 4b. Synced-workspace leak check (registry-aware). The dce rm replay above
+  #     already terminates the Mutagen session + removes the dce-sync volume for
+  #     every registered project; this verifies they are actually gone. The
+  #     project config is already deleted by that rm, so derive the expected
+  #     volume/session name directly from the project name (dce_sync_volume_name
+  #     is deterministic). A non-sync project never created that volume, so
+  #     checking every registered project cannot false-positive. Volume check
+  #     first (cheap, no mutagen); the session check runs only if a volume
+  #     leaked. Best-effort: a backend that can't be queried is skipped.
+  if [[ -f "$IT_REGISTRY" ]]; then
+    local kind pback pname sync_vol sync_session
+    while IFS=$'\t' read -r kind pback pname; do
+      [[ "$kind" == "project" ]] || continue
+      sync_vol="$(dce_sync_volume_name "$pname" 2>/dev/null)" || continue
+      if ! ( backend_use "$pback" >/dev/null 2>&1 \
+             && backend_list_volumes 2>/dev/null | grep -Fxq "$sync_vol" ); then
+        continue   # volume already gone (the normal case, sync or not)
+      fi
+      IT_LEAKED=1
+      echo "[LEAK] leftover sync volume on backend $pback: $sync_vol" >&2
+      IT_LEAK_DETAIL+="$pback(sync-volume) "
+      if command -v mutagen >/dev/null 2>&1; then
+        sync_session="$(dce_sync_session_name "$pname" 2>/dev/null)" || sync_session="$sync_vol"
+        if mutagen sync list "$sync_session" >/dev/null 2>&1; then
+          echo "[LEAK] leftover mutagen session on backend $pback: $sync_session" >&2
+          printf '    CONTAINER_BACKEND=%s mutagen sync terminate %s\n' "$pback" "$sync_session" >&2
+        fi
+        printf '    CONTAINER_BACKEND=%s %s rm %s --yes   # or: mutagen sync terminate %s && %s volume rm %s\n' \
+          "$pback" "$_IT_DCE" "$pname" "$sync_session" "$sync_session" "$sync_vol" >&2
+      else
+        printf '    CONTAINER_BACKEND=%s %s rm %s --yes   # or: <backend> volume rm %s\n' \
+          "$pback" "$_IT_DCE" "$pname" "$sync_vol" >&2
+      fi
+    done < "$IT_REGISTRY"
+  fi
+
   # 5. Remove temp workspace + per-run artifacts tree unless asked to keep. The
   #    artifacts tree is also kept when the run failed or leaked, so the
   #    failure-pointed log paths still exist for debugging.

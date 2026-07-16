@@ -64,6 +64,10 @@ HASH_FILE="$NUGET_CACHE/.dce-install-hash"
 
 log() { printf '%s\n' "[dotnet-hide] $*"; }
 
+# True when a target dir is missing OR empty -- the install trigger fires
+# regardless of WHY it is empty (hidden volume, --sync-ignore, fresh volume).
+_dir_empty() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
+
 # Any .NET project/solution manifest within a shallow tree.
 has_project() {
   find "$APP_DIR" -maxdepth 3 \( \
@@ -96,7 +100,7 @@ fi
 current_hash="$(compute_hash)"
 saved_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
 
-if [ "$saved_hash" != "$current_hash" ]; then
+if [ "$saved_hash" != "$current_hash" ] || _dir_empty "$NUGET_CACHE"; then
   if ! mkdir -p "$NUGET_CACHE" 2>/dev/null; then
     log "warning: cannot write $NUGET_CACHE yet; skipping sync for this start"
     exit 0

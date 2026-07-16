@@ -34,7 +34,8 @@ unset _dce_scripts_dir
 #   start|stop              : variadic project names (0 args == all)
 #   shell                   : exactly one project, then free-form command
 #   rebuild-container       : one project + --rotate-keys / --inject-creds /
-#                             --keep-hidden-volumes / --from-snap
+#                             --keep-hidden-volumes / --from-snap / --sync /
+#                             --sync-ignore
 #   install                 : one project + one dotfiles directory
 #   rotate-token            : one project
 #   rebuild-image           : one of {all, base}
@@ -42,7 +43,7 @@ unset _dce_scripts_dir
 #                             project (only meaningful with --hidden-volumes)
 #   new                     : <name> [scope] [--config <file>] [--save-team]
 #                             [--save-user] [--repo-path <d>] [--cpus N]
-#                             [--memory V] [--hide <path>] [--yes|-y]
+#                             [--memory V] [--hide <path>] [--sync] [--sync-ignore <path>] [--yes|-y]
 #                             [port:port ...]
 _dce_complete() {
   local cur prev cmd
@@ -143,8 +144,10 @@ _dce_complete() {
       fi
       # --from-snap takes a value (a snapshot label), not completed here.
       [[ "$prev" == "--from-snap" ]] && return 0
+      # --sync-ignore takes a value (a path), not completed here.
+      [[ "$prev" == "--sync-ignore" ]] && return 0
       # >= 3: optional flags (order-independent).
-      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --inject-creds --keep-hidden-volumes --yes -y --from-snap" -- "$cur")
+      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --inject-creds --keep-hidden-volumes --yes -y --from-snap --sync --sync-ignore" -- "$cur")
       return 0
       ;;
     snapshot)
@@ -371,12 +374,12 @@ _dce_complete_new() {
       mapfile -t COMPREPLY < <(compgen -f -- "$cur")
       return 0
       ;;
-    --cpus|--memory|--hide|--network|--ip)
+    --cpus|--memory|--hide|--network|--ip|--sync-ignore)
       return 0
       ;;
   esac
 
-  local flags="--config --save-team --save-user --repo-path --cpus --memory --hide --network --ip --yes -y"
+  local flags="--config --save-team --save-user --repo-path --cpus --memory --hide --sync --sync-ignore --network --ip --yes -y"
   if [[ $COMP_CWORD -eq 3 ]]; then
     # Second positional: a scope (with flags also accepted).
     mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_scopes) $flags" -- "$cur")

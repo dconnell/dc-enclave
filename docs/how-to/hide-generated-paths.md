@@ -43,6 +43,15 @@ dce clean --hidden-volumes myproject    # scope to one project
 
 Only `dce-hide-*` managed volumes that no longer correspond to an active project config are removed.
 
+## `--sync-ignore`: the synced-workspace analog
+
+`--hide` belongs to the **bind-mount world**. Under [`--sync`](sync-workspace.md)
+(the Mutagen-synced workspace, for large repos where VirtioFS is the bottleneck)
+the workspace is a single synced volume, so you exclude generated paths with
+**`--sync-ignore`** instead — same grammar, applied as a Mutagen ignore rule on
+the one sync volume (no second volume needed). `--hide` and `--sync` are
+mutually exclusive; under `--sync`, use `--sync-ignore`.
+
 ## See also
 
 - [Overlays: install-on-start behavior](../reference/overlays.md#install-on-start-behavior) — how overlays auto-sync dependencies (e.g. `npm ci`) into hidden volumes on container start, including the trusted-vs-untrusted matrix.

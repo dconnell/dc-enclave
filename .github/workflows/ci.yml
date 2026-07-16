@@ -204,6 +204,33 @@ jobs:
               ;;
           esac
 
+      # Mutagen is the host-side sync daemon required by the --sync integration
+      # case (tests/integration/cases/sync.sh). It is backend-independent, so it
+      # installs once for all three docker-compatible backends here. Not in
+      # Ubuntu apt; pull the release tarball (mirrors how colima/lima binaries
+      # are fetched). The tarball ships mutagen + mutagen-agents.tar.gz; keep
+      # both together in /opt/mutagen so mutagen auto-deploys the agent to the
+      # docker/podman transport without a runtime download. Without this the
+      # whole --sync case silently skips in CI (it skips, not fails, when the
+      # CLI is absent).
+      - name: Install Mutagen (for --sync integration)
+        run: |
+          set -euo pipefail
+          json="$(curl -fsSL https://api.github.com/repos/mutagen-io/mutagen/releases/latest)"
+          re='"tag_name":[[:space:]]*"([^"]+)"'
+          if ! [[ "$json" =~ $re ]]; then
+            echo "ERROR: could not parse mutagen latest release tag" >&2
+            exit 1
+          fi
+          tag="${BASH_REMATCH[1]}"
+          sudo mkdir -p /opt/mutagen
+          curl -fsSL -o /tmp/mutagen.tgz \
+            "https://github.com/mutagen-io/mutagen/releases/download/${tag}/mutagen_linux_amd64_${tag}.tar.gz"
+          sudo tar -xzf /tmp/mutagen.tgz -C /opt/mutagen
+          rm -f /tmp/mutagen.tgz
+          sudo ln -sf /opt/mutagen/mutagen /usr/local/bin/mutagen
+          mutagen version
+
       - name: Restore dce-base cache (${{ matrix.backend }})
         id: cache
         uses: actions/cache@v4
@@ -403,6 +430,30 @@ jobs:
           grep -q "^${user}:" /etc/subuid \
             || usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$user"
           podman info >/dev/null
+
+      # Mutagen host-side sync daemon, required by the --sync integration case
+      # (tests/integration/cases/sync.sh). Same release-binary install as the
+      # Linux job, adapted to rootful WSL (no sudo). Both the docker and podman
+      # legs are --sync-supported, so install unconditionally. Without this the
+      # whole --sync case silently skips in CI.
+      - name: Install Mutagen inside WSL (for --sync integration)
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          json="$(curl -fsSL https://api.github.com/repos/mutagen-io/mutagen/releases/latest)"
+          re='"tag_name":[[:space:]]*"([^"]+)"'
+          if ! [[ "$json" =~ $re ]]; then
+            echo "ERROR: could not parse mutagen latest release tag" >&2
+            exit 1
+          fi
+          tag="${BASH_REMATCH[1]}"
+          mkdir -p /opt/mutagen
+          curl -fsSL -o /tmp/mutagen.tgz \
+            "https://github.com/mutagen-io/mutagen/releases/download/${tag}/mutagen_linux_amd64_${tag}.tar.gz"
+          tar -xzf /tmp/mutagen.tgz -C /opt/mutagen
+          rm -f /tmp/mutagen.tgz
+          ln -sf /opt/mutagen/mutagen /usr/local/bin/mutagen
+          mutagen version
 
       - name: Clone repo + start runtime (inside WSL)
         shell: wsl-bash {0}

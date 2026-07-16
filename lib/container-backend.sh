@@ -582,6 +582,9 @@ _backend_apple_peer_cli() {
 #
 # docker emits an OCI archive directly via `build --output type=oci,dest=` and
 # preserves the -t ref, so `container image load` lands it under the clean tag.
+# The --output flag requires BuildKit: DOCKER_BUILDKIT=1 is set so the docker CLI
+# uses its built-in BuildKit even when the legacy builder is the default (e.g.
+# when the buildx plugin is absent or the CLI predates BuildKit-as-default).
 # podman has no --output on build, so it builds OCI then exports via
 # `save --format oci-archive`; podman stores unqualified tags under localhost/,
 # which the archive preserves, so the loaded image must be re-tagged to the name
@@ -592,7 +595,7 @@ _backend_apple_build_via_peer() {  # <peer-cli> <tag> <file> <context> [build-ar
   oci_tar="$(mktemp "${TMPDIR:-/tmp}/dce-apple-peer.XXXXXX.tar")" || return 1
 
   if [[ "$peer" == "docker" ]]; then
-    docker build --output "type=oci,dest=$oci_tar" --tag "$tag" --file "$file" "$@" "$context" \
+    DOCKER_BUILDKIT=1 docker build --output "type=oci,dest=$oci_tar" --tag "$tag" --file "$file" "$@" "$context" \
       && container image load --input "$oci_tar" >/dev/null \
       || ok=0
   else  # podman

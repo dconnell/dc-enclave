@@ -42,7 +42,7 @@ source "$ROOT_DIR/lib/devcontainer.sh"
 source "$ROOT_DIR/lib/extensions.sh"
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
+  echo "Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>] [--sync] [--sync-ignore <path[,path...]> ...]"
   exit 1
 fi
 
@@ -52,6 +52,9 @@ INJECT_CREDS=false
 KEEP_HIDDEN_VOLUMES=false
 ASSUME_YES=false
 FROM_SNAP=""
+CLI_SET_SYNC=false
+CLI_SET_SYNC_IGNORE=false
+CLI_SYNC_IGNORE_INPUTS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,16 +79,26 @@ while [[ $# -gt 0 ]]; do
       FROM_SNAP="$2"
       shift 2
       ;;
+    --sync)
+      CLI_SET_SYNC=true
+      shift
+      ;;
+    --sync-ignore)
+      [[ $# -ge 2 && "$2" != --* ]] || dce_die "--sync-ignore requires a value (e.g. node_modules or apps/web/node_modules,apps/api/node_modules)"
+      CLI_SYNC_IGNORE_INPUTS+=("$2")
+      CLI_SET_SYNC_IGNORE=true
+      shift 2
+      ;;
     --*)
       dce_die "Unknown option: $1
-Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
+Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>] [--sync] [--sync-ignore <path[,path...]> ...]"
       ;;
     *)
       if [[ -z "$PROJECT" ]]; then
         PROJECT="$1"
       else
         dce_die "Unexpected argument: $1
-Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
+Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>] [--sync] [--sync-ignore <path[,path...]> ...]"
       fi
       shift
       ;;
@@ -94,7 +107,7 @@ done
 
 if [[ -z "$PROJECT" ]]; then
   dce_die "Project name is required.
-Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
+Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>] [--sync] [--sync-ignore <path[,path...]> ...]"
 fi
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
@@ -125,11 +138,70 @@ if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
   IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
 fi
 
+# Resolve sync state. A project created with --sync persists CONTAINER_SYNC=1
+# and rebuilds keep it synced (the dce-sync volume is preserved, never in the
+# clean-slate removal path). --sync on the CLI converts a bind-mount project to
+# synced; --sync-ignore adjusts the ignore set (re-creates the session).
+if ! declare -p CONTAINER_SYNC_IGNORE_PATHS >/dev/null 2>&1; then
+  CONTAINER_SYNC_IGNORE_PATHS=()
+fi
+SYNC_ENABLED=false
+[[ "${CONTAINER_SYNC:-0}" == "1" ]] && SYNC_ENABLED=true
+if $CLI_SET_SYNC; then
+  SYNC_ENABLED=true
+fi
+if [[ ${#CLI_SYNC_IGNORE_INPUTS[@]} -gt 0 ]]; then
+  CLI_SYNC_IGNORE_CSV="$(dce_normalize_hidden_paths_values "${CLI_SYNC_IGNORE_INPUTS[@]:-}")" || exit 1
+  CLI_SYNC_IGNORE_PATHS=()
+  [[ -n "$CLI_SYNC_IGNORE_CSV" ]] && IFS=',' read -r -a CLI_SYNC_IGNORE_PATHS <<< "$CLI_SYNC_IGNORE_CSV"
+else
+  CLI_SYNC_IGNORE_CSV=""
+  CLI_SYNC_IGNORE_PATHS=()
+fi
+# Reject the impossible combinations up front (parse-time equivalents of new).
+if $CLI_SET_SYNC_IGNORE && ! $SYNC_ENABLED; then
+  dce_die "--sync-ignore only has meaning with --sync."
+fi
+if $SYNC_ENABLED && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+  dce_die "--sync cannot be enabled on a project with hidden paths (--hide).
+     --sync and --hide are mutually exclusive. To switch topologies, remove
+     this project and re-create with: dce new <name> <scope> --sync ..."
+fi
+# --sync is incompatible with --from-snap: snapshot restore isolates hidden
+# volumes; the sync volume is host-canonical and excluded from snapshots, so a
+# synced restore would mount the live sync volume on a snapshot image (mismatch).
+if $SYNC_ENABLED && [[ -n "$FROM_SNAP" ]]; then
+  dce_die "--sync cannot be combined with --from-snap.
+     The sync volume is host-canonical and excluded from snapshots; restore
+     re-mounts the live volume and reconnects the session after a normal rebuild."
+fi
+
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 DOCKER_COMPATIBLE=false
 if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   DOCKER_COMPATIBLE=true
+fi
+
+# --sync fail-fast gate (before anything is destroyed): the rebuilt container
+# will mount the sync volume and need a live Mutagen session. Persist the opt-in
+# if --sync was passed on the CLI (converting a bind-mount project to synced).
+if $SYNC_ENABLED; then
+  if ! dce_sync_backend_supported "$ACTIVE_BACKEND"; then
+    dce_die "$(dce_sync_unsupported_message "$ACTIVE_BACKEND")"
+  fi
+  if ! dce_mutagen_present; then
+    dce_die "$(dce_mutagen_absent_message "$PROJECT")"
+  fi
+  if [[ "${CONTAINER_SYNC:-0}" != "1" ]]; then
+    dce_set_config_key "$CONFIG" "CONTAINER_SYNC" "1"
+    CONTAINER_SYNC=1
+  fi
+  # Adjust the persisted ignore set when --sync-ignore was supplied.
+  if [[ ${#CLI_SYNC_IGNORE_PATHS[@]} -gt 0 || "$CLI_SYNC_IGNORE_CSV" != "" ]]; then
+    dce_set_config_array "$CONFIG" "CONTAINER_SYNC_IGNORE_PATHS" "${CLI_SYNC_IGNORE_PATHS[@]:-}"
+    CONTAINER_SYNC_IGNORE_PATHS=("${CLI_SYNC_IGNORE_PATHS[@]:-}")
+  fi
 fi
 
 # Resolve the project's git host for provider-aware guidance copy.
@@ -204,6 +276,12 @@ if [[ -n "$HOST_TZ" ]]; then
   TZ_ARGS+=(--env "TZ=$HOST_TZ")
 fi
 
+# Workspace-type env, identical to `dce new` (keeps create-argv parity).
+WORKSPACE_TYPE_ARGS=(--env "DCE_WORKSPACE_TYPE=bind")
+if $SYNC_ENABLED; then
+  WORKSPACE_TYPE_ARGS=(--env "DCE_WORKSPACE_TYPE=sync")
+fi
+
 echo "======================================================================"
 echo "Rebuilding container: $PROJECT"
 if $ROTATE_KEYS; then
@@ -237,6 +315,12 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
 fi
 if [[ -n "$FROM_SNAP" ]] && $KEEP_HIDDEN_VOLUMES; then
   echo "  (note: --keep-hidden-volumes has no effect in --from-snap mode)"
+fi
+if $SYNC_ENABLED; then
+  echo "  Workspace:  synced (mutagen, host canonical) — sync volume PRESERVED"
+  if [[ ${#CONTAINER_SYNC_IGNORE_PATHS[@]} -gt 0 ]]; then
+    echo "  Sync-ignore: ${CONTAINER_SYNC_IGNORE_PATHS[*]}"
+  fi
 fi
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
   echo "  Networks: ${CONTAINER_NETWORKS[*]}"
@@ -324,6 +408,14 @@ fi
 
 echo ""
 echo "==> Step 2: Deleting container (container filesystem wiped)..."
+# Pre-destroy flush: for synced projects, drain pending container->host changes
+# before the container is wiped. The sync volume itself is preserved (never in
+# the clean-slate removal path); the flush is belt-and-suspenders against sync
+# lag so no container-side edit is lost. Best-effort, bounded by a timeout.
+if $SYNC_ENABLED; then
+  echo "  -> Flushing Mutagen sync session..."
+  dce_sync_flush "$PROJECT"
+fi
 if backend_delete "$PROJECT" 2>/dev/null; then
   echo "  ✓ Container deleted"
 else
@@ -373,6 +465,11 @@ echo ""
 echo "==> Step 4: Recreating container from $CONTAINER_IMAGE..."
 
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
+# Synced projects remount the preserved dce-sync volume at /workspace instead of
+# the bind mount (--sync/--hide mutually exclusive -> no hidden mounts here).
+if $SYNC_ENABLED; then
+  VOLUME_ARGS=(--volume "$(dce_sync_volume_name "$PROJECT"):/workspace")
+fi
 if [[ -n "${NPMRC_PATH:-}" ]]; then
   VOLUME_ARGS+=(--volume "$NPMRC_PATH:/home/dev/.npmrc:ro")
 fi
@@ -413,7 +510,7 @@ if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
   RESOURCE_ARGS+=(--memory "$CONTAINER_MEMORY")
 fi
 
-backend_create "$PROJECT" "$CONTAINER_IMAGE" "${TZ_ARGS[@]}" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
+backend_create "$PROJECT" "$CONTAINER_IMAGE" "${TZ_ARGS[@]}" "${WORKSPACE_TYPE_ARGS[@]}" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
 echo "  ✓ Container created"
 
 # Under a snapshot restore, report each hidden volume's disposition so the
@@ -462,6 +559,34 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
       dce_die "Hidden path is not writable by dev: $target"
     fi
   done
+fi
+
+# Synced rebuild: ensure the Mutagen session is reconciling the preserved volume
+# to the recreated container. If the session is absent (first synced rebuild
+# after a host reboot, or a --sync conversion), create it; if --sync-ignore was
+# supplied (the operator is changing the ignore set), terminate + recreate so the
+# new rules apply. Otherwise resume (idempotent). Sync-ignored empty dirs are
+# re-chowned to dev so install-on-start (running as dev) can populate them.
+if $SYNC_ENABLED; then
+  if [[ ${#CLI_SYNC_IGNORE_PATHS[@]} -gt 0 ]] && dce_sync_session_exists "$PROJECT"; then
+    echo "  -> --sync-ignore changed: re-creating sync session..."
+    dce_sync_terminate "$PROJECT"
+  fi
+  if ! dce_sync_session_exists "$PROJECT"; then
+    echo "  -> Creating Mutagen sync session..."
+    if ! dce_sync_create "$PROJECT" "$REPOS_DIR" "${CONTAINER_SYNC_IGNORE_PATHS[@]:-}"; then
+      dce_warn "Mutagen sync session creation failed for '$PROJECT'; see mutagen sync list"
+    fi
+  else
+    dce_sync_resume "$PROJECT"
+  fi
+  if [[ ${#CONTAINER_SYNC_IGNORE_PATHS[@]} -gt 0 ]]; then
+    for sync_ignored in "${CONTAINER_SYNC_IGNORE_PATHS[@]}"; do
+      [[ -z "$sync_ignored" ]] && continue
+      target="/workspace/$sync_ignored"
+      backend_exec_as_root "$PROJECT" sh -lc "mkdir -p '$target' && chown -R dev:dev '$target' 2>/dev/null || true"
+    done
+  fi
 fi
 
 # Inject current credentials only when explicitly requested. A normal (non

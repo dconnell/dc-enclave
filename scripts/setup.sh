@@ -288,6 +288,27 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   fi
 fi
 
+# Optional Mutagen check: only the docker-compatible backends support synced
+# workspaces (--sync); apple/container has no Mutagen transport, so the check
+# is skipped there (an "installed" line would imply --sync works there, which
+# it does not). Mutagen is a host-side daemon, never required for the default
+# bind-mount path; absence is informational, not fatal. dce verifies, never
+# installs (plans/sync.md decision #11).
+if dce_sync_backend_supported "$ACTIVE_BACKEND"; then
+  echo ""
+  echo "==> Optional check: Mutagen sync daemon (for dce new --sync)"
+  if dce_mutagen_present; then
+    echo "✓ Mutagen sync daemon is installed ($(dce_mutagen_version))"
+    echo "  Synced workspaces (--sync) are available."
+  else
+    echo "! Mutagen sync daemon not found"
+    echo "  Needed only for synced workspaces (dce new --sync / dce rebuild-container --sync)."
+    echo "  The default bind-mount workflow does not require it."
+    echo "  Install:  $(dce_mutagen_install_hint)"
+    echo "  See:      docs/how-to/sync-workspace.md"
+  fi
+fi
+
 # Add command shortcut + completion to the right shell profile. Profile selection is
 # shell-driven (via $SHELL), not platform-driven: macOS defaults to zsh, so the
 # old platform_bash_profile() choice wrote to ~/.bash_profile for users whose
@@ -449,6 +470,13 @@ if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   echo "VS Code is optional; non-VS Code shell workflows work."
 else
   echo "VS Code integration uses terminal profile passthrough."
+fi
+if dce_sync_backend_supported "$ACTIVE_BACKEND"; then
+  if dce_mutagen_present; then
+    echo "Mutagen: installed (--sync available)"
+  else
+    echo "Mutagen: not installed (--sync unavailable; see docs/how-to/sync-workspace.md)"
+  fi
 fi
 echo ""
 echo "Next:"

@@ -40,10 +40,21 @@ RUN if id -u dev >/dev/null 2>&1; then \
 RUN echo "dev ALL=(ALL) ALL" > /etc/sudoers.d/dev \
     && chmod 440 /etc/sudoers.d/dev
 
-# Configure default shell settings for dev user
+# Configure default shell settings for dev user. The workspace-type banner is
+# sourced by every interactive zsh (dce shell, VS Code Dev Containers terminal,
+# Codespaces). DCE_WORKSPACE_TYPE is baked at container create (--env); when set
+# it prints a one-line status so sync vs bind is visible in every attach client.
 RUN cat > /home/dev/.zshrc <<'EOF'
 # Default aliases and shell settings for dev container
 alias ll="ls -la"
+
+# DC Enclave workspace-type banner (set via --env DCE_WORKSPACE_TYPE at create).
+if [ -n "${DCE_WORKSPACE_TYPE:-}" ]; then
+  case "$DCE_WORKSPACE_TYPE" in
+    sync) printf '%s\n' "workspace: synced (mutagen) — host is canonical" ;;
+    bind) printf '%s\n' "workspace: bind-mounted (/workspace)" ;;
+  esac
+fi
 EOF
 
 RUN chown dev:dev /home/dev/.zshrc

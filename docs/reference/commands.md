@@ -19,6 +19,7 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, snapshot artifacts, and config+secrets (host code preserved). Snapshot artifacts follow `--keep-volumes` (preserved with the flag, removed without it) |
 | `dce rebuild-container <name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes]` | Destroy and recreate container from selected image |
 | `dce rebuild-container <name> --from-snap <label>` | Recreate container from a saved snapshot (one-off restore; does not rewrite the configured image; credentials not injected unless `--inject-creds`/`--rotate-keys`) |
+| `dce rebuild-container <name> --sync [--sync-ignore <path[,path...]> ...]` | Enable/refresh a [synced workspace](../how-to/sync-workspace.md) on rebuild; the sync volume is preserved and flushed pre-destroy |
 | `dce rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
 | `dce snapshot <name> [<label>] [--exclude-volumes] [--exclude-volume <path>] [--yes]` | Snapshot a container's filesystem AND hidden volumes to a tagged image (`dce-snap-<name>-<label>:latest` + `dce-snapvol-*`); source volumes are copied read-only; prompts before copying unless `--yes`; `--exclude-volumes`/`--exclude-volume` skip volumes — see [snapshots & rollback](../how-to/snapshot-and-rollback.md) |
 | `dce snapshot rm <name> <label>` | Remove one snapshot image, its captured volumes (`dce-snapvol-*`), and its manifest |
@@ -56,4 +57,4 @@ Several commands have short aliases:
 | Form | Description |
 |---|---|
 | `dce new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
-| `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--network <name[,name...]>] [--ip <addr>] [host:container ...]` | With recipe defaults, optional recipe save, resource limits, hidden paths, and networks (see [Hiding generated paths](../how-to/hide-generated-paths.md)) |
+| `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--sync] [--sync-ignore <path[,path...]> ...] [--network <name[,name...]>] [--ip <addr>] [host:container ...]` | With recipe defaults, optional recipe save, resource limits, hidden paths, [synced workspace](../how-to/sync-workspace.md), and networks (see [Hiding generated paths](../how-to/hide-generated-paths.md)) |
