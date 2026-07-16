@@ -576,37 +576,40 @@ _backend_apple_peer_cli() {
   return 1
 }
 
-# Build <tag> on a peer CLI and load the resulting OCI archive into
+# Build <tag> on a peer CLI and load the resulting image archive into
 # apple/container's store under the same tag. Returns non-zero on any failure;
 # the caller decides how to surface it. <peer-cli> is "docker" or "podman".
 #
-# docker emits an OCI archive directly via `build --output type=oci,dest=` and
-# preserves the -t ref, so `container image load` lands it under the clean tag.
-# The --output flag requires BuildKit: DOCKER_BUILDKIT=1 is set so the docker CLI
-# uses its built-in BuildKit even when the legacy builder is the default (e.g.
-# when the buildx plugin is absent or the CLI predates BuildKit-as-default).
+# docker: build into docker's own store (`docker build --tag`) then `docker save`
+# to a tarball. The older `docker build --output type=oci,dest=` form is NOT
+# supported by the default docker/orbstack driver ("OCI exporter is not supported
+# for the docker driver"), and `--output` to a file needs a docker-container
+# driver regardless; build-then-save works with the stock driver. (The heredocs
+# in Containerfile.base still need buildx, but that is the modern docker default
+# and buildx is present on any real install.)
 # podman has no --output on build, so it builds OCI then exports via
 # `save --format oci-archive`; podman stores unqualified tags under localhost/,
 # which the archive preserves, so the loaded image must be re-tagged to the name
 # apple-side lookups (backend_image_exists) expect.
 _backend_apple_build_via_peer() {  # <peer-cli> <tag> <file> <context> [build-args...]
   local peer="$1" tag="$2" file="$3" context="$4"; shift 4
-  local oci_tar ok=1
-  oci_tar="$(mktemp "${TMPDIR:-/tmp}/dce-apple-peer.XXXXXX.tar")" || return 1
+  local image_tar ok=1
+  image_tar="$(mktemp "${TMPDIR:-/tmp}/dce-apple-peer.XXXXXX.tar")" || return 1
 
   if [[ "$peer" == "docker" ]]; then
-    DOCKER_BUILDKIT=1 docker build --output "type=oci,dest=$oci_tar" --tag "$tag" --file "$file" "$@" "$context" \
-      && container image load --input "$oci_tar" >/dev/null \
+    docker build --tag "$tag" --file "$file" "$@" "$context" \
+      && docker save -o "$image_tar" "$tag" \
+      && container image load --input "$image_tar" >/dev/null \
       || ok=0
   else  # podman
     podman build --format oci --tag "$tag" --file "$file" "$@" "$context" \
-      && podman save --format oci-archive -o "$oci_tar" "$tag" \
-      && container image load --input "$oci_tar" >/dev/null \
+      && podman save --format oci-archive -o "$image_tar" "$tag" \
+      && container image load --input "$image_tar" >/dev/null \
       && container image tag "localhost/$tag" "$tag" \
       || ok=0
   fi
 
-  rm -f "$oci_tar"
+  rm -f "$image_tar"
   [[ $ok -eq 1 ]] || return 1
 
   # Final guard: confirm the tag actually landed under the expected name before
@@ -617,8 +620,8 @@ _backend_apple_build_via_peer() {  # <peer-cli> <tag> <file> <context> [build-ar
 # Build an image for the apple/container backend. The native builder is tried
 # first; on an environment-blocked failure (no outbound network / no build-
 # context transfer -- typically a host VPN the vmnet NAT cannot traverse) it
-# transparently rebuilds on a reachable docker/podman peer and loads the OCI
-# image into apple/container under the same tag. Any OTHER failure (real
+# transparently rebuilds on a reachable docker/podman peer and loads the image
+# into apple/container under the same tag. Any OTHER failure (real
 # Containerfile error, etc.) is re-streamed and propagated -- the fallback never
 # masks it (a genuine error fails on the peer too).
 _backend_apple_build_image() {  # <tag> <file> <context> [build-args...]
@@ -642,7 +645,7 @@ _backend_apple_build_image() {  # <tag> <file> <context> [build-args...]
   else
     dce_warn "apple/container's native builder cannot complete this build (environment block:"
     dce_warn "no outbound network / no build-context transfer)."
-    dce_warn "Falling back: building '$tag' on '$peer' and loading the OCI image into apple/container."
+    dce_warn "Falling back: building '$tag' on '$peer' and loading the image into apple/container."
     if _backend_apple_build_via_peer "$peer" "$tag" "$file" "$context" "$@"; then
       rc=0
     else

@@ -123,6 +123,17 @@ else
     echo "  IT_ROOT_WS='${IT_ROOT_WS:-<empty>}'  new HOME='$HOME'  real HOME='$_IT_REAL_HOME'" >&2
     exit 1
   fi
+  # The isolated HOME hides docker CLI plugins (notably buildx, which lives at
+  # ~/.docker/cli-plugins) that are installed under the real HOME. apple/
+  # container's peer-build fallback drives `docker build`, and modern
+  # Containerfiles (Containerfile.base heredocs) need buildx -- so without this
+  # link the apple fallback aborts with "buildx component missing" on apple-only
+  # runs (which use the isolated HOME). Link only the plugins dir so the real
+  # docker config/contexts stay unexposed.
+  if [[ -d "$_IT_REAL_HOME/.docker/cli-plugins" ]]; then
+    mkdir -p "$HOME/.docker"
+    ln -s "$_IT_REAL_HOME/.docker/cli-plugins" "$HOME/.docker/cli-plugins"
+  fi
   _it_ensure_global_config "$HOME"
 fi
 

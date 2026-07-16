@@ -339,6 +339,20 @@ _chk_project_config() {  # <config-file>  (loads in a subshell so a dce_die only
   ( dce_load_project_config "$1" >/dev/null 2>&1 )
 }
 
+# Resolve the effective overlay scopes for doctor's drift expectations, the way
+# `dce new` does: auto-prepend "all" when a Containerfile.all exists. The
+# persisted CONTAINER_OVERLAY_SCOPES never contains "all" (scopes.sh adds it
+# only at resolve time), so using the raw persisted value makes doctor expect
+# "base" for a project actually composed as base+all -> a false drift report.
+# Falls back to the raw persisted scopes when the global overlay roots are not
+# available or a requested scope is missing (doctor is non-fatal).
+_dce_doctor_effective_scopes() {
+  local raw="${CONTAINER_OVERLAY_SCOPES:-}"
+  [[ -n "${DC_TEAM_DIR:-}" && -n "${DC_USER_DIR:-}" ]] || { printf '%s' "$raw"; return 0; }
+  dce_effective_scopes_csv "$DC_TEAM_DIR/overlays" "$DC_USER_DIR/overlays" "$raw" 2>/dev/null \
+    || printf '%s' "$raw"
+}
+
 # Editor-extension drift probes (plans/extensions.md §8).
 # Declaration drift (manifest set vs recorded customizations.<ns>.extensions) is
 # static and checked even if the container is stopped; it fails and points at
@@ -377,7 +391,8 @@ _doctor_extension_drift() {
       return 0
     fi
 
-    local scopes_csv="${CONTAINER_OVERLAY_SCOPES:-}"
+    local scopes_csv
+    scopes_csv="$(_dce_doctor_effective_scopes)"
     local build_df="" ext_csv="" ext_adopted="false"
     build_df="$(dce_devcontainer_build_file "$ROOT_DIR" "$scopes_csv" 2>/dev/null)" || build_df=""
     if $global_loaded && dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "$scopes_csv" 2>/dev/null; then
@@ -403,7 +418,8 @@ _doctor_extension_drift() {
     return 0
   fi
 
-  local scopes_csv="${CONTAINER_OVERLAY_SCOPES:-}"
+  local scopes_csv
+  scopes_csv="$(_dce_doctor_effective_scopes)"
   case "$(dce_ext_check_runtime_drift "$name" vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "$scopes_csv" 2>/dev/null || printf skip)" in
     match)  _ok "editor extensions in sync with container" ;;
     drift)  _info "editor extensions: runtime drift (run: dce extensions diff $name)" ;;
