@@ -58,3 +58,58 @@ Several commands have short aliases:
 |---|---|
 | `dce new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
 | `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--sync] [--sync-ignore <path[,path...]> ...] [--network <name[,name...]>] [--ip <addr>] [host:container ...]` | With recipe defaults, optional recipe save, resource limits, hidden paths, [synced workspace](../how-to/sync-workspace.md), and networks (see [Hiding generated paths](../how-to/hide-generated-paths.md)) |
+
+## Command support by backend
+
+DC Enclave supports five container runtimes (see [backends](backends.md)): the Docker family — `docker`, `orbstack`, `colima` — plus `apple` (apple/container) and `podman`. The four Docker-CLI backends (`docker`/`orbstack`/`colima`/`podman`) share most capabilities; `apple/container` diverges most often because it does not expose the Docker API.
+
+### Command matrix
+
+Command-level support. ✅ fully supported · 🟡 works, but some flags/subcommands are unsupported (see [Backend-limited features](#backend-limited-features)) · ❌ unsupported. Most commands run on every backend; `dce editor` is the only one that refuses outright — others showing 🟡 still work, just with caveats on specific options.
+
+| Command | Docker / OrbStack / Colima | Apple / Container | Podman |
+|---|---|---|---|
+| `dce new` | ✅ | 🟡 | 🟡 |
+| `dce status` | ✅ | ✅ | ✅ |
+| `dce start` | ✅ | ✅ | ✅ |
+| `dce stop` | ✅ | ✅ | ✅ |
+| `dce list` | ✅ | ✅ | ✅ |
+| `dce shell` | ✅ | ✅ | ✅ |
+| `dce logs` | ✅ | ✅ | ✅ |
+| `dce editor` | ✅ | ❌ | ✅ |
+| `dce extensions` | ✅ | 🟡 | ✅ |
+| `dce exec` | ✅ | ✅ | ✅ |
+| `dce restart` | ✅ | ✅ | ✅ |
+| `dce rm` | ✅ | ✅ | ✅ |
+| `dce rebuild-container` | ✅ | 🟡 | 🟡 |
+| `dce rebuild-image` | ✅ | ✅ | ✅ |
+| `dce snapshot` | ✅ | ✅ | ✅ |
+| `dce snapshot rm` | ✅ | ✅ | ✅ |
+| `dce snapshots list` | ✅ | ✅ | ✅ |
+| `dce provenance` | ✅ | ✅ | ✅ |
+| `dce clean` | ✅ | ✅ | ✅ |
+| `dce config` | ✅ | 🟡 | ✅ |
+| `dce doctor` | ✅ | ✅ | ✅ |
+| `dce network` | ✅ | 🟡 | ✅ |
+| `dce install` | ✅ | ✅ | ✅ |
+| `dce rotate-token` | ✅ | ✅ | ✅ |
+| `dce version` | ✅ | ✅ | ✅ |
+| `dce help` | ✅ | ✅ | ✅ |
+
+### Backend-limited features
+
+These flags/subcommands run on only a subset of backends. Each fails fast with an actionable message rather than silently misbehaving — the command itself still works; only the listed option is constrained.
+
+| Feature | Docker / OrbStack / Colima | Apple / Container | Podman | Reason |
+|---|---|---|---|---|
+| `dce editor` | ✅ | ❌ | ✅ | VS Code Dev Containers needs the Docker API socket; apple/container has no attach path |
+| `dce new --sync`, `dce rebuild-container --sync` | ✅ | ❌ | ❌ | [Synced workspace](../how-to/sync-workspace.md) needs a Mutagen transport; none exists for apple or podman |
+| `dce new --ip` (static IPv4) | ✅ | ❌ | ✅ | apple/container allows a single network with no static IP |
+| `dce config sync-vscode` | ✅ | ❌ | ✅ | rewrites `.devcontainer/devcontainer.json`, which apple projects don't carry (also requires `jq`) |
+| `dce network add`, `dce network remove` | ✅ | ❌ | ✅ | apple/container sets networks only at container create time (no live attach/detach) |
+| `dce network rm --force` | ✅ | ❌ | ✅ | force-removing a network with live members requires live-detach, which apple can't do |
+| `dce extensions list`, `available`, `diff`, `capture --all` | ✅ | ❌ | ✅ | read the in-container VS Code Server store over the Docker API (need a running container); `show`, `host`, and `capture <id>...` are static and work on apple |
+
+> **Note:** `dce network create` on apple/container additionally requires macOS 26+ for user-defined networks; the other backends have no such version floor.
+
+See [backends](backends.md) for runtime auto-detection, the `--sync` transport matrix, and per-platform setup notes.
