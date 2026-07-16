@@ -901,6 +901,32 @@ fi
 if $SYNC_ENABLED; then
   echo "==> Creating Mutagen sync session (host -> $PROJECT:/workspace)..."
   echo "    Initial copy of $REPOS_DIR may take a while for a large repo."
+  # Wait until the container accepts exec before Mutagen probes it. The
+  # post-start sleep above is enough on fast hosts with the base image, but a
+  # heavier derived image on a slow backend (notably WSL2's dockerd, still
+  # settling right after building the image) may not be probeable yet, and
+  # Mutagen then fails with "unable to probe container: container not running".
+  # Polling backend_exec is the faithful signal: Mutagen deploys its agent via
+  # `docker exec`, so once exec succeeds Mutagen will too. Fast hosts exit on the
+  # first probe; slow hosts get up to the cap.
+  _sync_ready=0
+  until backend_exec "$PROJECT" sh -lc 'true' >/dev/null 2>&1; do
+    if (( _sync_ready >= 30 )); then
+      dce_die "Container '$PROJECT' did not reach an exec-ready state; cannot start Mutagen sync.
+  Inspect: $(backend_cli) ps -a | grep '$PROJECT'
+  Logs:   dce logs $PROJECT"
+    fi
+    _sync_ready=$((_sync_ready + 1))
+    sleep 1
+  done
+  # The dce-sync named volume mounts at /workspace. Most backends inherit dev
+  # ownership from the image there, but docker under WSL2 brings the volume up
+  # root:root -- so the Mutagen beta agent (which runs as dev) cannot write into
+  # it and every alpha->beta transition fails. `mutagen sync list` then reports
+  # "Transition problems" and host->container reconciliation never settles. chown
+  # the sync root to dev BEFORE Mutagen does its initial copy. No-op on backends
+  # where it is already dev-owned.
+  backend_exec_as_root "$PROJECT" sh -lc 'chown dev:dev /workspace 2>/dev/null || true'
   if ! dce_sync_create "$PROJECT" "$REPOS_DIR" "${CONTAINER_SYNC_IGNORE_PATHS[@]:-}"; then
     dce_die "Mutagen sync session creation failed for '$PROJECT'.
   See: mutagen sync list
