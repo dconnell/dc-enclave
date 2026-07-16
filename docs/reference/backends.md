@@ -33,6 +33,25 @@ DC Enclave targets the **latest stable release** of each backend. If you hit beh
 - **Podman** — tested baseline at migration: Podman 5.2.x.
 - **Colima** — use Colima with Docker runtime (`colima start --runtime docker`). If Colima is running with a non-Docker runtime (for example containerd), switch back to Docker runtime before using DC Enclave.
 
+### Synced workspace (`--sync`) support
+
+[`--sync`](../how-to/sync-workspace.md) replaces the `/workspace` bind mount with
+a Mutagen-synced named volume for native-ext4 speed on large repos. It is
+supported on the docker-family backends (docker/orbstack/colima) and
+**unsupported on apple/container and podman**:
+
+| Backend | `--sync` | Mutagen transport |
+| --- | --- | --- |
+| docker | yes | docker |
+| orbstack | yes | docker |
+| colima | yes | docker |
+| podman | **no** — fails fast. Mutagen has no podman transport, and the docker-transport bridge to a podman-machine VM is blocked by SSH host-key verification (the socket lives inside the VM). Use [`--hide`](../how-to/hide-generated-paths.md), or docker/orbstack/colima for `--sync`. | — |
+| apple | **no** — fails fast (use [`--hide`](../how-to/hide-generated-paths.md)) | — |
+
+On a native Linux host with no VM, bind mounts are already native-speed, so
+`--sync` there is pure overhead — it is a VM-backend feature.
+
+
 ### Platform-specific notes
 
 **macOS + Colima**: Install with `brew install colima docker`, then run `colima start --runtime docker`. Colima usually auto-activates its Docker context; if needed, run `docker context use colima`.

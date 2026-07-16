@@ -65,13 +65,14 @@ export DC_REPOS_DIR="$IT_REPOS_DIR"
 # IGNORES env DC_TEAM_DIR (roots are unset first) and dce_die's if the file or
 # the team/user roots are missing. A host that never ran scripts/setup.sh (e.g.
 # CI) therefore sees every `dce new` fail. Two modes:
-#   - Default (docker/podman): isolate HOME under the run workspace and write a
-#     minimal global config, so the suite is hermetic and never touches the
-#     operator's real config. Cleanup wipes IT_ROOT_WS, which holds this HOME.
-#   - DCE_TEST_REAL_HOME=1 (colima): colima's docker socket/context are created
-#     under the real home by `colima start`, so the suite must run there too.
-#     Keep the real HOME and only seed the config when it is MISSING -- never
-#     overwrite, so a developer's real setup on macOS is left intact.
+#   - Default (apple/docker/orbstack): isolate HOME under the run workspace and
+#     write a minimal global config, so the suite is hermetic and never touches
+#     the operator's real config. Cleanup wipes IT_ROOT_WS, which holds this HOME.
+#   - Real HOME (colima/podman): colima's docker socket/context and podman's
+#     machine connection live under ~/.docker and ~/.config/containers, which an
+#     isolated HOME cannot see. The suite keeps the real HOME and only seeds the
+#     config when it is MISSING -- never overwrite, so a developer's real setup
+#     is left intact. This is auto-detected; DCE_TEST_REAL_HOME=1 forces it on.
 _it_ensure_global_config() {  # <home>
   local h="$1" team user cfg
   team="$h/.config/dce-enclave/team"
@@ -88,7 +89,27 @@ DC_USER_DIR="$user"
 EOF
 }
 
-if [[ "${DCE_TEST_REAL_HOME:-0}" == "1" ]]; then
+# True if the real HOME must be kept for this run. Colima stores its docker
+# socket/context under ~/.docker; podman stores its machine connection under
+# ~/.config/containers -- both are invisible to an isolated HOME. Auto-detects
+# from INTEGRATION_BACKENDS (explicit selection) or CLI availability (auto-detect
+# path), so the operator never has to set DCE_TEST_REAL_HOME manually.
+_it_should_use_real_home() {
+  # Explicit override (escape hatch for CI or debugging).
+  [[ "${DCE_TEST_REAL_HOME:-0}" == "1" ]] && return 0
+
+  local backends="${INTEGRATION_BACKENDS:-}"
+  if [[ -z "$backends" ]]; then
+    # No explicit selection: auto-detection will pick up any installed backend.
+    command -v colima >/dev/null 2>&1 && return 0
+    command -v podman >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  # Explicit selection: check if colima or podman is in the comma-list.
+  [[ ",${backends}," == *",colima,"* || ",${backends}," == *",podman,"* ]]
+}
+
+if _it_should_use_real_home; then
   _it_ensure_global_config "$HOME"
 else
   _IT_REAL_HOME="$HOME"

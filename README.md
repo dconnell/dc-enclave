@@ -13,7 +13,7 @@ Every developer now runs tools that execute code on their machine — AI agents 
 - **Whatever runs in the container, stays in the container.** Processes and state you create inside run only there. Your project repo is bind-mounted read-write at `/workspace` (so your editor and builds can read and write it), but everything outside that mount — your home directory, shell history, and global credentials — stays out of reach.
 - **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it.
 - **A bad session is one command to undo.** `dce rebuild-container <name>` destroys the container filesystem and recreates it from a known-good image — and `dce snapshot <name>` / `dce rebuild-container <name> --from-snap <label>` give you a rollback point first.
-- **Your checkout survives every rebuild.** Your repo lives on the host and bind-mounts in read-write; destroying or rebuilding the container leaves your checkout exactly where it was.
+- **Your checkout survives every rebuild.** Your repo lives on the host and bind-mounts in read-write; destroying or rebuilding the container leaves your checkout exactly where it was. The opt-in [`--sync`](docs/how-to/sync-workspace.md) workspace (for large repos where the bind mount is too slow on macOS/WSL2) preserves this by design — host stays canonical.
 
 For the full rationale and a comparison against raw Docker/Podman, see [why DC Enclave](docs/explanation/why-dce.md).
 
@@ -53,6 +53,7 @@ The full manual lives in [`docs/`](docs/README.md). Common destinations:
 | Install and create my first container | [getting started](docs/tutorials/getting-started.md) |
 | See every command and flag | [command reference](docs/reference/commands.md) · [flags](docs/reference/flags.md) |
 | Change CPU/memory or timezone | [manage resources](docs/how-to/manage-resources.md) · [timezone](docs/how-to/set-timezone.md) |
+| Make a large repo performant on macOS/WSL2 | [sync workspace](docs/how-to/sync-workspace.md) (`--sync`) |
 | Save a container state and roll back | [snapshot & rollback](docs/how-to/snapshot-and-rollback.md) |
 | Understand the security model | [isolation & security](docs/explanation/isolation-and-security.md) |
 | Fix something | [troubleshooting](docs/troubleshooting.md) |

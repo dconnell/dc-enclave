@@ -44,7 +44,7 @@ source "$ROOT_DIR/lib/devcontainer.sh"
 source "$ROOT_DIR/lib/extensions.sh"
 
 # 1. Parse arguments: project name, optional scope, flags, and port mappings.
-PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--config <path>|--config=<path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--yes|-y] [port:port ...]}"
+PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--config <path>|--config=<path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--sync] [--sync-ignore <path[,path...]> ...] [--yes|-y] [port:port ...]}"
 shift
 SCOPE_INPUT=""
 CLI_SET_SCOPE=false
@@ -62,6 +62,7 @@ fi
 PORTS=()
 REPO_PATH_OVERRIDE=""
 HIDDEN_PATH_INPUTS=()
+SYNC_IGNORE_INPUTS=()
 NETWORK_INPUT=""
 NETWORK_IP=""
 RECIPE_CONFIG_PATH=""
@@ -71,10 +72,13 @@ GIT_HOST_INPUT=""
 CLI_SET_CPUS=false
 CLI_SET_MEMORY=false
 CLI_SET_HIDE=false
+CLI_SET_SYNC=false
+CLI_SET_SYNC_IGNORE=false
 CLI_SET_NETWORK=false
 CLI_SET_IP=false
 CLI_SET_REPO_PATH=false
 CLI_SET_PORTS=false
+SYNC_ENABLED=false
 ASSUME_YES=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -122,6 +126,19 @@ while [[ $# -gt 0 ]]; do
       fi
       HIDDEN_PATH_INPUTS+=("$2")
       CLI_SET_HIDE=true
+      shift 2
+      ;;
+    --sync)
+      SYNC_ENABLED=true
+      CLI_SET_SYNC=true
+      shift
+      ;;
+    --sync-ignore)
+      if [[ $# -lt 2 || "$2" == --* ]]; then
+        dce_die "--sync-ignore requires a value (e.g. node_modules or apps/web/node_modules,apps/api/node_modules)"
+      fi
+      SYNC_IGNORE_INPUTS+=("$2")
+      CLI_SET_SYNC_IGNORE=true
       shift 2
       ;;
     --network)
@@ -183,7 +200,20 @@ CLI_NETWORK_INPUT="$NETWORK_INPUT"
 CLI_NETWORK_IP="$NETWORK_IP"
 CLI_REPO_PATH_OVERRIDE="$REPO_PATH_OVERRIDE"
 CLI_HIDDEN_PATH_INPUTS=("${HIDDEN_PATH_INPUTS[@]}")
+CLI_SYNC_IGNORE_INPUTS=("${SYNC_IGNORE_INPUTS[@]}")
 CLI_PORTS=("${PORTS[@]}")
+
+# --sync and --hide belong to different worlds and never compose. Reject at parse
+# time with a pointer at the sync-world analog (--sync-ignore), and reject a
+# lone --sync-ignore (it only has meaning under --sync).
+if $CLI_SET_SYNC && $CLI_SET_HIDE; then
+  dce_die "--sync and --hide are mutually exclusive.
+     Under --sync, exclude generated paths with --sync-ignore instead.
+     Example: --sync --sync-ignore node_modules"
+fi
+if $CLI_SET_SYNC_IGNORE && ! $CLI_SET_SYNC; then
+  dce_die "--sync-ignore only has meaning with --sync."
+fi
 
 # Resolve the git host provider (github default). Validated against the registry
 # so an unknown id fails fast with the known set, before any backend work.
@@ -227,6 +257,21 @@ if $SAVE_TEAM_RECIPE || $SAVE_USER_RECIPE; then
       for SAVE_HIDE_PATH in "${SAVE_HIDE_VALUES[@]}"; do
         [[ -z "$SAVE_HIDE_PATH" ]] && continue
         SAVE_RECIPE_LINES+=("hide=$SAVE_HIDE_PATH")
+      done
+    fi
+  fi
+
+  if $CLI_SET_SYNC; then
+    SAVE_RECIPE_LINES+=("sync=1")
+  fi
+
+  if $CLI_SET_SYNC_IGNORE; then
+    SAVE_SYNC_IGNORE_CSV="$(dce_normalize_hidden_paths_values "${CLI_SYNC_IGNORE_INPUTS[@]:-}")" || exit 1
+    if [[ -n "$SAVE_SYNC_IGNORE_CSV" ]]; then
+      IFS=',' read -r -a SAVE_SYNC_IGNORE_VALUES <<< "$SAVE_SYNC_IGNORE_CSV"
+      for SAVE_SYNC_IGNORE_PATH in "${SAVE_SYNC_IGNORE_VALUES[@]}"; do
+        [[ -z "$SAVE_SYNC_IGNORE_PATH" ]] && continue
+        SAVE_RECIPE_LINES+=("sync-ignore=$SAVE_SYNC_IGNORE_PATH")
       done
     fi
   fi
@@ -276,6 +321,22 @@ fi
 if [[ ${#HIDDEN_PATH_INPUTS[@]} -eq 0 && ${#_DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS[@]} -gt 0 ]]; then
   HIDDEN_PATH_INPUTS=("${_DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS[@]}")
 fi
+# Sync opt-in: a recipe can request --sync / --sync-ignore; CLI flags still win.
+# A recipe carrying both sync and hide is rejected by the config loader later,
+# but a recipe-vs-CLI mismatch (recipe hide + CLI sync) is resolved CLI-first:
+# CLI --sync wins and the recipe hide is dropped (with a notice below).
+if ! $CLI_SET_SYNC && [[ "${_DC_RECIPE_MERGED_SYNC:-}" == "1" ]]; then
+  SYNC_ENABLED=true
+fi
+if [[ ${#SYNC_IGNORE_INPUTS[@]} -eq 0 && ${#_DC_RECIPE_MERGED_SYNC_IGNORE_INPUTS[@]} -gt 0 ]]; then
+  SYNC_IGNORE_INPUTS=("${_DC_RECIPE_MERGED_SYNC_IGNORE_INPUTS[@]}")
+fi
+if $SYNC_ENABLED && [[ ${#HIDDEN_PATH_INPUTS[@]} -gt 0 ]] && ! $CLI_SET_HIDE; then
+  echo "Recipe requested --hide, but --sync is active (recipe or CLI)."
+  echo "  --sync and --hide are mutually exclusive; dropping recipe hide paths."
+  echo "  Under --sync, exclude generated paths with --sync-ignore instead."
+  HIDDEN_PATH_INPUTS=()
+fi
 if [[ -z "$NETWORK_INPUT" && -n "${_DC_RECIPE_MERGED_NETWORK_INPUT:-}" ]]; then
   NETWORK_INPUT="$_DC_RECIPE_MERGED_NETWORK_INPUT"
 fi
@@ -310,6 +371,15 @@ HIDDEN_PATHS_CSV="$(dce_normalize_hidden_paths_values "${HIDDEN_PATH_INPUTS[@]:-
 CONTAINER_HIDDEN_PATHS=()
 if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
   IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
+fi
+
+# --sync-ignore reuses the --hide grammar (relative, traversal-free, comma list,
+# repeatable, de-duplicated) but applies it as Mutagen --ignore rules on the one
+# sync volume instead of separate dce-hide-* volumes.
+SYNC_IGNORE_PATHS_CSV="$(dce_normalize_hidden_paths_values "${SYNC_IGNORE_INPUTS[@]:-}")" || exit 1
+CONTAINER_SYNC_IGNORE_PATHS=()
+if [[ -n "$SYNC_IGNORE_PATHS_CSV" ]]; then
+  IFS=',' read -r -a CONTAINER_SYNC_IGNORE_PATHS <<< "$SYNC_IGNORE_PATHS_CSV"
 fi
 
 # Resolve the network membership requested via --network (with optional --ip on
@@ -369,6 +439,20 @@ ACTIVE_BACKEND="$(backend_name)"
 DOCKER_COMPATIBLE=false
 if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
   DOCKER_COMPATIBLE=true
+fi
+
+# --sync fail-fast gate (before any volume/container is created):
+#   - apple/container: no Mutagen transport at all.
+#   - podman: Mutagen has no podman transport; the docker-transport bridge to a
+#     podman-machine VM is blocked by SSH host-key verification.
+#   - docker/orbstack/colima require the host-side mutagen daemon.
+if $SYNC_ENABLED; then
+  if ! dce_sync_backend_supported "$ACTIVE_BACKEND"; then
+    dce_die "$(dce_sync_unsupported_message "$ACTIVE_BACKEND")"
+  fi
+  if ! dce_mutagen_present; then
+    dce_die "$(dce_mutagen_absent_message)"
+  fi
 fi
 
 if ! backend_image_exists "dce-base:latest"; then
@@ -591,6 +675,14 @@ if [[ -n "$HOST_TZ" ]]; then
   TZ_ARGS+=(--env "TZ=$HOST_TZ")
 fi
 
+# Workspace-type env: baked at create so the in-container shell-rc banner is
+# correct even before the sync volume is populated, and survives mid-reconcile.
+# Precedes the volume group (env is fundamental), keeping new/rebuild parity.
+WORKSPACE_TYPE_ARGS=(--env "DCE_WORKSPACE_TYPE=bind")
+if $SYNC_ENABLED; then
+  WORKSPACE_TYPE_ARGS=(--env "DCE_WORKSPACE_TYPE=sync")
+fi
+
 echo "======================================================================"
 echo "Creating container: $PROJECT"
 echo "Overlay scope(s): ${SCOPE_CSV:-(none)} | Image: $IMAGE | Backend: $ACTIVE_BACKEND"
@@ -602,7 +694,12 @@ if [[ -n "$HOST_TZ" ]]; then
 else
   echo "Timezone: (host zone undetectable - container stays on image default)"
 fi
-if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+if $SYNC_ENABLED; then
+  echo "Workspace: synced (mutagen, host canonical) -> $REPOS_DIR"
+  if [[ ${#CONTAINER_SYNC_IGNORE_PATHS[@]} -gt 0 ]]; then
+    echo "Sync-ignore: ${CONTAINER_SYNC_IGNORE_PATHS[*]}"
+  fi
+elif [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   echo "Hidden paths: ${CONTAINER_HIDDEN_PATHS[*]}"
 fi
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
@@ -689,6 +786,7 @@ SECRET_DIR="$esc_secret"
 SSH_KEY_PATH="$esc_ssh"
 TOKEN_FILE="$esc_token"
 NPMRC_PATH="$esc_npmrc"
+CONTAINER_SYNC="$([ "$SYNC_ENABLED" == "true" ] && printf '1' || printf '0')"
 EOF
 
 if [[ ${#PORTS[@]} -gt 0 ]]; then
@@ -701,6 +799,12 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   { printf 'CONTAINER_HIDDEN_PATHS=('; printf '%q ' "${CONTAINER_HIDDEN_PATHS[@]}"; printf ')\n'; } >> "$CONFIG_FILE"
 else
   echo "CONTAINER_HIDDEN_PATHS=()" >> "$CONFIG_FILE"
+fi
+
+if [[ ${#CONTAINER_SYNC_IGNORE_PATHS[@]} -gt 0 ]]; then
+  { printf 'CONTAINER_SYNC_IGNORE_PATHS=('; printf '%q ' "${CONTAINER_SYNC_IGNORE_PATHS[@]}"; printf ')\n'; } >> "$CONFIG_FILE"
+else
+  echo "CONTAINER_SYNC_IGNORE_PATHS=()" >> "$CONFIG_FILE"
 fi
 
 if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
@@ -739,8 +843,14 @@ if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
   RESOURCE_ARGS+=(--memory "$CONTAINER_MEMORY")
 fi
 
-# Mount flags: workspace bind mount, read-only .npmrc, one hidden volume per path.
+# Mount flags. Default: workspace bind mount + read-only .npmrc + one hidden
+# volume per --hide path. Under --sync the workspace bind mount is replaced by
+# the dce-sync-<slug>-<12hex> named volume (Mutagen-populated, host-canonical) mounted
+# at the SAME /workspace path; --hide is mutually exclusive so no hidden mounts.
 VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
+if $SYNC_ENABLED; then
+  VOLUME_ARGS=(--volume "$(dce_sync_volume_name "$PROJECT"):/workspace")
+fi
 VOLUME_ARGS+=(--volume "$SECRET_DIR/.npmrc:/home/dev/.npmrc:ro")
 for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
   hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
@@ -749,7 +859,7 @@ done
 
 echo ""
 echo "==> Creating container from image: $IMAGE"
-backend_create "$PROJECT" "$IMAGE" "${TZ_ARGS[@]}" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
+backend_create "$PROJECT" "$IMAGE" "${TZ_ARGS[@]}" "${WORKSPACE_TYPE_ARGS[@]}" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
 
 # Attach any networks beyond the primary (Docker-compatible backends). On apple
 # the limits check already restricted membership to a single primary network.
@@ -780,6 +890,31 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
       dce_die "Hidden path is not writable by dev: $target"
     fi
   done
+fi
+
+# Under --sync: create the host-canonical Mutagen session (alpha=host $REPOS_DIR,
+# beta=the dce-sync volume mounted at /workspace) with the derived --sync-ignore
+# patterns and dev-coerced ownership. The first create does a full host->volume
+# copy (minus ignored paths); for a large repo this is minutes, not seconds, so
+# the progress is surfaced. Then ensure sync-ignored empty dirs are dev-owned so
+# the install-on-start hook (running as dev) can populate them.
+if $SYNC_ENABLED; then
+  echo "==> Creating Mutagen sync session (host -> $PROJECT:/workspace)..."
+  echo "    Initial copy of $REPOS_DIR may take a while for a large repo."
+  if ! dce_sync_create "$PROJECT" "$REPOS_DIR" "${CONTAINER_SYNC_IGNORE_PATHS[@]:-}"; then
+    dce_die "Mutagen sync session creation failed for '$PROJECT'.
+  See: mutagen sync list
+  Docs: docs/how-to/sync-workspace.md"
+  fi
+  echo "  ✓ Sync session active (host is canonical; two-way reconciliation)"
+  if [[ ${#CONTAINER_SYNC_IGNORE_PATHS[@]} -gt 0 ]]; then
+    echo "==> Normalizing sync-ignore path ownership..."
+    for sync_ignored in "${CONTAINER_SYNC_IGNORE_PATHS[@]}"; do
+      [[ -z "$sync_ignored" ]] && continue
+      target="/workspace/$sync_ignored"
+      backend_exec_as_root "$PROJECT" sh -lc "mkdir -p '$target' && chown -R dev:dev '$target' 2>/dev/null || true"
+    done
+  fi
 fi
 
 # Expose SSH_KEY_PATH / CONTAINER_GIT_HOST so the inject + git-auth helpers read

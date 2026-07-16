@@ -31,8 +31,8 @@ _show_summary() {
   echo "                                                    Create a new isolated container project"
   echo "  new <name> [scope[,scope...]] [--config <path>] [--repo-path <path>]"
   echo "       [--save-team] [--save-user] [--git-host <provider>] [--cpus <N>] [--memory <val>]"
-  echo "       [--hide <path[,path...]> ...] [host:container ...]"
-  echo "                                                    With resource limits"
+  echo "       [--hide <path[,path...]> ...] [--sync] [--sync-ignore <path[,path...]> ...] [host:container ...]"
+  echo "                                                    With resource limits (and synced workspace opt-in)"
   echo "  start [name ...]                                  Start one or more projects, or all"
   echo "  stop [name ...]                                   Stop one or more projects, or all"
   echo "  list                                              List containers and status"
@@ -49,6 +49,7 @@ _show_summary() {
   echo "  rebuild-container <name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes]"
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-container <name> --from-snap <label>     Recreate from a snapshot"
+  echo "  rebuild-container <name> --sync [--sync-ignore <p>...]  Enable/refresh a synced workspace"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
   echo "  snapshot <name> [<label>] [--exclude-volumes] [--yes]   Snapshot container FS + hidden volumes"
   echo "  snapshots list [<name>]                           List snapshots (with sizes)"
@@ -72,7 +73,8 @@ _show_help_new() {
 Usage: dce new <name> [scope[,scope...]] [--repo-path <path>]
               [--config <path>]
               [--save-team] [--save-user] [--git-host <provider>] [--yes|-y]
-              [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [host:container ...]
+              [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...]
+              [--sync] [--sync-ignore <path[,path...]> ...] [host:container ...]
 
 Description:
   Creates a new isolated development container with its own SSH keys, git-host
@@ -140,11 +142,33 @@ Options:
                backend.
 
   --hide <path[,path...]>
-               Keep one or more /workspace-relative paths in a named volume so
-               generated files do not appear on the host. May be repeated.
-               Examples:
-                 --hide node_modules
-                 --hide apps/web/node_modules,apps/api/node_modules
+                Keep one or more /workspace-relative paths in a named volume so
+                generated files do not appear on the host. May be repeated.
+                Examples:
+                  --hide node_modules
+                  --hide apps/web/node_modules,apps/api/node_modules
+
+  --sync        Replace the /workspace bind mount with a Mutagen-synced named
+                volume (dce-sync-<slug>-<12hex>) mounted at the SAME /workspace path,
+                so source-tree file I/O stays on the container VM's native ext4
+                instead of crossing the VirtioFS boundary. The host checkout is
+                canonical (two-way sync, host wins on conflict). The escape hatch
+                for large repos (Nx/Vite/module federation) where the bind mount
+                is too slow. Supported on docker, orbstack, colima;
+                apple/container and podman fail fast (no Mutagen transport).
+                Requires the `mutagen` CLI on the
+                host. Mutually exclusive with --hide (use --sync-ignore instead).
+                See: docs/how-to/sync-workspace.md
+
+  --sync-ignore <path[,path...]>
+                Exclude one or more /workspace-relative paths from Mutagen sync
+                (the sync-world analog of --hide). Excluded paths live on the
+                sync volume's native ext4 (fast) but are never replicated to/from
+                the host, keeping node_modules/dist/caches off the host. Same
+                grammar as --hide; may be repeated. Only meaningful with --sync.
+                Recommended Node shape:
+                  --sync --sync-ignore node_modules,.nx,dist
+
 
   --network <name[,name...]>
                Attach the container to one or more private dce networks so it can
@@ -179,6 +203,7 @@ Examples:
   dce new myapp node --repo-path ~/code/myapp
   dce new myapp --cpus 2 --memory 4g --hide node_modules 5173:5173
   dce new monorepo nodejs,golang --hide apps/web/node_modules --hide .cache/go/mod,.cache/go/build
+  dce new monorepo nodejs --sync --sync-ignore node_modules,.nx,dist 3000:3000
 
 Notes:
   - The base image 'dce-base:latest' must exist. Run scripts/setup.sh first.
@@ -662,6 +687,7 @@ _show_help_rebuild_container() {
   cat <<'EOF'
 Usage: dce rebuild-container <name> [--rotate-keys] [--inject-creds]
               [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]
+              [--sync] [--sync-ignore <path[,path...]> ...]
 
 Description:
   Destroys a container and recreates it from its selected image.
@@ -739,6 +765,20 @@ Options:
                 incident-response flows. The destruction/recreation still
                 proceeds exactly as in the interactive path.
 
+   --sync       Enable a synced workspace on a project that was created without
+                --sync (converts the bind mount to a Mutagen-synced volume). For
+                a project already created with --sync, the rebuilt container
+                stays synced automatically (this flag is not required). The
+                dce-sync volume is preserved across rebuild (never in the
+                clean-slate removal path) and a `mutagen sync flush` drains
+                pending changes before the container is destroyed, so no
+                container-side edit is lost. Mutually exclusive with --from-snap.
+
+   --sync-ignore <path[,path...]>
+                Adjust the Mutagen ignore set; re-creates the sync session so the
+                new rules apply. Same grammar as the `dce new` flag. Only
+                meaningful with --sync (or an already-synced project).
+
 Examples:
   dce rebuild-container myapp
   dce rebuild-container myapp --rotate-keys
@@ -746,6 +786,8 @@ Examples:
   dce rebuild-container myapp --rotate-keys --keep-hidden-volumes
   dce rebuild-container myapp --from-snap 20250101-120000
   dce rebuild-container myapp --yes
+  dce rebuild-container myapp --sync
+  dce rebuild-container myapp --sync --sync-ignore node_modules,dist
 
 Notes:
   - This is DESTRUCTIVE to the container filesystem. Uncommitted work inside

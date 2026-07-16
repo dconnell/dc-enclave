@@ -125,6 +125,8 @@ _dce_dispatch() {
         '--inject-creds[force-inject current SSH key and git token]' \
         '--keep-hidden-volumes[preserve hidden volumes across the rebuild]' \
         '--from-snap+[recreate from snapshot dce-snap-<name>-<label>]:snapshot label:' \
+        '--sync[enable/refresh a Mutagen-synced workspace]' \
+        '*--sync-ignore[workspace path(s) excluded from Mutagen sync]:path:' \
         '--yes[skip the confirmation prompt]' \
         '-y[skip the confirmation prompt]'
       ;;
@@ -288,7 +290,7 @@ _dce_doctor() {
   _wanted targets expl 'backend or project' compadd -a all
 }
 
-# `dce new <name> [scope] [--config <file>] [--save-team] [--save-user] [--repo-path <d>] [--cpus N] [--memory V] [--hide <p>] [--network <n>[,...]] [--ip <addr>] [--yes|-y] [ports]`.
+# `dce new <name> [scope] [--config <file>] [--save-team] [--save-user] [--repo-path <d>] [--cpus N] [--memory V] [--hide <p>] [--sync] [--sync-ignore <p>] [--network <n>[,...]] [--ip <addr>] [--yes|-y] [ports]`.
 _dce_new() {
   _arguments \
     '1:project name:' \
@@ -300,6 +302,8 @@ _dce_new() {
     '--cpus+[cpu limit (e.g. 2, 1.5)]:value:' \
     '--memory+[memory limit (e.g. 4g, 512m)]:value:' \
     '*--hide[workspace path(s) to keep in a named volume]:path:' \
+    '--sync[replace the /workspace bind mount with a Mutagen-synced named volume]' \
+    '*--sync-ignore[workspace path(s) excluded from Mutagen sync]:path:' \
     '*--network[network(s) to attach (name\[,name...\] or name:ip)]:network:' \
     '--ip+[static IPv4 for the primary network]:addr:' \
     '--yes[skip the recipe-repo-path confirmation prompt]' \

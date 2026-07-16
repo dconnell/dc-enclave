@@ -67,16 +67,22 @@ to reconcile managed `devcontainer.json` fields.
 Scope-specific overlays can build on hidden volumes. The Node.js overlay
 (`Containerfile.nodejs`) includes an entrypoint that:
 
-- detects a hidden `node_modules` volume
+- detects an empty or absent `node_modules` (regardless of cause)
 - runs `npm ci` (if a lockfile exists) or `npm install` automatically on container start
 - writes a hash sentinel so deps are only re-installed when `package.json` or `package-lock.json` changes
 - fails soft by default; set `DC_NODE_INSTALL_STRICT=1` to make install errors fatal
 
+The trigger is **cause-agnostic**: it fires whenever the target directory is
+empty or missing — whether the path is a [`--hide`](../how-to/hide-generated-paths.md)
+named volume, a [`--sync --sync-ignore`](../how-to/sync-workspace.md) Mutagen-
+ignored path, or a fresh volume. So the same overlay composes with both dce
+topologies without per-mode code paths.
+
 The `golang`, `rust`, `dotnet`, and `python` example overlays follow the same
 shape with their own package manager (`go mod download`, `cargo fetch`,
 `dotnet restore`, `uv sync`) and a matching `DC_<LANG>_INSTALL_STRICT=1` env.
-See `Containerfiles/example/README.md` for each overlay's `--hide` paths and
-sync command.
+See `Containerfiles/example/README.md` for each overlay's `--hide` / `--sync-ignore`
+paths and sync command.
 
 This means you get fast, correct dependency sync without any `node_modules` files touching your host.
 

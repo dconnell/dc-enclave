@@ -25,6 +25,46 @@ dce_warn() {
   printf 'WARN: %s\n' "$*" >&2
 }
 
+# Run a command bounded by a timeout (seconds). Portable: uses the system
+# `timeout` (GNU coreutils) when available, otherwise falls back to a
+# bash-native background+kill pattern that works on macOS (which ships no
+# `timeout`). Returns the command's exit code, or 124 on timeout (matching
+# GNU timeout's convention).
+dce_run_with_timeout() {
+  local timeout_s="$1"
+  shift
+
+  # Fast path: system `timeout` (GNU coreutils) when available.
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$timeout_s" "$@" || return $?
+    return 0
+  fi
+
+  # Bash-native fallback for macOS (no `timeout` command). The timer subshell
+  # redirects stdout+stderr to /dev/null so it does not hold the caller's
+  # stdout pipe open (which would hang command substitution).
+  "$@" &
+  local cmd_pid=$!
+  (
+    sleep "$timeout_s"
+    kill "$cmd_pid"
+  ) >/dev/null 2>&1 &
+  local timer_pid=$!
+
+  local rc=0
+  wait "$cmd_pid" 2>/dev/null || rc=$?
+
+  kill "$timer_pid" 2>/dev/null || true
+  wait "$timer_pid" 2>/dev/null || true
+
+  # If the command was killed by a signal (exit > 128), it was terminated by
+  # the timer; return 124 (GNU timeout convention).
+  if [[ $rc -gt 128 ]]; then
+    return 124
+  fi
+  return "$rc"
+}
+
 # Join positional arguments with the given separator (first arg). Echoes the
 # result without a trailing newline; empty args are preserved as empty fields.
 dce_join_by() {

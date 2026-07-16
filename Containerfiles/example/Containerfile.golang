@@ -73,6 +73,10 @@ HASH_FILE="$GOMODCACHE_DIR/.dce-install-hash"
 
 log() { printf '%s\n' "[go-hide] $*"; }
 
+# True when a target dir is missing OR empty -- the install trigger fires
+# regardless of WHY it is empty (hidden volume, --sync-ignore, fresh volume).
+_dir_empty() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
+
 compute_hash() {
   {
     printf 'go=%s\n' "$(go version 2>/dev/null || printf unknown)"
@@ -94,7 +98,7 @@ fi
 current_hash="$(compute_hash)"
 saved_hash="$(cat "$HASH_FILE" 2>/dev/null || true)"
 
-if [ "$saved_hash" != "$current_hash" ]; then
+if [ "$saved_hash" != "$current_hash" ] || _dir_empty "$GOMODCACHE_DIR"; then
   if ! mkdir -p "$GOMODCACHE_DIR" 2>/dev/null; then
     log "warning: cannot write $GOMODCACHE_DIR yet; skipping sync for this start"
     exit 0

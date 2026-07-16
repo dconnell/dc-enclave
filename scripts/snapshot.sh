@@ -375,6 +375,17 @@ do_create() {
   # the COMPLETE per-path disposition so a restore never silently reuses the
   # live originals and can report populated vs empty per path.
   local vol_captured=0 vol_failed=0 vol_excluded=0
+
+  # Synced projects: the sync volume is host-canonical, so snapshotting it is
+  # meaningless (the authoritative state lives on the host). It is structurally
+  # excluded twice: a synced project has no hidden paths (so the capture loop
+  # below is empty), and named volumes are not captured by `commit` anyway. This
+  # explicit guard documents the contract so a future change can't silently sweep
+  # the sync volume into a snapshot.
+  if [[ "${CONTAINER_SYNC:-0}" == "1" ]]; then
+    echo "  -> Synced workspace: sync volume excluded (host is canonical)."
+  fi
+
   if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
     local manifest_dir="" manifest_file=""
     manifest_dir="$(dce_snapshot_volumes_dir "$project")"

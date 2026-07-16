@@ -184,10 +184,10 @@ drive 3 dce extensions capture ""; assert_reply "extensions capture <TAB>" alpha
 # rebuild-container: one project, then the flags.
 drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
 drive 3 dce rebuild-container alpha "--"; assert_reply "rebuild-container alpha --<TAB>" \
-  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --yes
-# Empty prefix offers all flags, including the short -y form.
+  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --sync --sync-ignore --yes
+
 drive 3 dce rebuild-container alpha ""; assert_reply "rebuild-container alpha <TAB>" \
-  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --yes -y
+  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --sync --sync-ignore --yes -y
 
 # install: one project, then a directory.
 drive 2 dce install "";     assert_reply "install <TAB>" alpha beta gamma
@@ -282,7 +282,7 @@ drive 3 dce snapshots list ""; assert_reply "snapshots list <project> <TAB>" alp
 # new: name is free text (no completion), pos3 = scope + flags.
 drive 2 dce new "";               assert_empty "new <name> (free text, no completion)"
 drive 3 dce new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
-  --config --cpus --hide --ip --memory --network --repo-path --save-team --save-user --yes -y all golang node
+  --config --cpus --hide --ip --memory --network --repo-path --save-team --save-user --sync --sync-ignore --yes -y all golang node
 # --network/--ip consume a value (no completion offered for the value).
 drive 4 dce new foo --network ""; assert_empty "new foo --network <val> (no completion)"
 
@@ -499,9 +499,13 @@ if command -v zsh >/dev/null 2>&1; then
     chk new              "*--hide["
     chk new              "*--network["
     chk new              "--ip+["
+    chk new              "--sync[replace the /workspace bind mount with a Mutagen-synced named volume]"
+    chk new              "*--sync-ignore[workspace path(s) excluded from Mutagen sync]"
     chk new              "--yes[skip the recipe-repo-path confirmation prompt]"
     chk new              "-y[skip the recipe-repo-path confirmation prompt]"
     chk rebuild-container "--from-snap+[recreate from snapshot"
+    chk rebuild-container "--sync[enable/refresh a Mutagen-synced workspace]"
+    chk rebuild-container "*--sync-ignore[workspace path(s) excluded from Mutagen sync]"
     chk snapshot         "1:project or rm:"
     chk snapshot         "--exclude-volumes[skip ALL hidden-volume capture]"
     chk snapshot         "*--exclude-volume[exclude specific hidden volume"
