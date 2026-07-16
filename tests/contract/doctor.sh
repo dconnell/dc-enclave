@@ -23,6 +23,14 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
+# Lib functions are used to write a self-consistent devcontainer.json for the
+# all-overlay regression below (Section 5a). Sourced in the TEST shell; the
+# `dce doctor` invocations run as separate subprocesses.
+# shellcheck disable=SC1091
+source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091
+source "$ROOT_DIR/lib/devcontainer.sh"
+
 # ---------------------------------------------------------------------------
 # Stub backend CLIs (one script installed under docker/container/podman/colima).
 # Env knobs (all default to the "healthy" state):
@@ -456,6 +464,36 @@ RUN_RC=$?
 set -e
 [[ "$RUN_RC" -ne 0 ]] || fail "project backend CLI missing: expected nonzero"
 pass "project backend unavailable: reported + nonzero"
+
+# ---------------------------------------------------------------------------
+# Section 5a - devcontainer drift vs the auto-layered "all" overlay (regression)
+# ---------------------------------------------------------------------------
+# A Containerfile.all overlay auto-layers on EVERY project (scopes.sh), so a
+# no-scope project composes to a derived (base+all) image. Doctor must resolve
+# effective scopes (auto-prepending "all") when deriving its expected
+# devcontainer state, or it false-reports "managed fields drifted" for every
+# project. See _dce_doctor_effective_scopes in scripts/doctor.sh.
+printf 'RUN echo ALL-OVERLAY\n' > "$USER_DIR/overlays/Containerfile.all"
+# The lib helpers read the DC_TEAM_DIR/DC_USER_DIR globals (set locally, not
+# exported, so the `dce doctor` subprocess still loads its own from the config).
+# shellcheck disable=SC2034  # read cross-file by dce_team_overlays_dir et al.
+DC_TEAM_DIR="$TEAM_DIR"
+# shellcheck disable=SC2034
+DC_USER_DIR="$USER_DIR"
+allo_img="$(dce_image_ref_from_scopes "$TEAM_DIR/overlays" "$USER_DIR/overlays" "")"
+make_project alloverlay docker "$allo_img" "ghp_realtoken"
+allo_repos="$WORK/repos/alloverlay"
+mkdir -p "$allo_repos/.devcontainer"
+allo_bf="$(dce_devcontainer_build_file "$ROOT_DIR" \
+  "$(dce_effective_scopes_csv "$TEAM_DIR/overlays" "$USER_DIR/overlays" "")")"
+dce_devcontainer_render "alloverlay" "$allo_bf" "$ROOT_DIR" "$DC_ROOT/alloverlay" \
+  "" "" "" "" "ssh" > "$allo_repos/.devcontainer/devcontainer.json"
+DC_STUB_CONTAINERS="" run_doctor alloverlay; out="$RUN_OUT"
+[[ "$out" != *"managed fields drifted"* ]] \
+  || fail "all-overlay project falsely reported devcontainer drift:
+$out"
+pass "all-overlay: doctor resolves effective scopes (no false devcontainer drift)"
+rm -f "$USER_DIR/overlays/Containerfile.all"
 
 # ---------------------------------------------------------------------------
 # Section 5b - project token-drift probe (PAT only, read-only, hash-compared)

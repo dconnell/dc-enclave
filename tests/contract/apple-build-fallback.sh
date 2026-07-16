@@ -8,7 +8,7 @@
 # succeed.
 #
 # backend_build_image (apple) must, on that specific failure class, transparently
-# rebuild the image on a reachable docker/podman peer (emitting an OCI archive)
+# rebuild the image on a reachable docker/podman peer (exporting an image archive)
 # and load it into apple/container's store under the same tag. Other build
 # failures must propagate untouched (never masked by a peer build). Stub-driven.
 # =============================================================================
@@ -67,9 +67,13 @@ case "$me" in
   docker)
     case "${1:-}" in
       info) exit 0 ;;                                       # peer engine reachable
-      build)
-        # docker buildx --output type=oci,dest=<tar>: materialize the archive.
-        for a in "$@"; do [[ "$a" == dest=* ]] && touch "${a#dest=}"; done
+      build) exit 0 ;;                                      # docker build --tag succeeds
+      save)
+        # docker save -o <tar> <tag>: materialize the exported archive file.
+        while [[ $# -gt 0 ]]; do
+          [[ "$1" == -o && -n "${2:-}" ]] && { touch "$2"; shift 2; continue; }
+          shift
+        done
         exit 0
         ;;
     esac
@@ -103,8 +107,8 @@ has_call '^CALL container build' \
   || fail "egress fallback: native apple build must be attempted first"
 has_call '^CALL docker build' \
   || fail "egress fallback: did not invoke docker peer build"
-has_call 'type=oci,dest=' \
-  || fail "egress fallback: peer build must emit an OCI archive (--output type=oci,dest=)"
+has_call '^CALL docker save' \
+  || fail "egress fallback: peer build must export the image (docker save)"
 has_call '^CALL container image load' \
   || fail "egress fallback: did not load the OCI archive into apple/container"
 pass "egress fallback: rebuilds on docker peer and loads into apple/container"
