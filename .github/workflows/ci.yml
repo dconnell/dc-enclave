@@ -42,7 +42,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup-tier
@@ -58,7 +58,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup-tier
@@ -76,7 +76,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-14]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - uses: ./.github/actions/setup-tier
@@ -99,13 +99,13 @@ jobs:
   integration-linux:
     name: integration-linux (${{ matrix.backend }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         backend: [docker, podman, colima]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -233,7 +233,7 @@ jobs:
 
       - name: Restore dce-base cache (${{ matrix.backend }})
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /tmp/dce-base
           # Per-backend key: an immutable cache key can't be appended to by
@@ -280,7 +280,7 @@ jobs:
       # them on failure so integration failures are diagnosable without reruns.
       - name: Upload integration logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-${{ matrix.backend }}-${{ github.run_id }}
           path: tests/integration/artifacts/
@@ -324,8 +324,10 @@ jobs:
     # call re-parses config + re-opens storage + spawns conmon, and the suite
     # shells out hundreds of times). Podman is split into TWO parallel shards
     # (cases divided by stable modulo) so each leg lands near ~1h instead of one
-    # ~2h run; docker is fast enough to run whole. Timeout scaled per shard.
-    timeout-minutes: ${{ matrix.backend == 'podman' && 90 || 60 }}
+    # ~2h run; docker is fast enough to run whole. Timeout is a uniform 90m across
+    # all integration jobs (docker previously timed out at 60m); the per-shard
+    # split keeps podman well under budget.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -370,7 +372,7 @@ jobs:
       # resolves for the dce-base cache key below. The suite itself runs from a
       # fresh clone INSIDE WSL (LF-preserved, ext4) -- this checkout is never
       # executed, only hashed.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -380,7 +382,7 @@ jobs:
       # rebuild dce-base in-preflight; warm runs load it and skip the build.
       - name: Restore dce-base cache (${{ matrix.backend }})
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: dce-base-${{ matrix.backend }}.tar
           key: dce-base-${{ runner.os }}-${{ runner.arch }}-${{ matrix.backend }}-${{ hashFiles('Containerfiles/Containerfile.base') }}
@@ -593,7 +595,7 @@ jobs:
             | tar -xf - -C artifacts || true
       - name: Upload integration logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: integration-windows-${{ matrix.backend }}-${{ github.run_id }}
           path: artifacts/
