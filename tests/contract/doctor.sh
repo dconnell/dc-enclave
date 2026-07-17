@@ -57,6 +57,12 @@ case "$name" in
     case "${1:-}" in
       info)    [[ "${DC_STUB_DOCKER_UP:-1}" == "1" ]] && exit 0; exit 1 ;;
       --version|version) echo "Docker version 99.0 (stub)"; exit 0 ;;
+      buildx)
+        if [[ "${2:-}" == "version" ]]; then
+          [[ "${DC_STUB_BUILDX:-1}" == "1" ]] && { echo "github.com/docker/buildx v99.0.0-stub"; exit 0; }
+          exit 1
+        fi
+        ;;
       context)
         if [[ "${2:-}" == "show" ]]; then show_ctx; exit 0
         elif [[ "${2:-}" == "ls" ]]; then printf '%s\n' "${DC_STUB_DOCKER_CONTEXTS:-default}"; exit 0
@@ -262,6 +268,15 @@ pass "missing global config: nonzero + fail marker"
   printf 'DC_TEAM_DIR="%s"\n' "$TEAM_DIR"
   printf 'DC_USER_DIR="%s"\n' "$USER_DIR"
 } > "$DC_ROOT/config"
+
+# Missing buildx with docker CLI present -> host failure (BuildKit preflight).
+export DC_STUB_BUILDX=0
+run_doctor; out="$RUN_OUT"
+[[ "$RUN_RC" -ne 0 ]] || fail "missing buildx: expected nonzero"
+printf '%s' "$out" | grep -qi 'buildx plugin' \
+  || fail "missing buildx: expected buildx failure detail\n$out"
+export DC_STUB_BUILDX=1
+pass "missing buildx: host check fails with install guidance"
 
 # Team root missing -> host failure, nonzero.
 rm -rf "$TEAM_DIR"

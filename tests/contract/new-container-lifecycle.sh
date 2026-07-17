@@ -254,6 +254,57 @@ grep -Fq '"github.gitAuthentication"' "$dce_json" \
 pass "dce new (docker): config, secrets, layer order, create argv, devcontainer.json"
 
 # ===========================================================================
+# dce new (docker): derived build path requires buildx preflight before build
+# ===========================================================================
+STUB_NO_BUILDX="$WORK/bin_nobuildx"
+mkdir -p "$STUB_NO_BUILDX"
+cat > "$STUB_NO_BUILDX/docker" <<'STUB'
+#!/usr/bin/env bash
+_log="${DC_STUB_LOG:?}"
+_imgs="${DC_STUB_IMAGES:-}"
+printf 'CALL %s %s\n' "docker" "$*" >> "$_log"
+if [[ "${1:-}" == "context" && "${2:-}" == "show" ]]; then
+  printf 'colima\n'
+  exit 0
+fi
+if [[ "${1:-}" == "image" && "${2:-}" == "ls" ]]; then
+  [[ -f "$_imgs" ]] && cat "$_imgs"
+  exit 0
+fi
+if [[ "${1:-}" == "images" ]]; then
+  [[ -f "$_imgs" ]] && cat "$_imgs"
+  exit 0
+fi
+if [[ "${1:-}" == "buildx" && "${2:-}" == "version" ]]; then
+  exit 1
+fi
+exit 0
+STUB
+chmod +x "$STUB_NO_BUILDX/docker"
+cp "$STUB_NO_BUILDX/docker" "$STUB_NO_BUILDX/container"
+cp "$STUB_NO_BUILDX/docker" "$STUB_NO_BUILDX/podman"
+
+NOBX_PROJ="nobuildx"
+: > "$LOG"
+if HOME="$WORK/home" \
+  DC_REPOS_DIR="$WORK/home/repos" \
+  TZ="America/New_York" \
+  DC_STUB_LOG="$LOG" DC_STUB_IMAGES="$IMAGES" \
+  PATH="$STUB_NO_BUILDX:$ORIG_PATH" \
+  CONTAINER_BACKEND=docker \
+  bash "$ROOT_DIR/scripts/new-container.sh" "$NOBX_PROJ" nodejs \
+  >"$WORK/nobx.stdout" 2>"$WORK/nobx.stderr"; then
+  fail "dce new should fail when buildx is missing on derived-image build path"
+fi
+grep -Fq 'buildx plugin not found' "$WORK/nobx.stderr" \
+  || fail "dce new missing-buildx failure should mention buildx"
+if grep -qE 'CALL docker build --tag dce-img-' "$LOG"; then
+  fail "dce new missing-buildx path must fail before docker build"
+fi
+
+pass "dce new: derived-image build path fails fast when buildx is missing"
+
+# ===========================================================================
 # image reuse: a second project with the same scopes must NOT rebuild
 # ===========================================================================
 REUSE_PROJ="reuseproj"

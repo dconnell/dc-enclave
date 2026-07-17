@@ -656,6 +656,9 @@ if [[ "$IMAGE" != "dce-base:latest" ]]; then
     echo "==> Generating composed Containerfile for image: $IMAGE"
     bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV"
     echo "==> Building image: $IMAGE"
+    if ! dce_buildx_require; then
+      exit 1
+    fi
     PROV_BUILT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     backend_build_image "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR" \
       --build-arg "DC_BASE_ID=$PROV_BASE_ID" \
