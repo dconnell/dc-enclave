@@ -15,6 +15,15 @@ bash --version
 brew install bash          # macOS
 ```
 
+Image build fails with "BuildKit is enabled but the buildx component is missing" — dce builds images with BuildKit (its Containerfiles use multi-line heredoc `RUN`s the legacy builder drops), and BuildKit needs the `buildx` plugin. `buildx` ships with Docker Desktop and Docker CE but **not** with Ubuntu's `docker.io` (common on WSL2):
+
+```
+docker buildx version                       # verify the plugin
+sudo apt-get install docker-buildx-plugin   # Docker apt repo (Linux/WSL2)
+```
+
+`docker-buildx-plugin` lives in Docker's official apt repo, not Ubuntu's — add that repo first, or download the binary from <https://github.com/docker/buildx/releases> into `/usr/libexec/docker/cli-plugins/buildx`. `scripts/setup.sh` and `dce doctor` both check for buildx and print this hint.
+
 No backend detected:
 
 - install apple/container, Docker Desktop, OrbStack, Colima, or Podman

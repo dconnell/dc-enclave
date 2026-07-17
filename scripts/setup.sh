@@ -259,6 +259,15 @@ EOF
   echo "✓ Updated global .gitignore at $GLOBAL_GITIGNORE"
 fi
 
+# BuildKit/buildx is required: dce Containerfiles use multi-line heredoc RUNs
+# that the legacy builder drops, so backend_build_image builds with
+# DOCKER_BUILDKIT=1, which needs the buildx plugin. Verify BEFORE the build so a
+# missing plugin fails fast with install instructions instead of a mid-build
+# error. No-op on podman (own builder) / apple (separate path).
+if ! dce_buildx_require; then
+  exit 1
+fi
+
 # Build base image.
 echo ""
 echo "==> Building base container image (this takes a few minutes)..."
@@ -477,6 +486,9 @@ if dce_sync_backend_supported "$ACTIVE_BACKEND"; then
   else
     echo "Mutagen: not installed (--sync unavailable; see docs/how-to/sync-workspace.md)"
   fi
+fi
+if backend_is_docker_compatible "$ACTIVE_BACKEND"; then
+  echo "buildx: installed (BuildKit image builds enabled)"
 fi
 echo ""
 echo "Next:"

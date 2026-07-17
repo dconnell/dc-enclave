@@ -36,6 +36,13 @@ dce editor myapp
 #   (avoid "Reopen in Container" — it builds a SEPARATE editor container; see note below)
 ```
 
+> **BuildKit requirement.** dce builds images with BuildKit, so the `buildx`
+> plugin must be present (`docker buildx version`). It ships with Docker Desktop
+> and Docker CE; on WSL2/Ubuntu `docker.io` install it separately
+> (`sudo apt-get install docker-buildx-plugin` from Docker's apt repo, or
+> download from <https://github.com/docker/buildx/releases>). `scripts/setup.sh`
+> verifies this and prints the fix if it's missing.
+
 You now have a container named `myapp` running your chosen toolchain, your repo bind-mounted at `/workspace`, your per-project credentials injected, and a generated `devcontainer.json` so VS Code can open the project.
 
 > **VS Code — attach, don't reopen.** `dce new` already created and started the `myapp` container; that is the container `dce shell` / `dce editor` use. To edit inside it, run `dce editor myapp` (or manually **Dev Containers: Attach to Running Container...** and pick `myapp`). Do **not** use **Reopen in Container** (the popup shown when you open the folder) — it builds a *separate* editor container (`vsc-*`) that `dce` does not manage and that will not share runtime state with `dce shell`. When you need a fresh filesystem, rebuild with `dce rebuild-container` — VS Code's *Rebuild Container* bypasses dce's credential injection (SSH key, GitHub PAT git auth, `.npmrc`). For PAT auth, `dce editor` also syncs VS Code's attached-container named config so attached terminals/UI use the container's PAT-backed `~/.git-credentials` instead of VS Code's host-credential forwarding helper. If you edit the token file later, run `dce rotate-token <name>` to push the new PAT into the container. See [VS Code behavior](docs/reference/backends.md#vs-code-behavior-by-backend) and [rebuild and recover](docs/how-to/rebuild-and-recover.md).
