@@ -188,6 +188,10 @@ drive 3 dce rebuild-container alpha "--"; assert_reply "rebuild-container alpha 
 
 drive 3 dce rebuild-container alpha ""; assert_reply "rebuild-container alpha <TAB>" \
   --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --sync --sync-ignore --yes -y
+drive 4 dce rebuild-container alpha --sync ""; assert_reply "rebuild-container alpha --sync <TAB>" \
+  --inject-creds --keep-hidden-volumes --rotate-keys --sync-ignore --yes -y
+drive 5 dce rebuild-container alpha --from-snap lbl ""; assert_reply "rebuild-container alpha --from-snap lbl <TAB>" \
+  --inject-creds --keep-hidden-volumes --rotate-keys --yes -y
 
 # install: one project, then a directory.
 drive 2 dce install "";     assert_reply "install <TAB>" alpha beta gamma
@@ -282,9 +286,10 @@ drive 3 dce snapshots list ""; assert_reply "snapshots list <project> <TAB>" alp
 # new: name is free text (no completion), pos3 = scope + flags.
 drive 2 dce new "";               assert_empty "new <name> (free text, no completion)"
 drive 3 dce new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
-  --config --cpus --hide --ip --memory --network --repo-path --save-team --save-user --sync --sync-ignore --yes -y all golang node
+  --config --cpus --git-host --hide --ip --memory --network --repo-path --save-team --save-user --sync --sync-ignore --yes -y all golang node
 # --network/--ip consume a value (no completion offered for the value).
 drive 4 dce new foo --network ""; assert_empty "new foo --network <val> (no completion)"
+drive 4 dce new foo --git-host ""; assert_reply "new foo --git-host <TAB>" github gitlab
 
 # ---------------------------------------------------------------------------
 # Section 3 - zsh completion (scripts/_dce), gated on zsh being installed
@@ -486,10 +491,18 @@ if command -v zsh >/dev/null 2>&1; then
     chk restart          "*:project:"
     chk rm               "1:project:"
     chk rm               "--keep-config["
+    words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--rotate-keys["
+    words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--inject-creds["
+    words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--yes["
+    words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "-y["
+    words=(rebuild-container alpha --sync "") CURRENT=4 SPEC=(); _dce_dispatch rebuild-container
+    [[ "${SPEC[*]}" != *"--from-snap+"* ]] || { print "FAIL: zsh rebuild-container --sync should suppress --from-snap -> [${SPEC[*]}]"; exit 1 }
+    words=(rebuild-container alpha --from-snap "") CURRENT=4 SPEC=(); _dce_dispatch rebuild-container
+    [[ "${SPEC[*]}" != *"--sync["* ]] || { print "FAIL: zsh rebuild-container --from-snap should suppress --sync -> [${SPEC[*]}]"; exit 1 }
     chk install          "2:dotfiles directory:_files -/"
     chk rotate-token     "1:project:"
     chk rebuild-image    "1:target:_dce_rebuild_image_targets"
@@ -497,14 +510,18 @@ if command -v zsh >/dev/null 2>&1; then
     chk provenance       "--history["
     chk new              "2:scope:_dce_scopes"
     chk new              "*--hide["
+    chk new              "--git-host+[git host provider (github/gitlab)]"
     chk new              "*--network["
     chk new              "--ip+["
     chk new              "--sync[replace the /workspace bind mount with a Mutagen-synced named volume]"
     chk new              "*--sync-ignore[workspace path(s) excluded from Mutagen sync]"
     chk new              "--yes[skip the recipe-repo-path confirmation prompt]"
     chk new              "-y[skip the recipe-repo-path confirmation prompt]"
+    words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--from-snap+[recreate from snapshot"
+    words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--sync[enable/refresh a Mutagen-synced workspace]"
+    words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "*--sync-ignore[workspace path(s) excluded from Mutagen sync]"
     chk snapshot         "1:project or rm:"
     chk snapshot         "--exclude-volumes[skip ALL hidden-volume capture]"

@@ -42,7 +42,8 @@ unset _dce_scripts_dir
 #   clean                   : --dry-run / --hidden-volumes, then at most one
 #                             project (only meaningful with --hidden-volumes)
 #   new                     : <name> [scope] [--config <file>] [--save-team]
-#                             [--save-user] [--repo-path <d>] [--cpus N]
+#                             [--save-user] [--git-host <provider>]
+#                             [--repo-path <d>] [--cpus N]
 #                             [--memory V] [--hide <path>] [--sync] [--sync-ignore <path>] [--yes|-y]
 #                             [port:port ...]
 _dce_complete() {
@@ -146,8 +147,27 @@ _dce_complete() {
       [[ "$prev" == "--from-snap" ]] && return 0
       # --sync-ignore takes a value (a path), not completed here.
       [[ "$prev" == "--sync-ignore" ]] && return 0
-      # >= 3: optional flags (order-independent).
-      mapfile -t COMPREPLY < <(compgen -W "--rotate-keys --inject-creds --keep-hidden-volumes --yes -y --from-snap --sync --sync-ignore" -- "$cur")
+
+      local have_from_snap=0 have_sync=0 _w
+      for _w in "${COMP_WORDS[@]:3:COMP_CWORD-3}"; do
+        [[ "$_w" == "--from-snap" ]] && have_from_snap=1
+        [[ "$_w" == "--sync" ]] && have_sync=1
+      done
+
+      # >= 3: optional flags (order-independent), but don't suggest the known
+      # mutual-exclusion pair after one side is already present.
+      local rb_flags="--rotate-keys --inject-creds --keep-hidden-volumes --yes -y"
+      if [[ $have_sync -eq 0 && $have_from_snap -eq 0 ]]; then
+        rb_flags+=" --from-snap"
+      fi
+      if [[ $have_from_snap -eq 0 ]]; then
+        if [[ $have_sync -eq 0 ]]; then
+          rb_flags+=" --sync"
+        fi
+        rb_flags+=" --sync-ignore"
+      fi
+
+      mapfile -t COMPREPLY < <(compgen -W "$rb_flags" -- "$cur")
       return 0
       ;;
     snapshot)
@@ -377,9 +397,13 @@ _dce_complete_new() {
     --cpus|--memory|--hide|--network|--ip|--sync-ignore)
       return 0
       ;;
+    --git-host)
+      mapfile -t COMPREPLY < <(compgen -W "github gitlab" -- "$cur")
+      return 0
+      ;;
   esac
 
-  local flags="--config --save-team --save-user --repo-path --cpus --memory --hide --sync --sync-ignore --network --ip --yes -y"
+  local flags="--config --save-team --save-user --git-host --repo-path --cpus --memory --hide --sync --sync-ignore --network --ip --yes -y"
   if [[ $COMP_CWORD -eq 3 ]]; then
     # Second positional: a scope (with flags also accepted).
     mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_scopes) $flags" -- "$cur")
