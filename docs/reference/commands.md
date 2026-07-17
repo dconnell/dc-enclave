@@ -57,7 +57,7 @@ Several commands have short aliases:
 | Form | Description |
 |---|---|
 | `dce new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
-| `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--sync] [--sync-ignore <path[,path...]> ...] [--network <name[,name...]>] [--ip <addr>] [host:container ...]` | With recipe defaults, optional recipe save, resource limits, hidden paths, [synced workspace](../how-to/sync-workspace.md), and networks (see [Hiding generated paths](../how-to/hide-generated-paths.md)) |
+| `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--git-host <provider>] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--sync] [--sync-ignore <path[,path...]> ...] [--network <name[,name...]>] [--ip <addr>] [host:container ...]` | With recipe defaults, optional recipe save, git-host selection, resource limits, hidden paths, [synced workspace](../how-to/sync-workspace.md), and networks (see [Hiding generated paths](../how-to/hide-generated-paths.md)) |
 
 ## Command support by backend
 

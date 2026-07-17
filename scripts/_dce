@@ -119,16 +119,38 @@ _dce_dispatch() {
         '--keep-volumes[preserve hidden volumes]'
       ;;
     rebuild-container)
-      _arguments \
-        '1:project:_dce_projects_simple' \
-        '--rotate-keys[generate a fresh SSH deploy key]' \
-        '--inject-creds[force-inject current SSH key and git token]' \
-        '--keep-hidden-volumes[preserve hidden volumes across the rebuild]' \
-        '--from-snap+[recreate from snapshot dce-snap-<name>-<label>]:snapshot label:' \
-        '--sync[enable/refresh a Mutagen-synced workspace]' \
-        '*--sync-ignore[workspace path(s) excluded from Mutagen sync]:path:' \
-        '--yes[skip the confirmation prompt]' \
+      local _rb_have_sync=0 _rb_have_from_snap=0 _rb_w=""
+      for _rb_w in "${words[@]}"; do
+        [[ "$_rb_w" == "--sync" ]] && _rb_have_sync=1
+        [[ "$_rb_w" == "--from-snap" ]] && _rb_have_from_snap=1
+      done
+
+      local -a rb_specs
+      rb_specs=(
+        '1:project:_dce_projects_simple'
+        '--rotate-keys[generate a fresh SSH deploy key]'
+        '--inject-creds[force-inject current SSH key and git token]'
+        '--keep-hidden-volumes[preserve hidden volumes across the rebuild]'
+        '--yes[skip the confirmation prompt]'
         '-y[skip the confirmation prompt]'
+      )
+      if (( !_rb_have_sync && !_rb_have_from_snap )); then
+        rb_specs+=(
+          '--from-snap+[recreate from snapshot dce-snap-<name>-<label>]:snapshot label:'
+        )
+      fi
+      if (( !_rb_have_from_snap )); then
+        if (( !_rb_have_sync )); then
+          rb_specs+=(
+            '--sync[enable/refresh a Mutagen-synced workspace]'
+          )
+        fi
+        rb_specs+=(
+          '*--sync-ignore[workspace path(s) excluded from Mutagen sync]:path:'
+        )
+      fi
+
+      _arguments "${rb_specs[@]}"
       ;;
     snapshot)
       _dce_snapshot
@@ -298,6 +320,7 @@ _dce_new() {
     '--config+[load an explicit recipe file]:recipe file:_files' \
     '--save-team[save CLI-supplied recipe keys to team container-recipes/<name>]' \
     '--save-user[save CLI-supplied recipe keys to user container-recipes/<name>]' \
+    '--git-host+[git host provider (github/gitlab)]:provider:(github gitlab)' \
     '--repo-path+[override the repos directory]:directory:_files -/' \
     '--cpus+[cpu limit (e.g. 2, 1.5)]:value:' \
     '--memory+[memory limit (e.g. 4g, 512m)]:value:' \
