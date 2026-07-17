@@ -251,6 +251,41 @@ dce_load_project_config "$cfg_ports"
 
 pass "valid config with ports/hidden paths loads"
 
+# --- omitted optional scalars do not leak across loads -----------------------
+cfg_opt_a="$WORK/optaproj/config"
+write_valid_config "$cfg_opt_a" "2" "4g"
+{
+  echo 'CONTAINER_GIT_HOST="gitlab"'
+} >> "$cfg_opt_a"
+chmod 600 "$cfg_opt_a"
+dce_load_project_config "$cfg_opt_a"
+[[ "${CONTAINER_CPUS:-}" == "2" ]] || fail "optional scalar setup: cpus"
+[[ "${CONTAINER_MEMORY:-}" == "4g" ]] || fail "optional scalar setup: memory"
+[[ "${CONTAINER_GIT_HOST:-}" == "gitlab" ]] || fail "optional scalar setup: git host"
+
+cfg_opt_b="$WORK/optbproj/config"
+mkdir -p "$(dirname "$cfg_opt_b")"
+chmod 700 "$(dirname "$cfg_opt_b")"
+{
+  echo 'CONTAINER_PROJECT="testproj"'
+  echo 'CONTAINER_BACKEND="docker"'
+  echo 'CONTAINER_IMAGE="dce-base:latest"'
+  echo 'REPOS_DIR="/tmp/repos"'
+  echo 'SECRET_DIR="/tmp/secret"'
+  echo 'SSH_KEY_PATH="/tmp/secret/ssh_key"'
+  echo 'TOKEN_FILE="/tmp/secret/github-token"'
+  echo 'NPMRC_PATH="/tmp/secret/.npmrc"'
+  echo 'PORTS=()'
+  echo 'CONTAINER_HIDDEN_PATHS=()'
+} > "$cfg_opt_b"
+chmod 600 "$cfg_opt_b"
+dce_load_project_config "$cfg_opt_b"
+[[ -z "${CONTAINER_CPUS:-}" ]] || fail "omitted CONTAINER_CPUS must reset across loads"
+[[ -z "${CONTAINER_MEMORY:-}" ]] || fail "omitted CONTAINER_MEMORY must reset across loads"
+[[ -z "${CONTAINER_GIT_HOST:-}" ]] || fail "omitted CONTAINER_GIT_HOST must reset across loads"
+
+pass "omitted optional scalars reset across config loads"
+
 # --- safe global-config scalar extraction (no execution) ----------------------
 rm -f /tmp/m1-global-pwn
 gcfg="$WORK/globalconfig"
