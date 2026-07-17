@@ -322,20 +322,11 @@ if [[ ${#HIDDEN_PATH_INPUTS[@]} -eq 0 && ${#_DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS
   HIDDEN_PATH_INPUTS=("${_DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS[@]}")
 fi
 # Sync opt-in: a recipe can request --sync / --sync-ignore; CLI flags still win.
-# A recipe carrying both sync and hide is rejected by the config loader later,
-# but a recipe-vs-CLI mismatch (recipe hide + CLI sync) is resolved CLI-first:
-# CLI --sync wins and the recipe hide is dropped (with a notice below).
 if ! $CLI_SET_SYNC && [[ "${_DC_RECIPE_MERGED_SYNC:-}" == "1" ]]; then
   SYNC_ENABLED=true
 fi
 if [[ ${#SYNC_IGNORE_INPUTS[@]} -eq 0 && ${#_DC_RECIPE_MERGED_SYNC_IGNORE_INPUTS[@]} -gt 0 ]]; then
   SYNC_IGNORE_INPUTS=("${_DC_RECIPE_MERGED_SYNC_IGNORE_INPUTS[@]}")
-fi
-if $SYNC_ENABLED && [[ ${#HIDDEN_PATH_INPUTS[@]} -gt 0 ]] && ! $CLI_SET_HIDE; then
-  echo "Recipe requested --hide, but --sync is active (recipe or CLI)."
-  echo "  --sync and --hide are mutually exclusive; dropping recipe hide paths."
-  echo "  Under --sync, exclude generated paths with --sync-ignore instead."
-  HIDDEN_PATH_INPUTS=()
 fi
 if [[ -z "$NETWORK_INPUT" && -n "${_DC_RECIPE_MERGED_NETWORK_INPUT:-}" ]]; then
   NETWORK_INPUT="$_DC_RECIPE_MERGED_NETWORK_INPUT"
@@ -348,6 +339,17 @@ if [[ -z "$REPO_PATH_OVERRIDE" && -n "${_DC_RECIPE_MERGED_REPO_PATH_OVERRIDE:-}"
 fi
 if [[ ${#PORTS[@]} -eq 0 && ${#_DC_RECIPE_MERGED_PORTS[@]} -gt 0 ]]; then
   PORTS=("${_DC_RECIPE_MERGED_PORTS[@]}")
+fi
+
+# Validate the MERGED (CLI + recipe) sync/hide state, not just parse-time CLI.
+# This catches recipe+CLI combinations like recipe sync + CLI hide.
+if $SYNC_ENABLED && [[ ${#HIDDEN_PATH_INPUTS[@]} -gt 0 ]]; then
+  dce_die "--sync and --hide are mutually exclusive.
+     Under --sync, exclude generated paths with --sync-ignore instead.
+     Example: --sync --sync-ignore node_modules"
+fi
+if [[ ${#SYNC_IGNORE_INPUTS[@]} -gt 0 ]] && ! $SYNC_ENABLED; then
+  dce_die "--sync-ignore only has meaning with --sync."
 fi
 
 # Fail fast on merged resource values before any backend work.

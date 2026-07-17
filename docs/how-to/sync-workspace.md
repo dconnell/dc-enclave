@@ -66,7 +66,9 @@ dce new monorepo nodejs --sync --sync-ignore node_modules,.nx,dist 3000:3000
 `--sync` and `--hide` are **mutually exclusive**. They belong to different
 worlds: under the bind mount you exclude generated paths with `--hide`; under
 `--sync` you exclude them with `--sync-ignore` on the one sync volume (no second
-volume needed). `--sync-ignore` without `--sync` is rejected.
+volume needed). `--sync-ignore` without `--sync` is rejected. The same
+mutual-exclusion rule is enforced on the merged recipe+CLI inputs too (for
+example, a recipe with `sync=1` plus CLI `--hide` fails fast).
 
 ### Why the recommended Node shape includes `--sync-ignore`
 
@@ -127,7 +129,8 @@ Then re-run your `dce new ... --sync` command.
   between stop/start).
 - **`dce stop`** — leaves the session (Mutagen tolerates a down beta and
   retries). Nothing is destroyed.
-- **`dce rebuild-container`** — flushes pending changes, destroys the container,
+- **`dce rebuild-container`** — while the container is still running, flushes
+  pending changes, then destroys the container,
   recreates it re-mounting the **same** preserved volume, then reconnects the
   session. Sub-second container recreation; no source re-copied. Pass
   `--sync-ignore` to adjust the ignore set (the session is recreated).
