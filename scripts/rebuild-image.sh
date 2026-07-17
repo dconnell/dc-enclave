@@ -84,6 +84,11 @@ echo "Target: $TARGET"
 
 echo ""
 echo "--- Building dce-base ---"
+# buildx is required for every image build (dce Containerfiles use multi-line
+# heredoc RUNs the legacy builder drops; backend_build_image forces BuildKit via
+# DOCKER_BUILDKIT=1). Verify once up front instead of failing mid-build. No-op on
+# podman/apple.
+dce_buildx_require || exit 1
 backend_build_image \
   "dce-base:latest" \
   "$ROOT_DIR/Containerfiles/Containerfile.base" \

@@ -669,9 +669,76 @@ backend_build_image() {
       _backend_apple_build_image "$tag" "$file" "$context" "$@"
       ;;
     docker|orbstack|colima|podman)
-      "$(backend_cli)" build --tag "$tag" --file "$file" "$@" "$context"
+      # Force BuildKit: composed images write their ENTRYPOINT via a multi-line
+      # `RUN cat >f <<'EOF' ... EOF` shell heredoc, which the *legacy* Docker
+      # builder (the default when dockerd is started bare, e.g. on WSL2) parses
+      # as a one-line RUN and emits as an EMPTY file -- the container then exits
+      # 255 on start. BuildKit parses the heredoc as one instruction and writes
+      # it intact. BuildKit is the default on Docker 23+, so this is a no-op
+      # there; podman ignores DOCKER_BUILDKIT.
+      DOCKER_BUILDKIT=1 "$(backend_cli)" build --tag "$tag" --file "$file" "$@" "$context"
       ;;
   esac
+}
+
+# Return 0 if the buildx plugin is available for image builds on the active
+# backend. Only the docker family (docker/orbstack/colima) routes `docker build`
+# through buildx/BuildKit; podman has its own builder and apple uses a separate
+# path, so buildx is not applicable there (reported present so gates pass).
+dce_buildx_present() {
+  case "$(backend_name)" in
+    docker|orbstack|colima)
+      "$(backend_cli)" buildx version >/dev/null 2>&1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+# Echo the buildx version string (first line); empty if absent/unavailable.
+dce_buildx_version() {
+  case "$(backend_name)" in
+    docker|orbstack|colima)
+      "$(backend_cli)" buildx version 2>/dev/null | awk 'NR==1{print; exit}'
+      ;;
+  esac
+}
+
+# Echo a per-platform install hint for the buildx plugin. buildx is bundled with
+# Docker Desktop (macOS) and Docker CE; the common gap is WSL2's docker.io
+# (Ubuntu), which ships no buildx.
+dce_buildx_install_hint() {
+  case "$(uname -s)" in
+    Darwin)
+      printf 'reinstall/upgrade Docker Desktop (it bundles buildx)'
+      ;;
+    *)
+      printf 'sudo apt-get install docker-buildx-plugin (Docker apt repo), or download from https://github.com/docker/buildx/releases'
+      ;;
+  esac
+}
+
+# Hard gate for image builds: on a docker-compatible backend, require the buildx
+# plugin. dce builds with DOCKER_BUILDKIT=1 (Containerfiles use multi-line
+# heredoc RUNs the legacy builder drops), and Docker needs the buildx component
+# for that. Prints an actionable message and returns non-zero if missing; no-op
+# on podman/apple. Used by setup.sh and rebuild-image.sh before building. dce
+# verifies, never installs (matches the Mutagen stance).
+dce_buildx_require() {
+  if dce_buildx_present; then
+    return 0
+  fi
+  {
+    echo "✗ buildx plugin not found (required to build dce images with BuildKit)."
+    echo ""
+    echo "  dce Containerfiles use multi-line heredoc RUNs that need BuildKit;"
+    echo "  without buildx the legacy builder drops them and containers fail to start."
+    echo ""
+    printf '  Install:  %s\n' "$(dce_buildx_install_hint)"
+    echo "  Verify:   docker buildx version"
+  } >&2
+  return 1
 }
 
 # True if <needle> appears as an EXACT line in the output of the given command.

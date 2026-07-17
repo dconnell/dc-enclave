@@ -180,6 +180,22 @@ _chk_root() {  # <varname>
   [[ -d "$val" ]] || { echo "$varname root does not exist: $val" >&2; return 1; }
 }
 
+# shellcheck disable=SC2329
+# Invoked indirectly by name via the _check dispatcher.
+# buildx is required for BuildKit image builds (dce Containerfiles use heredoc
+# RUNs the legacy builder drops). Bundled with Docker Desktop / Docker CE; the
+# gap is docker.io (Ubuntu/WSL2). Skipped where no docker CLI exists (apple/
+# podman-only hosts -- buildx does not apply).
+_chk_buildx() {
+  command -v docker >/dev/null 2>&1 || return 0
+  if docker buildx version >/dev/null 2>&1; then
+    return 0
+  fi
+  printf 'buildx plugin missing (required for BuildKit image builds); %s\n' \
+    "$(dce_buildx_install_hint)" >&2
+  return 1
+}
+
 doctor_host() {
   echo ""
   echo "Environment"
@@ -187,6 +203,7 @@ doctor_host() {
   _check "Global config ($(dce_global_config_path))" _chk_global_config
   _check "DC_TEAM_DIR resolvable + root exists" _chk_root DC_TEAM_DIR
   _check "DC_USER_DIR resolvable + root exists" _chk_root DC_USER_DIR
+  _check "buildx plugin (BuildKit builds)" _chk_buildx
 }
 
 # --- backend probes (all read-only; reachability reuses backend_system_info,

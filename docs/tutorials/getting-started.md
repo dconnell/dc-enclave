@@ -33,7 +33,21 @@ macOS users: if version is 3.x, run `brew install bash`. Linux and WSL2 distros 
 - Colima (macOS, Linux), or
 - Podman (macOS, Linux, WSL2)
 
-3. Initialize repository and aliases:
+3. Ensure the `buildx` plugin is available (docker-compatible backends only — Podman uses its own builder):
+
+```
+docker buildx version
+```
+
+Docker Desktop and Docker CE bundle buildx. On WSL2/Ubuntu using the `docker.io` package, install it separately — dce builds images with BuildKit and `docker.io` ships no buildx:
+
+```
+sudo apt-get install docker-buildx-plugin   # Docker apt repo (Linux/WSL2)
+```
+
+`docker-buildx-plugin` is in Docker's official apt repo (not Ubuntu's) — add that repo first, or download the binary from <https://github.com/docker/buildx/releases>. `scripts/setup.sh` checks for it and prints this hint if it's missing.
+
+4. Initialize repository and aliases:
 
 ```
 cd ~/dce-enclave
@@ -41,7 +55,7 @@ chmod +x scripts/*.sh scripts/dce
 scripts/setup.sh
 ```
 
-4. Reload your shell profile (setup detects your login shell via `$SHELL` and writes to the right file):
+5. Reload your shell profile (setup detects your login shell via `$SHELL` and writes to the right file):
 
 ```
 source ~/.zshrc         # if your shell is zsh (macOS default)
