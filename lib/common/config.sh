@@ -509,8 +509,13 @@ Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
     fi
   done < "$config_file"
 
-  # Reset optional arrays so a config lacking them (or a prior load) doesn't leak
-  # stale values; plain assignments sourced below become globals automatically.
+  # Reset all schema-defined scalars/arrays so a config lacking any key (or a
+  # prior load) does not leak stale values; plain assignments sourced below
+  # become globals automatically.
+  local scalar_key=""
+  for scalar_key in "${_DC_CONFIG_SCALAR_KEYS[@]}"; do
+    printf -v "$scalar_key" '%s' ""
+  done
   PORTS=()
   CONTAINER_HIDDEN_PATHS=()
   CONTAINER_NETWORKS=()

@@ -110,4 +110,16 @@ dce_load_project_config "$_cfg" >/dev/null 2>&1 \
 [[ "${CONTAINER_SYNC:-}" == "1" ]] || fail "loaded CONTAINER_SYNC"
 [[ "${CONTAINER_SYNC_IGNORE_PATHS[1]:-}" == "dist" ]] || fail "loaded sync-ignore array"
 
+# Missing CONTAINER_SYNC on a subsequent load must clear the prior value.
+{
+  printf 'CONTAINER_PROJECT="proj"\n'
+  printf 'CONTAINER_BACKEND="docker"\n'
+  printf 'CONTAINER_HIDDEN_PATHS=()\n'
+  printf 'CONTAINER_SYNC_IGNORE_PATHS=()\n'
+} > "$_cfg"
+chmod 600 "$_cfg"
+dce_load_project_config "$_cfg" >/dev/null 2>&1 \
+  || fail "config loader must accept config without CONTAINER_SYNC"
+[[ -z "${CONTAINER_SYNC:-}" ]] || fail "CONTAINER_SYNC must reset when omitted in a later load"
+
 pass "sync helpers (naming, transport, support, hints, config rejection)"
