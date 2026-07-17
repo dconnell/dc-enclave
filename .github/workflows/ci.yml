@@ -216,7 +216,7 @@ jobs:
       - name: Install Mutagen (for --sync integration)
         run: |
           set -euo pipefail
-          json="$(curl -fsSL https://api.github.com/repos/mutagen-io/mutagen/releases/latest)"
+          json="$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors https://api.github.com/repos/mutagen-io/mutagen/releases/latest)"
           re='"tag_name":[[:space:]]*"([^"]+)"'
           if ! [[ "$json" =~ $re ]]; then
             echo "ERROR: could not parse mutagen latest release tag" >&2
@@ -224,7 +224,7 @@ jobs:
           fi
           tag="${BASH_REMATCH[1]}"
           sudo mkdir -p /opt/mutagen
-          curl -fsSL -o /tmp/mutagen.tgz \
+          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/mutagen.tgz \
             "https://github.com/mutagen-io/mutagen/releases/download/${tag}/mutagen_linux_amd64_${tag}.tar.gz"
           sudo tar -xzf /tmp/mutagen.tgz -C /opt/mutagen
           rm -f /tmp/mutagen.tgz
@@ -442,7 +442,7 @@ jobs:
         shell: wsl-bash {0}
         run: |
           set -euo pipefail
-          json="$(curl -fsSL https://api.github.com/repos/mutagen-io/mutagen/releases/latest)"
+          json="$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors https://api.github.com/repos/mutagen-io/mutagen/releases/latest)"
           re='"tag_name":[[:space:]]*"([^"]+)"'
           if ! [[ "$json" =~ $re ]]; then
             echo "ERROR: could not parse mutagen latest release tag" >&2
@@ -450,7 +450,7 @@ jobs:
           fi
           tag="${BASH_REMATCH[1]}"
           mkdir -p /opt/mutagen
-          curl -fsSL -o /tmp/mutagen.tgz \
+          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o /tmp/mutagen.tgz \
             "https://github.com/mutagen-io/mutagen/releases/download/${tag}/mutagen_linux_amd64_${tag}.tar.gz"
           tar -xzf /tmp/mutagen.tgz -C /opt/mutagen
           rm -f /tmp/mutagen.tgz
