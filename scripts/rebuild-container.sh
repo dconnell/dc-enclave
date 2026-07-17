@@ -397,9 +397,24 @@ if ! $ASSUME_YES; then
   fi
 fi
 
+was_running=false
+if backend_is_running "$PROJECT"; then
+  was_running=true
+fi
+
+# Pre-stop flush: for synced projects, drain pending container->host changes
+# WHILE the container is still running, before stop/delete. The sync volume
+# itself is preserved (never in the clean-slate removal path); this is belt-and-
+# suspenders against sync lag so no container-side edit is lost.
+if $SYNC_ENABLED && $was_running; then
+  echo ""
+  echo "==> Pre-stop: Flushing Mutagen sync session..."
+  dce_sync_flush "$PROJECT"
+fi
+
 echo ""
 echo "==> Step 1: Stopping container..."
-if backend_is_running "$PROJECT"; then
+if $was_running; then
   backend_stop "$PROJECT"
   echo "  ✓ Stopped"
 else
@@ -408,14 +423,6 @@ fi
 
 echo ""
 echo "==> Step 2: Deleting container (container filesystem wiped)..."
-# Pre-destroy flush: for synced projects, drain pending container->host changes
-# before the container is wiped. The sync volume itself is preserved (never in
-# the clean-slate removal path); the flush is belt-and-suspenders against sync
-# lag so no container-side edit is lost. Best-effort, bounded by a timeout.
-if $SYNC_ENABLED; then
-  echo "  -> Flushing Mutagen sync session..."
-  dce_sync_flush "$PROJECT"
-fi
 if backend_delete "$PROJECT" 2>/dev/null; then
   echo "  ✓ Container deleted"
 else
@@ -575,7 +582,9 @@ if $SYNC_ENABLED; then
   if ! dce_sync_session_exists "$PROJECT"; then
     echo "  -> Creating Mutagen sync session..."
     if ! dce_sync_create "$PROJECT" "$REPOS_DIR" "${CONTAINER_SYNC_IGNORE_PATHS[@]:-}"; then
-      dce_warn "Mutagen sync session creation failed for '$PROJECT'; see mutagen sync list"
+      dce_die "Mutagen sync session creation failed for '$PROJECT'.
+  See: mutagen sync list
+  Docs: docs/how-to/sync-workspace.md"
     fi
   else
     dce_sync_resume "$PROJECT"

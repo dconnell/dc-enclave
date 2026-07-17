@@ -62,6 +62,10 @@ Merge and override rules:
 - list keys (`hide`, `sync-ignore`, `network`, `port`) replace as a whole (not union)
 - CLI args override recipe values for that run
 
+`sync=1` and `hide` are mutually exclusive in the merged result (recipe + CLI).
+If both are present, `dce new` fails fast and asks you to use `sync-ignore`
+under `sync` instead.
+
 ### `repo-path` trust boundary
 
 Recipes are untrusted input, so `repo-path` is the one key that is **not** applied

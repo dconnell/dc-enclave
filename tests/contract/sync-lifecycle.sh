@@ -123,6 +123,18 @@ REPOS_DIR="$WORK/home/repos/$PROJECT"
 SECRET_DIR="$WORK/home/.config/dce-enclave/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
+run_script_failsync() {
+  HOME="$WORK/home" \
+  DC_REPOS_DIR="$WORK/home/repos" \
+  TZ="America/New_York" \
+  DC_STUB_LOG="$LOG" DC_STUB_IMAGES="$IMAGES" \
+  DC_STUB_RUNNING="${DC_STUB_RUNNING:-}" \
+  DC_STUB_SYNC_VOL="${DC_STUB_SYNC_VOL:-}" \
+  PATH="$STUB_FAILSYNC:$ORIG_PATH" \
+  CONTAINER_BACKEND="$BACKEND" \
+  bash "$@"
+}
+
 : > "$LOG"; 
 if ! run_script "$ROOT_DIR/scripts/new-container.sh" \
   "$PROJECT" nodejs --sync --sync-ignore node_modules,dist --cpus 2 --memory 4g 3000:3000 \
@@ -173,6 +185,24 @@ grep -Fq -- "--mode two-way-resolved" <<<"$CREATE_LINE" || fail "mutagen host-ca
 pass "dce new --sync: mount swap, env, config, mutagen create, no hidden mounts"
 
 # ===========================================================================
+# recipe+CLI merge validation: recipe sync + CLI hide must fail (no silent drop)
+# ===========================================================================
+mkdir -p "$TEAM_DIR/container-recipes"
+cat > "$TEAM_DIR/container-recipes/mergebad" <<'EOF'
+sync=1
+EOF
+
+: > "$LOG"
+if run_script "$ROOT_DIR/scripts/new-container.sh" "mergebad" nodejs --hide node_modules \
+  >"$WORK/mergebad.out" 2>"$WORK/mergebad.err"; then
+  fail "recipe sync + CLI hide must fail after merge validation"
+fi
+grep -Fqi 'mutually exclusive' "$WORK/mergebad.err" || fail "recipe sync + CLI hide should mention mutual exclusion"
+! grep -qE 'create --name mergebad' "$LOG" || fail "recipe sync + CLI hide must not create a container"
+
+pass "recipe sync + CLI hide: fails fast at merged-state validation"
+
+# ===========================================================================
 # mutual exclusion / fail-fast (must NOT create anything)
 # ===========================================================================
 : > "$LOG"
@@ -215,21 +245,28 @@ BACKEND=docker
 pass "--sync mutual-exclusion + apple/podman fail-fast"
 
 # ===========================================================================
-# rebuild on a synced project: mount preserved, flush before delete, parity
+# rebuild on a synced project: mount preserved, flush before stop/delete, parity
 # ===========================================================================
 printf '%s\n' "$CONTAINER_IMAGE" >> "$IMAGES"   # derived image now "present"
 : > "$LOG"; 
+export DC_STUB_RUNNING="syncapp"
 printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" \
   >"$WORK/rb.out" 2>"$WORK/rb.err" || fail "rebuild exited non-zero"
+unset DC_STUB_RUNNING
 
 # Never builds an image during rebuild.
 if grep -qE 'build --tag (dce-base|dce-img-)' "$LOG"; then
   fail "rebuild must never build an image"
 fi
-# Flush before delete (data-loss prevention): flush call precedes container delete.
+# Flush before stop/delete (data-loss prevention while container runtime is up).
+stop_ln="$(first_call 'stop syncapp' || true)"; stop_ln="${stop_ln:-999999}"
 flush_ln="$(first_call 'sync flush' || true)"; flush_ln="${flush_ln:-999999}"
 del_ln="$(first_call 'rm -f syncapp')"
+[[ -n "$(first_call 'stop syncapp' || true)" ]] || fail "rebuild: stop call missing"
+[[ -n "$(first_call 'sync flush' || true)" ]] || fail "rebuild: sync flush call missing"
 [[ -n "$del_ln" ]] || fail "rebuild: container delete missing"
+[[ "$flush_ln" -lt "$stop_ln" ]] \
+  || fail "rebuild: mutagen flush must precede container stop (flush=$flush_ln stop=$stop_ln)"
 [[ "$flush_ln" -lt "$del_ln" ]] \
   || fail "rebuild: mutagen flush must precede container delete (flush=$flush_ln del=$del_ln)"
 # Create-argv parity with `dce new`.
@@ -241,7 +278,48 @@ RB_CREATE="$(grep -E 'create --name syncapp' "$LOG" | head -n1)"
 # Session resumed (session exists per stub).
 grep -Fq 'sync resume' "$LOG" || fail "rebuild must resume the sync session"
 
-pass "rebuild (synced): flush<delete, create-argv parity, session resume"
+pass "rebuild (synced): flush<stop<delete, create-argv parity, session resume"
+
+# ===========================================================================
+# rebuild --sync: session-create failure is fatal after delete/recreate
+# ===========================================================================
+STUB_FAILSYNC="$WORK/bin_failsync"
+mkdir -p "$STUB_FAILSYNC"
+cp "$STUB_DIR/docker" "$STUB_FAILSYNC/docker"
+cp "$STUB_DIR/docker" "$STUB_FAILSYNC/container"
+cp "$STUB_DIR/docker" "$STUB_FAILSYNC/podman"
+cat > "$STUB_FAILSYNC/mutagen" <<'STUB'
+#!/usr/bin/env bash
+printf 'CALL mutagen %s\n' "$*" >> "${DC_STUB_LOG:?}"
+case "${1:-} ${2:-}" in
+  "sync list")
+    # No session exists, force rebuild path to attempt sync create.
+    exit 1
+    ;;
+  "sync create")
+    exit 1
+    ;;
+  "sync flush")
+    exit 0
+    ;;
+  "version ")
+    printf 'mutagen 0.18.0\n'
+    exit 0
+    ;;
+esac
+exit 0
+STUB
+chmod +x "$STUB_FAILSYNC/mutagen"
+
+: > "$LOG"
+if printf 'yes\n' | run_script_failsync "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" \
+  >"$WORK/rb-failsync.out" 2>"$WORK/rb-failsync.err"; then
+  fail "rebuild --sync must fail hard when sync create fails"
+fi
+grep -Fq 'Mutagen sync session creation failed' "$WORK/rb-failsync.err" \
+  || fail "rebuild --sync fatal create error message missing"
+
+pass "rebuild --sync: sync create failure is fatal"
 
 # ===========================================================================
 # snapshot: sync volume is excluded (guard message printed)
