@@ -187,8 +187,13 @@ _it_sync_lifecycle() {  # <backend> <case_id>
   # (The default live monitor would stream forever; --once is the testable form.)
   out="$(it_dce_capture "$b" "$c" sync-status "$p" --once 2>&1)" && rc=0 || rc=$?
   [[ $rc -eq 0 ]] || { it_case_fail "dce sync-status --once exited $rc: $out"; return 1; }
-  grep -Fqi 'Session:' <<<"$out" \
+  # mutagen sync list labels the session with `Name:` (the dce-sync-<slug>-<12hex>
+  # resolved by dce_sync_session_name). Older Mutagen used `Session:`; 0.18+
+  # uses `Name:`. Match `Name:` and pin the resolved session name for tightness.
+  grep -Fqi 'Name:' <<<"$out" \
     || { it_case_fail "dce sync-status --once did not surface the session: $out"; return 1; }
+  grep -Fq "$session" <<<"$out" \
+    || { it_case_fail "dce sync-status --once did not list the project's session ($session): $out"; return 1; }
 
   # Explicit rm: session terminated + sync volume removed. The harness per-case
   # rm is an idempotent no-op after this (project already gone).
