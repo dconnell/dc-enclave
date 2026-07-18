@@ -367,7 +367,12 @@ if $DOCKER_COMPATIBLE && backend_is_running "$PROJECT" 2>/dev/null; then
     _rb_i="$(dce_ext_list_installed vscode "$PROJECT" 2>/dev/null)" || exit 0
     printf '%s\n' "$_rb_i" | dce_ext_minus $_rb_d
   } 2>/dev/null )" || _rb_undeclared=""
-  _rb_und_count="$(printf '%s\n' "$_rb_undeclared" | grep -c -v '^$' 2>/dev/null || printf '0')"
+  # grep -c always writes the count to stdout AND exits 1 when the count is 0,
+  # so `|| printf '0'` would append a second '0' (yielding "0\n0") and trip
+  # `[[: ... -gt 0 ]]' with a syntax error. Use `|| true` to swallow only the
+  # exit status; stdout already carries the (possibly zero) count.
+  _rb_und_count="$(printf '%s\n' "$_rb_undeclared" | grep -c -v '^$' 2>/dev/null || true)"
+  _rb_und_count="${_rb_und_count:-0}"
   if [[ "$_rb_und_count" -gt 0 ]]; then
     echo "  ********************************************************************"
     echo "  *                                                                  *"
