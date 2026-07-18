@@ -20,6 +20,7 @@ Every flag each `dce` command accepts, derived from the command help (`dce help 
 | `--sync-ignore <path[,path...]>` | Exclude `/workspace`-relative paths from Mutagen sync (the sync-world analog of `--hide`). Same grammar; repeatable. Only meaningful with `--sync`. |
 | `--network <name[,name...]>` | Attach to private dce network(s) so the container can reach peers by name without publishing ports. `name:ip` pins a static IPv4. Repeatable. See [private networks](../how-to/connect-private-networks.md). |
 | `--ip <addr>` | Static IPv4 for the primary (first) network; equivalent to `name:ip` on the first `--network` entry. Not supported on apple/container. |
+| `--git-host <provider>` | Git host for authentication (default `github`; supported: `github`, `gitlab`). Determines token file name, credential format, and environment variable. Read-only after create. See [add a git host](../how-to/add-git-host.md). |
 | `--yes`, `-y` | Skip the recipe-`repo-path` confirmation prompt (see below). Non-interactive runs without `--yes` abort instead of mounting. |
 
 > **Recipe `repo-path` is gated.** An auto-loaded recipe cannot silently widen the
@@ -156,13 +157,13 @@ Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never 
 | `<name>` *(required)* | Project/container name. Must be a synced (`--sync`) workspace. |
 | `--once`, `-1` | Print a one-shot snapshot (`mutagen sync list`) and exit. Default is a live stream (`mutagen sync monitor`) until interrupted. |
 
-## Commands with no flags
+## Commands taking only positional arguments
 
 These take only positional arguments (or none):
 
 - `dce start [name ...]`, `dce stop [name ...]`, `dce restart [name ...]` — all configured projects when no name is given.
 - `dce status`, `dce list` — no arguments.
-- `dce install <name> <path>` — path to a dotfiles directory containing an executable `install.sh`.
+- `dce install <name> <path>` — path to a dotfiles directory containing an executable `install.sh`. The container must already be running (`dce start <name>` first).
 - `dce version` (`--version`, `-v`), `dce help [command]` (`--help`, `-h`).
 
 ## Global

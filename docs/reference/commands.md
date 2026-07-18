@@ -62,13 +62,13 @@ Several commands have short aliases:
 
 ## Command support by backend
 
-DC Enclave supports five container runtimes (see [backends](backends.md)): the Docker family — `docker`, `orbstack`, `colima` — plus `apple` (apple/container) and `podman`. The four Docker-CLI backends (`docker`/`orbstack`/`colima`/`podman`) share most capabilities; `apple/container` diverges most often because it does not expose the Docker API.
+DC Enclave supports five container runtimes (see [backends](backends.md)): the Docker family — `docker`, `orbstack`, `colima` — plus `apple` (apple/container) and `podman`. The four Docker-compatible backends (`docker`/`orbstack`/`colima`/`podman`) share most capabilities; `apple/container` diverges most often because it does not expose the Docker API.
 
 ### Command matrix
 
 Command-level support. ✅ fully supported · 🟡 works, but some flags/subcommands are unsupported (see [Backend-limited features](#backend-limited-features)) · ❌ unsupported. Most commands run on every backend; `dce editor` is the only one that refuses outright — others showing 🟡 still work, just with caveats on specific options.
 
-| Command | Docker / OrbStack / Colima | Apple / Container | Podman |
+| Command | Docker / OrbStack / Colima | apple / container | Podman |
 |---|---|---|---|
 | `dce new` | ✅ | 🟡 | 🟡 |
 | `dce status` | ✅ | ✅ | ✅ |
@@ -102,7 +102,7 @@ Command-level support. ✅ fully supported · 🟡 works, but some flags/subcomm
 
 These flags/subcommands run on only a subset of backends. Each fails fast with an actionable message rather than silently misbehaving — the command itself still works; only the listed option is constrained.
 
-| Feature | Docker / OrbStack / Colima | Apple / Container | Podman | Reason |
+| Feature | Docker / OrbStack / Colima | apple / container | Podman | Reason |
 |---|---|---|---|---|
 | `dce editor` | ✅ | ❌ | ✅ | VS Code Dev Containers needs the Docker API socket; apple/container has no attach path |
 | `dce new --sync`, `dce rebuild-container --sync` | ✅ | ❌ | ❌ | [Synced workspace](../how-to/sync-workspace.md) needs a Mutagen transport; none exists for apple or podman |

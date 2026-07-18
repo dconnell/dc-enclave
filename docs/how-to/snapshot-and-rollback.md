@@ -155,8 +155,8 @@ dce rebuild-container myapp --from-snap before-rust-upgrade
 This recreates the container from the snapshot image instead of the
 scope-derived one. It is a **one-off restore**: it bypasses scope derivation and
 does **not** rewrite `CONTAINER_IMAGE`. Afterward the container reads "stale" in
-`dce list` / `dce status` until the next normal rebuild — this is correct (the
-container genuinely diverges from its configured image), not an error.
+`dce list` / `dce status` until the next normal rebuild — that's expected, since
+the container genuinely diverges from its configured image.
 
 Restore always isolates hidden volumes: each comes back **populated** (if the
 snapshot captured it) or **empty** with a warning (if it was excluded, the copy

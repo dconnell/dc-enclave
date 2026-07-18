@@ -3,7 +3,7 @@
 ## Base image tools
 
 
-The base image is intentionally minimal and shared across all scope selections. It includes essentials only:
+The base image is minimal and shared across all scope selections. It includes essentials only:
 
 - git
 - curl
@@ -72,11 +72,10 @@ Scope-specific overlays can build on hidden volumes. The Node.js overlay
 - writes a hash sentinel so deps are only re-installed when `package.json` or `package-lock.json` changes
 - fails soft by default; set `DC_NODE_INSTALL_STRICT=1` to make install errors fatal
 
-The trigger is **cause-agnostic**: it fires whenever the target directory is
-empty or missing — whether the path is a [`--hide`](../how-to/hide-generated-paths.md)
-named volume, a [`--sync --sync-ignore`](../how-to/sync-workspace.md) Mutagen-
-ignored path, or a fresh volume. So the same overlay composes with both dce
-topologies without per-mode code paths.
+The trigger fires whenever the target directory is empty or missing — whether
+the path is a [`--hide`](../how-to/hide-generated-paths.md) named volume, a
+[`--sync --sync-ignore`](../how-to/sync-workspace.md) Mutagen-ignored path, or a
+fresh volume — so one overlay works under both topologies.
 
 The `golang`, `rust`, `dotnet`, and `python` example overlays follow the same
 shape with their own package manager (`go mod download`, `cargo fetch`,

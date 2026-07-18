@@ -2,6 +2,8 @@
 
 The manual for DC Enclave, organized by what you're trying to do.
 
+> **In a hurry?** Something broken or suspect? Jump to [rebuild and recover](how-to/rebuild-and-recover.md), [snapshot and rollback](how-to/snapshot-and-rollback.md), or [troubleshooting](troubleshooting.md). Run `dce doctor` first — it pinpoints drift in one shot.
+
 ## I want to…
 
 | Task | Where |
@@ -20,20 +22,19 @@ The manual for DC Enclave, organized by what you're trying to do.
 | Save a container state and roll back | [snapshot and rollback](how-to/snapshot-and-rollback.md) |
 | Add tools to the image | [overlays](reference/overlays.md) |
 | Pick or configure a backend | [backends](reference/backends.md) |
-| Understand the security model | [isolation & security](explanation/isolation-and-security.md) |
+| Understand the security model | [isolation and security](explanation/isolation-and-security.md) |
 | Fix something that's broken | [troubleshooting](troubleshooting.md) |
 
 ## Browse by type
 
 **[Tutorials](tutorials/getting-started.md)** — learn the basics, end to end.
 
-**How-to guides** — step-by-step recipes for specific tasks:
-[daily workflow](how-to/daily-workflow.md) · [manage resources](how-to/manage-resources.md) · [set the timezone](how-to/set-timezone.md) · [hide generated paths](how-to/hide-generated-paths.md) · [manage editor extensions](how-to/manage-editor-extensions.md) · [private networks](how-to/connect-private-networks.md) · [host PostgreSQL](how-to/connect-host-postgres.md) · [rebuild and recover](how-to/rebuild-and-recover.md) · [snapshot and rollback](how-to/snapshot-and-rollback.md) · [monorepos](how-to/work-with-monorepos.md) · [dotfiles](how-to/set-up-dotfiles.md)
+**How-to guides** — step-by-step recipes for specific tasks. See the [full list organized by theme](how-to/README.md).
 
 **Reference** — look things up:
-[commands](reference/commands.md) · [flags](reference/flags.md) · [configuration](reference/configuration.md) · [overlays](reference/overlays.md) · [backends](reference/backends.md) · [provenance](reference/provenance.md) · [repository layout](reference/repository-layout.md)
+[concepts and glossary](reference/concepts.md) · [commands](reference/commands.md) · [flags](reference/flags.md) · [configuration](reference/configuration.md) · [overlays](reference/overlays.md) · [backends](reference/backends.md) · [provenance](reference/provenance.md) · [repository layout](reference/repository-layout.md)
 
 **Explanation** — understand the design:
-[why DC Enclave](explanation/why-dce.md) · [design principles](explanation/design-principles.md) · [isolation & security](explanation/isolation-and-security.md) · [overlay model](explanation/overlay-model.md)
+[why DC Enclave](explanation/why-dce.md) · [design principles](explanation/design-principles.md) · [isolation and security](explanation/isolation-and-security.md) · [overlay model](explanation/overlay-model.md)
 
 Also: [troubleshooting](troubleshooting.md) · [running the test suite](maintaining.md) (for contributors).

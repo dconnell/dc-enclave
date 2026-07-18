@@ -36,7 +36,7 @@ dce stop myapp-monorepo
 
 For docker/orbstack/colima/podman backends:
 
-> **Attach, don't reopen.** `dce new` created and started your container — that is the container `dce shell` and `dce editor` use. To edit inside it, run `dce editor <project>` (or manually use **Dev Containers: Attach to Running Container...**). **Reopen in Container** (the popup shown when you open the folder) instead builds a *separate* editor container (`vsc-*`) that `dce` does not manage and that won't share runtime state with `dce shell`. See [VS Code behavior](../reference/backends.md#vs-code-behavior-by-backend).
+> **Attach, don't reopen.** `dce new` created and started your container — that's the one `dce shell` and `dce editor` use. To edit inside it, run `dce editor <project>` (or **Dev Containers: Attach to Running Container...**). **Reopen in Container** (the popup shown when you open the folder) instead builds a *separate* editor container (`vsc-*`) that `dce` does not manage. See [VS Code behavior](../reference/backends.md#vs-code-behavior-by-backend) for the full picture.
 
 1. Launch your editor attached to the running container:
 

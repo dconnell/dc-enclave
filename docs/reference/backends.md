@@ -49,20 +49,12 @@ supported on the docker-family backends (docker/orbstack/colima) and
 | apple | **no** — fails fast (use [`--hide`](../how-to/hide-generated-paths.md)) | — |
 
 On a native Linux host with no VM, bind mounts are already native-speed, so
-`--sync` there is pure overhead — it is a VM-backend feature.
+`--sync` there brings no benefit — it is a VM-backend feature.
 
 
 ### Platform-specific notes
 
-**macOS + Colima**: Install with `brew install colima docker`, then run `colima start --runtime docker`. Colima usually auto-activates its Docker context; if needed, run `docker context use colima`.
-
-**Linux + Colima**: Install Colima and Docker CLI, then run `colima start --runtime docker`. Ensure virtualization support is available (for example KVM access where required by your distro setup).
-
-**macOS + Podman**: Podman runs in a VM on macOS. Run `podman machine start` before using DC Enclave, or let `setup.sh` start it for you.
-
-**Linux + Podman**: Podman runs rootless with no daemon. Works out of the box on most distros (`apt install podman`, `dnf install podman`).
-
-**WSL2**: Docker Desktop's WSL2 integration makes `docker` available inside WSL2 (and bundles the `buildx` plugin dce needs). Podman can be installed natively inside WSL2 (`apt install podman`). If you instead use Ubuntu's `docker.io` package directly inside WSL2, also install the `buildx` plugin — dce builds with BuildKit (`DOCKER_BUILDKIT=1`) and `docker.io` ships no buildx (`sudo apt-get install docker-buildx-plugin` from Docker's apt repo, or download from <https://github.com/docker/buildx/releases>). For best bind-mount performance, keep repos inside the WSL2 filesystem (`${DC_REPOS_DIR:-$HOME/repos}/`) rather than on the Windows mount (`/mnt/c/`).
+For per-platform install commands (Docker Desktop, OrbStack, Colima on macOS/Linux, Podman on macOS/Linux/WSL2, WSL2 buildx plugin), see [install a container backend](../how-to/install-backends.md).
 
 
 ## VS Code behavior by backend
