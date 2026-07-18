@@ -33,6 +33,12 @@ declare -gr _DC_COMMON_SYNC_SH_LOADED=1
 # Overridable for tests / slow hosts.
 : "${DC_SYNC_FLUSH_TIMEOUT:=120}"
 
+# Entry-wait settle budget for `dce shell` / `dce editor` on synced projects.
+# Larger than the rebuild pre-destroy flush budget because entry can legitimately
+# need more after a long stop or a large host-side git pull. Overridable for
+# tests / slow hosts. See dce_sync_wait_until_settled.
+: "${DCE_SYNC_ENTRY_WAIT_TIMEOUT:=600}"
+
 # Build the deterministic managed-volume name for a project's synced workspace.
 #
 # Format: dce-sync-<project-slug>-<12hex>. One workspace per project, derived
@@ -339,4 +345,209 @@ dce_sync_health() {
   fi
 
   printf 'healthy'
+}
+
+# Print one concise, human-facing sync-state line for a project's session, for
+# the `dce shell` / `dce editor` entry banners. Unlike the one-word
+# dce_sync_health gate (stable vocabulary for `dce doctor`), this is display
+# prose and distinguishes "up to date" from "reconciling".
+#
+# Classification is grep-based over `mutagen sync list` output (same stance as
+# dce_sync_health): robust to minor textual drift across Mutagen releases, at
+# the cost of a slightly conservative "reconciling" if a transitional verb
+# happens to appear in a settled report. The authoritative settle signal used
+# by the entry wait is `mutagen sync flush`, not this line.
+#
+# Output (single line):
+#   Sync: up to date
+#   Sync: reconciling…
+#   Sync: paused (conflict) — run: mutagen sync resolve
+#   Sync: no session — run: dce rebuild-container <project>
+#   Sync: mutagen not on PATH
+dce_sync_short_status() {  # <project>
+  local project="$1"
+
+  if ! dce_mutagen_present; then
+    printf 'Sync: mutagen not on PATH\n'
+    return 0
+  fi
+
+  local session=""
+  session="$(dce_sync_session_name "$project")"
+  local out=""
+  if ! out="$(mutagen sync list "$session" 2>/dev/null)" || [[ -z "$out" ]]; then
+    printf 'Sync: no session — run: dce rebuild-container %s\n' "$project"
+    return 0
+  fi
+
+  # Conflict halts the whole session (same detection as dce_sync_health).
+  if printf '%s' "$out" | grep -Eqi 'conflict|halted|paused'; then
+    printf 'Sync: paused (conflict) — run: mutagen sync resolve\n'
+    return 0
+  fi
+
+  # Transitional verbs indicate active reconciliation; absence -> settled.
+  if printf '%s' "$out" | grep -Eqi 'staging|scanning|synchronizing|connecting'; then
+    printf 'Sync: reconciling…\n'
+    return 0
+  fi
+
+  printf 'Sync: up to date\n'
+}
+
+# Extract the lowercase Mutagen status phase from a `mutagen sync list` report
+# (e.g. "watching for changes", "applying changes", "scanning files"). Empty if
+# no Status line is present. Pure: no I/O. Used by the live progress display.
+_dce_sync_parse_phase() {  # <report-text>
+  local line
+  line="$(printf '%s' "$1" | grep -E '^[[:space:]]*Status:' | head -n1 || true)"
+  [[ -z "$line" ]] && return 0
+  line="${line#*:}"                        # drop "Status:" prefix
+  line="${line#"${line%%[![:space:]]*}"}"  # ltrim
+  line="${line%"${line##*[![:space:]]}"}"  # rtrim
+  printf '%s' "${line,,}"                  # bash 4+ lowercase
+}
+
+# Extract "<alpha_files> <beta_files>" from a `mutagen sync list` report — the
+# two "N files (SIZE)" lines under the Alpha and Beta "Synchronizable contents"
+# blocks. Empty when those blocks are absent (the very first scan, before
+# scanning completes). The beta/alpha ratio is the mutagen-native progress
+# signal; it is ignore-path-aware (mutagen counts only what it manages, so
+# --sync-ignore paths do not skew it). Pure: no I/O.
+_dce_sync_parse_counts() {  # <report-text>
+  printf '%s' "$1" | awk '
+    /^[[:space:]]*Alpha:/ { in_a=1; in_b=0; next }
+    /^[[:space:]]*Beta:/  { in_a=0; in_b=1; next }
+    /^[[:space:]]*Status:/{ exit }
+    in_a && /[[:space:]]files \(/ { a=$1 }
+    in_b && /[[:space:]]files \(/ { b=$1 }
+    END { if (a!="" && b!="") printf "%s %s\n", a, b }
+  '
+}
+
+# Live, single-line progress display for the settle wait. Polls `mutagen sync
+# list` once per second and refreshes (via carriage-return) a line showing the
+# current phase, elapsed seconds, and the TOTAL file count mutagen is managing
+# (the alpha "Synchronizable contents" count -- the scale of the sync target).
+#
+# Why not show files-synced-so-far / remaining: mutagen stages to a side
+# directory and applies atomically, so the beta live-tree count stays at its
+# PREVIOUS value through the entire staging/applying phase, then jumps to full
+# at the apply. Showing it would look stuck at 0 (or at the prior total) for
+# the whole wait -- misleading. The phase transitions (scanning -> staging ->
+# applying -> watching) plus the ticking elapsed seconds are the honest
+# progress signal; the total file count gives the scale. Designed to run in a
+# BACKGROUND subshell alongside the blocking `mutagen sync flush`; the caller
+# kills it when flush returns. TTY-only by construction.
+_dce_sync_progress_loop() {  # <session>
+  local session="$1"
+  local start=$SECONDS
+  local out phase counts af elapsed line
+  while true; do
+    out="$(mutagen sync list "$session" 2>/dev/null || true)"
+    phase="$(_dce_sync_parse_phase "$out")"
+    counts="$(_dce_sync_parse_counts "$out")"
+    elapsed=$((SECONDS - start))
+    # counts = "<alpha_files> <beta_files>"; only alpha (the total) is shown.
+    af="${counts%% *}"
+    if [[ "$af" =~ ^[0-9]+$ && "$af" -gt 0 ]]; then
+      line="$(printf "  Sync: %s \xc2\xb7 %ds \xc2\xb7 %'d files" \
+        "${phase:-working}" "$elapsed" "$af")"
+    else
+      line="$(printf "  Sync: %s \xc2\xb7 %ds" "${phase:-starting\xe2\x80\xa6}" "$elapsed")"
+    fi
+    printf '\033[2K%s\r' "$line" >&2
+    sleep 1
+  done
+}
+
+# Soft-failing entry-wait helper for `dce shell` / `dce editor`: block on a
+# `mutagen sync flush` until the project's session is reconciled, so the user
+# does not land in a half-synced /workspace. ALWAYS returns 0 — every non-ready
+# condition warns (to stderr) and proceeds — so callers under `set -e` never
+# abort and the user is never locked out of their own container.
+#
+# The wait is naturally interruptible: Ctrl-C during the flush kills it,
+# dce_run_with_timeout returns non-zero, and we warn + proceed (no INT trap,
+# which would risk interfering with the caller's signal handling).
+#
+# Expects the caller's project config to be loaded (CONTAINER_SYNC is read to
+# gate; non-synced projects are a no-op). The caller gates the call on
+# --no-wait / DCE_SYNC_NO_WAIT=1 separately.
+dce_sync_wait_until_settled() {  # <project>
+  local project="$1"
+
+  # Non-synced project: nothing to wait for (caller usually gates too).
+  if [[ "${CONTAINER_SYNC:-0}" != "1" ]]; then
+    return 0
+  fi
+
+  if ! dce_mutagen_present; then
+    dce_warn "sync: mutagen CLI not found; skipping settle wait."
+    return 0
+  fi
+
+  if ! dce_sync_session_exists "$project"; then
+    dce_warn "sync: no Mutagen session for '$project'; skipping settle wait (run: dce rebuild-container $project)."
+    return 0
+  fi
+
+  # Always resume before waiting: start.sh only resumes when it actually starts
+  # a stopped container, so a running container after a host reboot / session
+  # disconnect would otherwise sit un-resumed. Idempotent + soft-failing.
+  dce_sync_resume "$project"
+
+  local health=""
+  health="$(dce_sync_health "$project")"
+  case "$health" in
+    healthy) : ;;
+    paused)
+      dce_warn "sync: session paused (likely a conflict); skipping settle wait. Run: mutagen sync resolve"
+      return 0
+      ;;
+    *)
+      dce_warn "sync: session not healthy ($health); skipping settle wait."
+      return 0
+      ;;
+  esac
+
+  local session=""
+  session="$(dce_sync_session_name "$project")"
+
+  local _wait_start=$SECONDS
+  local _progress_pid=""
+  local _flush_rc=0
+
+  # Live progress on a TTY (carriage-return single-line refresh): phase +
+  # elapsed + beta/alpha files with files-remaining. Off-TTY emits one static
+  # line so pipes/CI are not polluted with escape codes.
+  if [[ -t 2 ]]; then
+    _dce_sync_progress_loop "$session" &
+    _progress_pid=$!
+  else
+    printf '  Waiting for sync to settle…\n' >&2
+  fi
+
+  # flush is the authoritative settle signal; bounded by the entry timeout. It
+  # runs in the FOREGROUND while the progress loop refreshes in the background.
+  if ! dce_run_with_timeout "${DCE_SYNC_ENTRY_WAIT_TIMEOUT}" mutagen sync flush "$session" >/dev/null 2>&1; then
+    _flush_rc=$?
+  fi
+
+  # Stop the progress loop (if running) and settle the display line.
+  if [[ -n "$_progress_pid" ]]; then
+    kill "$_progress_pid" 2>/dev/null || true
+    wait "$_progress_pid" 2>/dev/null || true
+    local _elapsed=$((SECONDS - _wait_start))
+    printf '\033[2K' >&2  # clear the in-place progress line
+    if [[ $_flush_rc -ne 0 ]]; then
+      dce_warn "sync: still reconciling in the background (host remains canonical); run: dce sync-status $project"
+    elif [[ $_elapsed -ge 2 ]]; then
+      printf '  Sync: settled in %ds\n' "$_elapsed" >&2
+    fi
+  elif [[ $_flush_rc -ne 0 ]]; then
+    dce_warn "sync: still reconciling in the background (host remains canonical); run: dce sync-status $project"
+  fi
+
+  return 0
 }

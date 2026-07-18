@@ -183,6 +183,13 @@ _it_sync_lifecycle() {  # <backend> <case_id>
   grep -Fqi 'Sync session healthy' <<<"$out" \
     || { it_case_fail "doctor did not report sync session healthy: $out"; return 1; }
 
+  # dce sync-status --once returns a one-shot snapshot against the live session.
+  # (The default live monitor would stream forever; --once is the testable form.)
+  out="$(it_dce_capture "$b" "$c" sync-status "$p" --once 2>&1)" && rc=0 || rc=$?
+  [[ $rc -eq 0 ]] || { it_case_fail "dce sync-status --once exited $rc: $out"; return 1; }
+  grep -Fqi 'Session:' <<<"$out" \
+    || { it_case_fail "dce sync-status --once did not surface the session: $out"; return 1; }
+
   # Explicit rm: session terminated + sync volume removed. The harness per-case
   # rm is an idempotent no-op after this (project already gone).
   if ! it_dce "$b" "$c" rm "$p" --yes >/dev/null; then

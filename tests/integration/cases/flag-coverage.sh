@@ -34,10 +34,14 @@ pass() { echo "PASS: $*"; }
 mapfile -t documented < <(grep -oE -- '--[a-z][a-z0-9-]+' "$FLAGS_MD" | sort -u)
 [[ ${#documented[@]} -gt 0 ]] || fail "no flags parsed from $FLAGS_MD"
 
-# Phase-2 carve-out: documented but intentionally not exercised yet.
+# Phase-2 carve-out: documented but intentionally not exercised in THIS tier.
+# Each is covered elsewhere (contract tier, which this guard does not scan, or
+# deferred to phase 2). Kept as an allowlist with a reason rather than silent.
 declare -A allow=(
   [--save-team]="deferred to phase 2 (DCE_CONFIG_ROOT isolation)"
   [--save-user]="deferred to phase 2 (DCE_CONFIG_ROOT isolation)"
+  [--editor]="covered in tests/contract/editor.sh (contract tier)"
+  [--inject-creds]="covered in tests/contract/ rebuild cases (contract tier)"
 )
 
 # Every long-flag token referenced by the matrix OR a case file (code+comments).
