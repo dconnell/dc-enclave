@@ -8,14 +8,33 @@ dce doctor colima       # one backend
 dce doctor myapp        # one project + its backend
 ```
 
-Bash version too old — macOS ships bash 3.2 by default; Linux and WSL2 distros already ship bash 4+:
+## Symptom quick-reference
+
+| Symptom | Section |
+|---|---|
+| `dce` command not found after setup | [Bash version too old](#bash-version-too-old) |
+| Image build fails with "buildx component is missing" | [BuildKit and buildx plugin missing](#buildkit-and-buildx-plugin-missing) |
+| "No backend detected" | [No backend detected](#no-backend-detected) |
+| Need to force a specific backend | [Forcing a specific backend](#forcing-a-specific-backend) |
+| Colima context or runtime errors | [Colima backend issues](#colima-backend-issues) |
+| `devcontainer.json` not updated after a `dce new`/`rebuild` | [`devcontainer.json` or `settings.json` not overwritten](#devcontainerjson-or-settingsjson-not-overwritten) |
+| Port or memory change didn't take effect | [Changed ports or resource limits](#changed-ports-or-resource-limits) |
+| `git pull` / SSH fails inside the container | [SSH auth issues](#ssh-auth-issues) |
+| Podman won't start on macOS | [Podman on macOS not starting](#podman-on-macos-not-starting) |
+| `--sync` workspace problems | [Synced workspace (`--sync`)](#synced-workspace---sync) |
+
+## Bash version too old
+
+macOS ships bash 3.2 by default; Linux and WSL2 distros already ship bash 4+:
 
 ```
 bash --version
 brew install bash          # macOS
 ```
 
-Image build fails with "BuildKit is enabled but the buildx component is missing" — dce builds images with BuildKit (its Containerfiles use multi-line heredoc `RUN`s the legacy builder drops), and BuildKit needs the `buildx` plugin. `buildx` ships with Docker Desktop and Docker CE but **not** with Ubuntu's `docker.io` (common on WSL2):
+## BuildKit and buildx plugin missing
+
+dce builds images with BuildKit (its Containerfiles use multi-line heredoc `RUN`s the legacy builder drops), and BuildKit needs the `buildx` plugin. `buildx` ships with Docker Desktop and Docker CE but **not** with Ubuntu's `docker.io` (common on WSL2):
 
 ```
 docker buildx version                       # verify the plugin
@@ -24,12 +43,12 @@ sudo apt-get install docker-buildx-plugin   # Docker apt repo (Linux/WSL2)
 
 `docker-buildx-plugin` lives in Docker's official apt repo, not Ubuntu's — add that repo first, or download the binary from <https://github.com/docker/buildx/releases> into `/usr/libexec/docker/cli-plugins/buildx`. `scripts/setup.sh` and `dce doctor` both check for buildx and print this hint.
 
-No backend detected:
+## No backend detected
 
 - install apple/container, Docker Desktop, OrbStack, Colima, or Podman
 - rerun scripts/setup.sh
 
-Need specific backend:
+## Forcing a specific backend
 
 ```
 CONTAINER_BACKEND=apple scripts/setup.sh
@@ -37,7 +56,7 @@ CONTAINER_BACKEND=colima scripts/setup.sh
 CONTAINER_BACKEND=podman dce new myapp nodejs 3000:3000
 ```
 
-Colima backend issues:
+## Colima backend issues
 
 ```
 # start Colima with the required runtime
@@ -50,7 +69,7 @@ docker context use colima
 colima status
 ```
 
-devcontainer.json or settings.json not overwritten:
+## `devcontainer.json` or `settings.json` not overwritten
 
 - expected behavior to avoid clobbering local config
 - on Docker-compatible projects, `dce new` / `dce rebuild-container` print a
@@ -62,23 +81,25 @@ dce config sync-vscode <name>
 dce config sync-vscode <name> --dry-run   # preview only
 ```
 
-Changed ports or resource limits:
+## Changed ports or resource limits
 
 - update ~/.config/dce-enclave/<name>/config
 - run dce rebuild-container <name>
 
-SSH auth issues:
+## SSH auth issues
 
 - verify ~/.config/dce-enclave/<name>/ssh_key and the git-host token file (github-token / gitlab-token)
 - restart with dce start or recreate with dce rebuild-container
 
-Podman on macOS not starting:
+## Podman on macOS not starting
 
 ```
 podman machine start
 ```
 
-Synced workspace (`--sync`) issues — see [sync workspace](how-to/sync-workspace.md):
+## Synced workspace (`--sync`)
+
+See [sync workspace](how-to/sync-workspace.md) for the full guide.
 
 - **Mutagen not installed:** `--sync` requires the `mutagen` CLI on the host. dce fails fast with a per-platform install hint (macOS: `brew install mutagen-io/mutagen/mutagen`; Linux: install the release binary). dce never installs it for you.
 - **Initial sync is slow:** the first `dce new --sync` does a full host→volume copy (minus `--sync-ignore` paths). For a large Nx monorepo this is minutes, not seconds — it is not hung. Progress is shown.

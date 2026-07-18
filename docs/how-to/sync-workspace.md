@@ -2,15 +2,16 @@
 
 By default the entire workspace is a **bind mount**: `/workspace` inside the
 container is a live view of the host repos directory. That keeps exactly one
-copy of the source — on the host — and is the simple, happy path.
+copy of the source — on the host — and is the default you should start with.
 
 On VM-backed backends (Docker Desktop, OrbStack, Colima, Podman Machine on
 macOS/WSL2) that bind mount crosses the VM boundary through VirtioFS. Every
 per-file syscall (`stat`, `open`, `read`, file-watch event) is a host↔VM round
 trip. For large repos with heavy small-file workloads (Nx/Vite, module
 federation, big `git status` walks) this can make the container feel unusable
-even though the same checkout is fast on the host. There is no faster bind mount
-to switch to — VirtioFS through any Mac VM is already the ceiling.
+even though the same checkout is fast on the host. VirtioFS through any Mac VM
+is already the fastest bind mount available — there is no faster one to switch
+to.
 
 `--sync` is the escalation path. It **replaces** the `/workspace` bind mount with
 a Mutagen-synced named volume (`dce-sync-<slug>-<12hex>`) mounted at the **same
@@ -32,7 +33,7 @@ canonical; Mutagen reconciles changes both ways.
   itself* is still the bottleneck.
 
 On a **native Linux host** (no VM) bind mounts are already native-speed, so
-`--sync` there is pure overhead — don't use it. `--sync` is a VM-backend feature.
+`--sync` there brings no benefit — don't use it. `--sync` is a VM-backend feature.
 
 ## The model (read this first)
 
@@ -43,7 +44,7 @@ On a **native Linux host** (no VM) bind mounts are already native-speed, so
   container-side edits on the next rebuild.
 - **`/workspace` does not move.** The sync volume is mounted at `/workspace` —
   the same path the bind mount uses. No tooling, editor target, or doc path
-  changes; only *what backs* `/workspace` changes.
+  changes; only the storage backing `/workspace` changes.
 - **Rebuild stays data-loss-free.** The sync volume is preserved across rebuild
   (never in the clean-slate removal path) and a `mutagen sync flush` drains
   pending container→host changes before the container is destroyed, so no
@@ -170,7 +171,7 @@ Mutagen phase, elapsed seconds, and the total file count being synced — e.g.
 (scanning → staging → applying → watching) plus the ticking seconds are the
 progress signal; the file count gives the scale. (Mutagen stages to a side
 directory and applies atomically, so a per-file countdown is not meaningful
-during staging — the phase is the honest indicator there.) The wait is bounded
+during staging — watch the phase instead.) The wait is bounded
 by `DCE_SYNC_ENTRY_WAIT_TIMEOUT` (default 600s) and is always interruptible
 with Ctrl-C. Disable it with `--no-wait` or `DCE_SYNC_NO_WAIT=1`:
 

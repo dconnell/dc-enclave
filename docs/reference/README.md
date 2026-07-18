@@ -2,6 +2,7 @@
 
 Factual lookup — skim when you need a specific detail.
 
+- [Concepts and glossary](concepts.md) — short definitions for the terms used across these docs.
 - [Command reference](commands.md) — every `dce` subcommand.
 - [Flag reference](flags.md) — every flag and argument each command accepts.
 - [Configuration](configuration.md) — global config, roots, and container recipes.

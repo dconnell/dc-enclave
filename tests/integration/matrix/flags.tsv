@@ -26,6 +26,8 @@ new-hide	all	new	$PROJECT --hide node_modules	0
 new-ports	all	new	$PROJECT 3000:3000	0	
 new-cpus-memory	all	new	$PROJECT --cpus 2 --memory 512m	0	
 new-hide-ports	all	new	$PROJECT --hide node_modules 3000:3000	0	
+new-git-host-github	all	new	$PROJECT --git-host github	0	
+new-git-host-gitlab	all	new	$PROJECT --git-host gitlab	0	
 
 # --- dce new --sync / --sync-ignore (fail-fast paths; positive path needs
 #     mutagen and is covered by tests/contract/sync-lifecycle.sh) ---

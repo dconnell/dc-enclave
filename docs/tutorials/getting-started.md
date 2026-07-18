@@ -33,6 +33,8 @@ macOS users: if version is 3.x, run `brew install bash`. Linux and WSL2 distros 
 - Colima (macOS, Linux), or
 - Podman (macOS, Linux, WSL2)
 
+For per-platform install commands, see [install a container backend](../how-to/install-backends.md).
+
 3. Ensure the `buildx` plugin is available (docker-compatible backends only — Podman uses its own builder):
 
 ```
@@ -47,10 +49,11 @@ sudo apt-get install docker-buildx-plugin   # Docker apt repo (Linux/WSL2)
 
 `docker-buildx-plugin` is in Docker's official apt repo (not Ubuntu's) — add that repo first, or download the binary from <https://github.com/docker/buildx/releases>. `scripts/setup.sh` checks for it and prints this hint if it's missing.
 
-4. Initialize repository and aliases:
+4. Clone the repo and initialize aliases:
 
 ```
-cd ~/dce-enclave
+git clone https://github.com/dconnell/dc-enclave.git ~/dc-enclave
+cd ~/dc-enclave
 chmod +x scripts/*.sh scripts/dce
 scripts/setup.sh
 ```
@@ -72,14 +75,7 @@ CONTAINER_BACKEND=colima scripts/setup.sh
 
 ### Shell completion
 
-`setup.sh` wires tab completion for `dce` into whichever shell your `$SHELL` points at:
-
-- **zsh** — setup defines `dce` as a shell function (`dce() { '<repo>/scripts/dce' "$@"; }`) and removes the legacy managed alias line, so `dce` cannot be shadowed by another PATH command. Native completion (`scripts/_dce`, a real `#compdef dce` function) is autoloaded by adding `scripts/` to `fpath` and bound to `dce` with `compdef _dce dce`.
-- **bash** — `scripts/dce-complete.bash` is sourced. Setup writes to `~/.bash_profile` on macOS or `~/.bashrc` elsewhere.
-
-Both front-ends share one discovery layer (`lib/complete-data.sh`), including the hardened global-config parser, so project/scope lists and security guarantees are identical across shells. If you previously bridged the bash completion into zsh by hand, re-running `setup.sh` removes that stale line in favor of native zsh completion.
-
-Completion covers each command's real argument grammar, e.g. `dce start`/`dce stop` complete multiple project names (excluding ones already typed), `dce rebuild-container` offers `--rotate-keys`/`--keep-hidden-volumes`/`--yes`, and `dce install` completes a dotfiles directory after the project.
+`setup.sh` wires tab completion for `dce` into whichever shell your `$SHELL` points at (zsh or bash). Completion covers each command's real argument grammar — project/scope names, flags (`--rotate-keys`, `--keep-hidden-volumes`, `--yes`, …), and a dotfiles directory after `dce install <project>`. If completion isn't picked up after setup, open a fresh shell or run `source ~/.zshrc` / `source ~/.bashrc`.
 
 
 ## Set up a project

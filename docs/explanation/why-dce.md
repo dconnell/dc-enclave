@@ -8,14 +8,14 @@ Every developer now runs tools that touch their whole repo — AI agents in VS C
 - **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it. Link them only when you mean to.
 - **A bad session is one command to undo.** `dce rebuild-container <name>` destroys the container filesystem and recreates it from a known-good image. No snapshots to manage, no manual cleanup, no digging through `git reflog`.
 - **Trust is pinned, not learned on first use.** GitHub's SSH host keys are baked into the base image and verified by a guard test, so a hijacked network can't silently redirect git traffic.
-- **Your checkout survives every rebuild.** Your repo lives on the host and bind-mounts in read-write; destroying the container leaves your checkout exactly where it was. The opt-in [`--sync`](../how-to/sync-workspace.md) workspace preserves this property *by design* (host stays canonical + a flush drains pending changes before destroy), not by accident — even though the in-container source then lives in a synced volume.
+- **Your checkout survives every rebuild.** Your repo lives on the host and bind-mounts in read-write; destroying the container leaves your checkout exactly where it was. The opt-in [`--sync`](../how-to/sync-workspace.md) workspace keeps this property: the host stays canonical, and a flush drains pending changes before destroy — even though the in-container source then lives in a synced volume.
 
 The container is the undo button. Rebuild it and you're back to a known-good state in under a minute.
 
 
 ## Versus raw Docker, Podman, or apple/container
 
-If you are already comfortable with Docker, Podman, or apple/container CLIs, `dce` still saves work by orchestrating repetitive setup and recovery steps consistently across projects and machines.
+If you already know your way around Docker, Podman, or apple/container, `dce` still earns its keep. It orchestrates the repetitive setup and recovery steps you'd otherwise retype per project, and keeps them consistent across machines and backends.
 
 What `dce` adds beyond raw backend commands:
 
