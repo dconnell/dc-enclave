@@ -37,6 +37,15 @@ new-sync-apple-reject	apple	new	$PROJECT --sync	1	apple/container
 logs-tail	all	logs	$PROJECT --tail 5	0	
 logs-tail-eq	all	logs	$PROJECT --tail=5	0	
 
+# --- dce shell --no-wait (non-interactive via a command so it does not hang;
+#     --no-wait is accepted and a no-op on a non-synced project) ---
+shell-no-wait-cmd	all	shell	--no-wait $PROJECT true	0	
+
+# --- dce sync-status (matrix projects are non-synced -> fails fast pointing at
+#     --sync; also represents the --once flag for coverage). The live/one-shot
+#     happy paths on a real synced project live in cases/sync.sh) ---
+sync-status-nosync	all	sync-status	$PROJECT --once	1	--sync
+
 # --- dce exec (--root MUST precede the project name: dce exec [--root] <name> <cmd>) ---
 exec-default	all	exec	$PROJECT id	0	
 exec-root	all	exec	--root $PROJECT id	0	uid=0

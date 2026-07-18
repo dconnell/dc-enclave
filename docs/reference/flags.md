@@ -133,6 +133,29 @@ Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never 
 |---|---|
 | `[backend\|project]` | A backend name (`apple`, `docker`, `orbstack`, `colima`, `podman`) selects that backend; any other name is treated as a project. Omit for all detected backends + host checks. |
 
+## `dce shell` — open a shell / run a command in a project
+
+| Flag / arg | Description |
+|---|---|
+| `<name>` *(required)* | Project/container name. |
+| `[command]` | Optional command to run non-interactively (`zsh -ic`) instead of opening an interactive shell. If it begins with `-`, separate it with `--`. |
+| `--no-wait` | (Synced workspaces only) Skip the Mutagen sync settle wait before the interactive shell. The sync state line still prints. Equivalent to `DCE_SYNC_NO_WAIT=1`. Non-interactive commands never wait. |
+
+## `dce editor` — launch an editor attached to the container
+
+| Flag / arg | Description |
+|---|---|
+| `<name>` *(required)* | Project/container name. |
+| `--editor <id>` | Override the resolved editor for this invocation only. Known ids: `vscode`, `vscode-insiders`. |
+| `--no-wait` | (Synced workspaces only) Skip the Mutagen sync settle wait before launching the editor. Equivalent to `DCE_SYNC_NO_WAIT=1`. |
+
+## `dce sync-status` — show Mutagen sync state (synced workspaces)
+
+| Flag / arg | Description |
+|---|---|
+| `<name>` *(required)* | Project/container name. Must be a synced (`--sync`) workspace. |
+| `--once`, `-1` | Print a one-shot snapshot (`mutagen sync list`) and exit. Default is a live stream (`mutagen sync monitor`) until interrupted. |
+
 ## Commands with no flags
 
 These take only positional arguments (or none):
@@ -149,3 +172,6 @@ These take only positional arguments (or none):
 | `CONTAINER_BACKEND` | Force a backend (`apple`, `colima`, `docker`, `orbstack`, `podman`) instead of auto-detection. See [backends](backends.md). |
 | `DC_REPOS_DIR` | Override the host repos root (default `~/repos`). |
 | `DC_TEAM_DIR` / `DC_USER_DIR` | Team and user overlay/recipe roots, set by `setup.sh` in `~/.config/dce-enclave/config`. |
+| `DC_SYNC_FLUSH_TIMEOUT` | Seconds a rebuild's pre-destroy `mutagen sync flush` may block (default `120`). |
+| `DCE_SYNC_NO_WAIT` | Set to `1` to skip the Mutagen sync settle wait on `dce shell` / `dce editor` entry (synced workspaces only). |
+| `DCE_SYNC_ENTRY_WAIT_TIMEOUT` | Seconds the entry settle wait may block (default `600`). Distinct from the rebuild flush budget. See [sync workspace](../how-to/sync-workspace.md). |

@@ -7,8 +7,27 @@
 # =============================================================================
 set -euo pipefail
 
-PROJECT="${1:?Usage: shell.sh <project-name> [command]}"
+# `dce shell [--no-wait] <project-name> [command]`. Parse the optional
+# --no-wait flag BEFORE the project positional (it is not a command token);
+# the first non-flag token is the project, everything after it is the command.
+# `dce shell <name> -- <cmd>` is honored so a command beginning with '-' is not
+# mistaken for a dce flag (the '--' itself is dropped from the command).
+NO_WAIT=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-wait)
+      NO_WAIT=true
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+PROJECT="${1:?Usage: shell.sh [--no-wait] <project-name> [command]}"
 shift
+[[ "${1:-}" == "--" ]] && shift
 
 HAS_COMMAND=false
 COMMAND=""
@@ -58,6 +77,7 @@ echo "  Entering container: $PROJECT"
 echo "  Backend: $ACTIVE_BACKEND"
 if [[ "${CONTAINER_SYNC:-0}" == "1" ]]; then
   echo "  Workspace: /workspace (synced via mutagen — host canonical: $REPOS_DIR)"
+  dce_sync_short_status "$PROJECT" | sed 's/^/  /'
 else
   echo "  Workspace: /workspace (-> $REPOS_DIR on host)"
 fi
@@ -67,6 +87,15 @@ else
   echo "  ${ENV_VAR}: NOT SET (edit ${TOKEN_FILE:-token file})"
 fi
 echo ""
+
+# Synced workspace: wait for the Mutagen session to settle before entering, so
+# the user does not land in a half-synced /workspace. Interactive path only
+# (HAS_COMMAND runs a one-shot and must not block); --no-wait / DCE_SYNC_NO_WAIT
+# opt out. Soft-failing (never aborts entry); runs before token temp-file setup.
+if [[ "${CONTAINER_SYNC:-0}" == "1" ]] && ! $HAS_COMMAND \
+   && ! $NO_WAIT && [[ "${DCE_SYNC_NO_WAIT:-0}" != "1" ]]; then
+  dce_sync_wait_until_settled "$PROJECT"
+fi
 
 # Ensure git auth is wired in the container (HTTPS+PAT or SSH insteadOf), so a
 # `dce shell` into an already-running container also repairs auth -- not just

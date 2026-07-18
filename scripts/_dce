@@ -88,13 +88,24 @@ _dce_dispatch() {
       _arguments '*:project: _dce_projects $words[2,CURRENT-1]'
       ;;
     shell)
-      # One project, then a free-form command (no completion past it).
-      _arguments '1:project:_dce_projects_simple'
+      # [--no-wait] then one project, then a free-form command (no completion
+      # past it). --no-wait is offered only pre-project via the optional spec.
+      _arguments \
+        '--no-wait[skip the sync settle wait]' \
+        '1:project:_dce_projects_simple'
+      ;;
+    sync-status)
+      # [--once] one project. --once may precede or follow the project.
+      _arguments \
+        '--once[one-shot status snapshot]' \
+        '-1[one-shot status snapshot]' \
+        '1:project:_dce_projects_simple'
       ;;
     editor)
-      # Optional --editor <id>, then one project.
+      # Optional --editor <id> and/or --no-wait, then one project.
       _arguments \
         '--editor+[editor id]:editor id:_dce_editor_ids' \
+        '--no-wait[skip the sync settle wait]' \
         '1:project:_dce_projects_simple'
       ;;
     logs)

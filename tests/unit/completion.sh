@@ -74,7 +74,7 @@ scopes_out="$(dce_complete_scopes | sort)"
 pass "scopes dedup + membership"
 
 subs="$(dce_complete_subcommands | sort)"
-for c in new start stop status s list ls shell logs editor extensions exec restart rm \
+for c in new start stop status s list ls shell logs editor sync-status extensions exec restart rm \
          rebuild-container rebuild-image snapshot snapshots provenance clean config network net doctor install rotate-token version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
@@ -159,15 +159,24 @@ drive 3 dce start alpha "";            assert_reply "start alpha <TAB>" beta gam
 drive 4 dce start alpha beta "";       assert_reply "start alpha beta <TAB>" gamma
 drive 5 dce stop alpha beta gamma "";  assert_empty   "stop all three <TAB>"
 
-# shell takes exactly one project; nothing past it.
-drive 2 dce shell "";       assert_reply "shell <TAB>" alpha beta gamma
+# shell: [--no-wait] one project, then free-form command (nothing past project).
+drive 2 dce shell "";       assert_reply "shell <TAB>" --no-wait alpha beta gamma
 drive 3 dce shell alpha ""; assert_empty   "shell alpha <TAB>"
+drive 3 dce shell --no-wait ""; assert_reply "shell --no-wait <TAB>" --no-wait alpha beta gamma
+drive 4 dce shell --no-wait alpha ""; assert_empty "shell --no-wait alpha <TAB> (command region)"
 
-# editor: optional --editor <id>, then one project.
-drive 2 dce editor "";              assert_reply "editor <TAB>" --editor alpha beta gamma
+# sync-status: [--once|-1] one project.
+drive 2 dce sync-status ""; assert_reply "sync-status <TAB>" --once -1 alpha beta gamma
+drive 3 dce sync-status alpha ""; assert_reply "sync-status alpha <TAB>" --once -1
+drive 3 dce sync-status --once ""; assert_reply "sync-status --once <TAB>" --once -1 alpha beta gamma
+
+# editor: optional --editor <id> and/or --no-wait, then one project.
+drive 2 dce editor "";              assert_reply "editor <TAB>" --editor --no-wait alpha beta gamma
 drive 3 dce editor alpha "";        assert_empty   "editor alpha <TAB> (nothing past project)"
 drive 3 dce editor --editor "";     assert_reply "editor --editor <TAB>" vscode vscode-insiders
-drive 4 dce editor --editor vscode ""; assert_reply "editor --editor vscode <TAB>" alpha beta gamma
+drive 4 dce editor --editor vscode ""; assert_reply "editor --editor vscode <TAB>" --editor --no-wait alpha beta gamma
+drive 3 dce editor --no-wait "";    assert_reply "editor --no-wait <TAB>" --editor --no-wait alpha beta gamma
+drive 4 dce editor --no-wait alpha ""; assert_empty "editor --no-wait alpha <TAB> (nothing past project)"
 
 # extensions: subactions at slot 2; project + flags after.
 drive 2 dce extensions ""; assert_reply "extensions <TAB>" \
@@ -456,7 +465,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dce_subcommands
-    local want="--help --version -h -v clean config doctor editor exec extensions help install list logs ls net network new provenance rebuild-container rebuild-image restart rm rotate-token s shell snapshot snapshots start status stop version"
+    local want="--help --version -h -v clean config doctor editor exec extensions help install list logs ls net network new provenance rebuild-container rebuild-image restart rm rotate-token s shell snapshot snapshots start status stop sync-status version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -465,8 +474,13 @@ if command -v zsh >/dev/null 2>&1; then
     chk() { SPEC=(); _dce_dispatch "$1"; [[ "${SPEC[*]}" == *"$2"* ]] || { print "FAIL: zsh $1 spec missing [$2] got [${SPEC[*]}]"; exit 1 }; }
     chk start            "*:project:"
     chk shell            "1:project:"
+    chk shell            "--no-wait[skip the sync settle wait]"
     chk editor           "1:project:"
     chk editor           "--editor+[editor id]"
+    chk editor           "--no-wait[skip the sync settle wait]"
+    chk sync-status      "1:project:"
+    chk sync-status      "--once[one-shot status snapshot]"
+    chk sync-status      "-1[one-shot status snapshot]"
     chk extensions       "1:subcommand: _dce_extensions_subactions"
     chk extensions       "--scope+[target scope for capture]"
     # capture-only flags must NOT be offered on non-capture subactions.

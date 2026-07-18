@@ -32,7 +32,9 @@ unset _dce_scripts_dir
 #
 # Per-subcommand grammar mirrors the real argument parsing in scripts/*.sh:
 #   start|stop              : variadic project names (0 args == all)
-#   shell                   : exactly one project, then free-form command
+#   shell                   : [--no-wait] one project, then free-form command
+#   editor                  : [--editor <id>] [--no-wait] one project
+#   sync-status             : [--once|-1] one project
 #   rebuild-container       : one project + --rotate-keys / --inject-creds /
 #                             --keep-hidden-volumes / --from-snap / --sync /
 #                             --sync-ignore
@@ -73,16 +75,58 @@ _dce_complete() {
       return 0
       ;;
     shell)
-      # One project only; beyond it the user runs a free-form command.
+      # [--no-wait] <name> [free-form command]. --no-wait is offered only in
+      # the pre-project slot; once a project is typed the rest is the user's
+      # command and must stay free-form (no flag leakage).
       if [[ $COMP_CWORD -eq 2 ]]; then
         _dce_reply_projects "$cur"
+        [[ -z "$cur" || "--no-wait" == "$cur"* ]] && COMPREPLY+=("--no-wait")
+        return 0
+      fi
+      # Past slot 2: only complete if no project positional has been typed yet
+      # (i.e. slot 2 was --no-wait and we still need the project).
+      local _typed_proj=0 _w
+      for _w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
+        case "$_w" in
+          --no-wait|-*) : ;;
+          *) _typed_proj=1 ;;
+        esac
+      done
+      if [[ $_typed_proj -eq 0 ]]; then
+        _dce_reply_projects "$cur"
+        [[ -z "$cur" || "--no-wait" == "$cur"* ]] && COMPREPLY+=("--no-wait")
+      fi
+      return 0
+      ;;
+    sync-status)
+      # [--once|-1] <project>. One project positional; --once may precede or
+      # follow it. Mirrors `shell`/`logs` (one project + a flag).
+      if [[ $COMP_CWORD -eq 2 ]]; then
+        _dce_reply_projects "$cur"
+        [[ -z "$cur" || "--once" == "$cur"* || "-1" == "$cur"* ]] && COMPREPLY+=("--once" "-1")
+        return 0
+      fi
+      # Past slot 2: if no project positional typed yet (slot 2 was a flag),
+      # still offer the project; otherwise only --once may follow the project.
+      local _typed_proj=0 _w
+      for _w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
+        case "$_w" in
+          --once|-1|-*) : ;;
+          *) _typed_proj=1 ;;
+        esac
+      done
+      if [[ $_typed_proj -eq 0 ]]; then
+        _dce_reply_projects "$cur"
+        [[ -z "$cur" || "--once" == "$cur"* || "-1" == "$cur"* ]] && COMPREPLY+=("--once" "-1")
+      else
+        mapfile -t COMPREPLY < <(compgen -W "--once -1" -- "$cur")
       fi
       return 0
       ;;
     editor)
-      # Optional --editor <id> (in either position), then/at one project.
+      # Optional --editor <id> and/or --no-wait, then/at one project.
       # If we're completing --editor's value, offer editor ids; otherwise offer
-      # the project (and --editor at slot 2 if no project typed yet).
+      # the project (and the flags at slot 2 if no project typed yet).
       if [[ "$prev" == "--editor" ]]; then
         mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_editor_ids)" -- "$cur")
         return 0
@@ -90,6 +134,7 @@ _dce_complete() {
       if [[ $COMP_CWORD -eq 2 ]]; then
         _dce_reply_projects "$cur"
         [[ -z "$cur" || "--editor" == "$cur"* ]] && COMPREPLY+=("--editor")
+        [[ -z "$cur" || "--no-wait" == "$cur"* ]] && COMPREPLY+=("--no-wait")
         return 0
       fi
       # Past slot 2: walk prior words to see if a project positional is already
@@ -104,7 +149,11 @@ _dce_complete() {
           *) _typed_proj=1 ;;
         esac
       done
-      [[ "$_typed_proj" -eq 0 ]] && _dce_reply_projects "$cur"
+      if [[ "$_typed_proj" -eq 0 ]]; then
+        _dce_reply_projects "$cur"
+        [[ -z "$cur" || "--editor" == "$cur"* ]] && COMPREPLY+=("--editor")
+        [[ -z "$cur" || "--no-wait" == "$cur"* ]] && COMPREPLY+=("--no-wait")
+      fi
       return 0
       ;;
     logs)

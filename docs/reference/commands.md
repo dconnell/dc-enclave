@@ -10,9 +10,10 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce start [name ...]` | Start one or more projects, or all configured projects if none given |
 | `dce stop [name ...]` | Stop one or more projects, or all configured projects if none given |
 | `dce list` (`dce ls`) | List DC Enclave and their running/stopped state |
-| `dce shell <name> [command]` | Open a shell or run one command inside a project container; injects the project's git token as the provider env var (`GITHUB_TOKEN` / `GITLAB_TOKEN`) and wraps the command in `zsh -ic` |
+| `dce shell [--no-wait] <name> [command]` | Open a shell or run one command inside a project container; injects the project's git token as the provider env var (`GITHUB_TOKEN` / `GITLAB_TOKEN`) and wraps the command in `zsh -ic`. For a synced workspace, interactive entry waits for the Mutagen session to settle first (`--no-wait` / `DCE_SYNC_NO_WAIT=1` opts out) |
 | `dce logs <name> [-f\|--follow] [--tail N]` | Fetch a container's stdout/stderr log stream (works on stopped containers) |
-| `dce editor [--editor <id>] <name>` | Launch your editor attached to the running container at `/workspace` (VS Code by default; Docker-compatible backends only). Under PAT auth, also sync VS Code's attached-container config so editor/terminal Git uses the container credential store instead of VS Code's host-forwarding helper. |
+| `dce editor [--editor <id>] [--no-wait] <name>` | Launch your editor attached to the running container at `/workspace` (VS Code by default; Docker-compatible backends only). Under PAT auth, also sync VS Code's attached-container config so editor/terminal Git uses the container credential store instead of VS Code's host-forwarding helper. For a synced workspace, waits for the Mutagen session to settle before launch (`--no-wait` / `DCE_SYNC_NO_WAIT=1` opts out). |
+| `dce sync-status [--once] <name>` | Show Mutagen sync state for a [synced workspace](../how-to/sync-workspace.md): live by default (`mutagen sync monitor`), or `--once` for a one-shot snapshot (`mutagen sync list`). Host-side only. |
 | `dce extensions <list\|host\|available\|show\|diff\|capture> ...` | Inspect declared/runtime editor extension sets, compare drift, and capture curated manifests under `extensions/<editor>/<scope>.txt`. |
 | `dce exec [--root] <name> <command...>` | Run a single command in a running container, docker-exec style: no token, no zsh wrapping, auto-TTY |
 | `dce restart [name ...]` | Restart one or more projects, or all configured projects |
@@ -77,6 +78,7 @@ Command-level support. ✅ fully supported · 🟡 works, but some flags/subcomm
 | `dce shell` | ✅ | ✅ | ✅ |
 | `dce logs` | ✅ | ✅ | ✅ |
 | `dce editor` | ✅ | ❌ | ✅ |
+| `dce sync-status` | ✅ | ✅ | ✅ |
 | `dce extensions` | ✅ | 🟡 | ✅ |
 | `dce exec` | ✅ | ✅ | ✅ |
 | `dce restart` | ✅ | ✅ | ✅ |

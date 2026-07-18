@@ -127,6 +127,14 @@ Then re-run your `dce new ... --sync` command.
   not seconds** — progress is surfaced.
 - **`dce start`** — `mutagen sync resume` (idempotent; covers a host reboot
   between stop/start).
+- **`dce shell`** — for a synced project, prints a one-line sync state and
+  (interactive entry only) **waits for the session to settle** before entering,
+  so you never land in a half-synced `/workspace`. A one-shot command
+  (`dce shell <name> <command>`) never waits; `--no-wait` or `DCE_SYNC_NO_WAIT=1`
+  opts out. See [Watch sync state](#watch-sync-state).
+- **`dce editor`** — same settle wait before launching the editor, so VS Code's
+  attached terminal opens into a synced tree. `--no-wait` / `DCE_SYNC_NO_WAIT=1`
+  opt out.
 - **`dce stop`** — leaves the session (Mutagen tolerates a down beta and
   retries). Nothing is destroyed.
 - **`dce rebuild-container`** — while the container is still running, flushes
@@ -138,6 +146,45 @@ Then re-run your `dce new ... --sync` command.
   host checkout is never touched (honors `--keep-volumes`).
 - **`dce snapshot`** — the sync volume is **excluded** (host is canonical);
   `--from-snap` is not combinable with `--sync`.
+
+## Watch sync state
+
+Mutagen runs on the **host**, so authoritative sync state is a host-side
+concern. The one command to reach it:
+
+```bash
+dce sync-status myapp            # live stream (Ctrl-C to stop)
+dce sync-status myapp --once     # one-shot snapshot
+```
+
+This resolves the project's session name (`dce-sync-<slug>-<12hex>`) for you
+and runs `mutagen sync monitor` (live, default) or `mutagen sync list`
+(`--once`). It refuses fast with the fix command if the project isn't synced,
+Mutagen is absent, or no session exists.
+
+**At entry.** `dce shell` and `dce editor` print a one-line sync state and, by
+default, wait for the session to settle before entering (interactive shell /
+editor only). While waiting on a TTY, the line refreshes live with the current
+Mutagen phase, elapsed seconds, and the total file count being synced — e.g.
+`Sync: staging files on beta · 3s · 27,533 files`. The phase transitions
+(scanning → staging → applying → watching) plus the ticking seconds are the
+progress signal; the file count gives the scale. (Mutagen stages to a side
+directory and applies atomically, so a per-file countdown is not meaningful
+during staging — the phase is the honest indicator there.) The wait is bounded
+by `DCE_SYNC_ENTRY_WAIT_TIMEOUT` (default 600s) and is always interruptible
+with Ctrl-C. Disable it with `--no-wait` or `DCE_SYNC_NO_WAIT=1`:
+
+```bash
+dce shell --no-wait myapp
+DCE_SYNC_NO_WAIT=1 dce editor myapp
+```
+
+A paused session (conflict) never blocks — dce warns and points at
+`mutagen sync resolve`. `dce doctor` also reports one-word session health.
+
+**From inside the container** there is no first-class sync signal (Mutagen is
+host-only). As a rough proxy, `du -sh /workspace` converges as reconciliation
+proceeds; for authoritative state run `dce sync-status <name>` on the host.
 
 ## Ownership and conflicts
 

@@ -52,6 +52,9 @@ case "$SUBCOMMAND" in
   editor)
     exec "$SCRIPT_DIR/editor.sh" "$@"
     ;;
+  sync-status)
+    exec "$SCRIPT_DIR/sync-status.sh" "$@"
+    ;;
   extensions)
     exec "$SCRIPT_DIR/extensions.sh" "$@"
     ;;
