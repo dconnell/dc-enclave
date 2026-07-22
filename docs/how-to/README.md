@@ -15,7 +15,6 @@ Step-by-step recipes for specific tasks. Each guide is self-contained.
 **Performance and large repos**
 
 - [Hide generated paths from the host](hide-generated-paths.md) — keep `node_modules` and caches in container volumes.
-- [Sync the workspace onto native ext4](sync-workspace.md) — `--sync` for large repos where the bind mount is too slow on macOS/WSL2.
 - [Work with monorepos and multiple repos](work-with-monorepos.md) — single- and multi-container repo layouts.
 
 **Editor and personalization**

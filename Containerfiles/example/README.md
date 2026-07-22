@@ -45,13 +45,11 @@ Supported auto-layer filenames in team/user namespaces:
 ## Overlays at a glance
 
 Each language overlay installs a toolchain, its de-facto package manager, and a
-dependency-sync hook that mirrors `Containerfile.nodejs`. Pair the overlay
-with the listed `--hide` paths (bind-mount world) so generated/native artifacts
-stay off the host bind mount. Under [`--sync`](../../docs/how-to/sync-workspace.md)
-the same paths are passed to `--sync-ignore` instead — the hook triggers on an
-empty/absent target dir regardless of cause, so it populates either topology.
+dependency-install hook that mirrors `Containerfile.nodejs`. Pair the overlay
+with the listed `--hide` paths so generated/native artifacts stay off the host
+bind mount.
 
-| Scope | Toolchain (install method) | Package manager | Sync command | `--hide` / `--sync-ignore` paths | Strict env | Safe-mode env |
+| Scope | Toolchain (install method) | Package manager | Install command | `--hide` paths | Strict env | Safe-mode env |
 |---|---|---|---|---|---|---|
 | `nodejs` | apt (Ubuntu archive) | npm | `npm ci` / `npm install` | `node_modules` | `DC_NODE_INSTALL_STRICT=1` | `DC_NODE_IGNORE_SCRIPTS=1` |
 | `golang` | tarball + SHA256 verify | Go modules | `go mod download` | `.cache/go/mod,.cache/go/build` | `DC_GO_INSTALL_STRICT=1` | n/a (fetch runs no code) |
@@ -64,8 +62,6 @@ Example:
 ```
 dce new myapp python --hide .venv,.cache/uv 8000:8000
 dce new svc rust --hide target 8080:8080
-# synced workspace (large repo, macOS/WSL2):
-dce new monorepo nodejs --sync --sync-ignore node_modules,.nx,dist 3000:3000
 ```
 
 ## Dependency-sync hooks

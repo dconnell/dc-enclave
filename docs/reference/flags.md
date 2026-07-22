@@ -15,9 +15,7 @@ Every flag each `dce` command accepts, derived from the command help (`dce help 
 | `--save-user` | Save the CLI-supplied recipe keys from this run to `$DC_USER_DIR/container-recipes/<name>`. Pass both to write both. |
 | `--cpus <N>` | CPU limit (e.g. `2`, `1.5`). Empty = backend default. See [manage resources](../how-to/manage-resources.md). |
 | `--memory <val>` | Memory limit with suffix (e.g. `4g`, `512m`). Empty = backend default. |
-| `--hide <path[,path...]>` | Keep one or more `/workspace`-relative paths in a named volume. Repeatable. See [hide generated paths](../how-to/hide-generated-paths.md). Mutually exclusive with `--sync`. |
-| `--sync` | Replace the `/workspace` bind mount with a Mutagen-synced named volume (`dce-sync-<slug>-<12hex>`) on native ext4. Two-way, host-canonical. The escape hatch for large repos where the bind mount is too slow on macOS/WSL2. Supported on docker/orbstack/colima; apple and podman fail fast (no Mutagen transport). Requires the `mutagen` CLI. See [sync workspace](../how-to/sync-workspace.md). |
-| `--sync-ignore <path[,path...]>` | Exclude `/workspace`-relative paths from Mutagen sync (the sync-world analog of `--hide`). Same grammar; repeatable. Only meaningful with `--sync`. |
+| `--hide <path[,path...]>` | Keep one or more `/workspace`-relative paths in a named volume. Repeatable. See [hide generated paths](../how-to/hide-generated-paths.md). |
 | `--network <name[,name...]>` | Attach to private dce network(s) so the container can reach peers by name without publishing ports. `name:ip` pins a static IPv4. Repeatable. See [private networks](../how-to/connect-private-networks.md). |
 | `--ip <addr>` | Static IPv4 for the primary (first) network; equivalent to `name:ip` on the first `--network` entry. Not supported on apple/container. |
 | `--git-host <provider>` | Git host for authentication (default `github`; supported: `github`, `gitlab`). Determines token file name, credential format, and environment variable. Read-only after create. See [add a git host](../how-to/add-git-host.md). |
@@ -66,8 +64,6 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 | `--rotate-keys` | Regenerate the SSH deploy key before recreating (old key backed up, new `.pub` printed, command pauses for you to update GitHub). Implies credential injection (the new key + current git token are written). |
 | `--inject-creds` | Inject the current SSH deploy key and git token into the rebuilt container, overwriting any credentials already present (idempotent: the token is rewritten only when it differs). Always in effect for a normal rebuild and for `--rotate-keys`; it matters with `--from-snap`, where a bare restore injects nothing so a (possibly suspect) snapshot's credential state is preserved for inspection. |
 | `--keep-hidden-volumes` | Preserve hidden volumes instead of removing them (default removes them for a clean slate). Combining with `--rotate-keys` triggers a loud warning. |
-| `--sync` | Enable a synced workspace on a project created without `--sync` (converts the bind mount to a Mutagen-synced volume). A project already created with `--sync` stays synced automatically. The sync volume is preserved across rebuild and a `mutagen sync flush` drains pending changes before the container is destroyed. Mutually exclusive with `--from-snap`. |
-| `--sync-ignore <path[,path...]>` | Adjust the Mutagen ignore set; re-creates the sync session so the new rules apply. Same grammar as the `dce new` flag. Allowed only on the sync path (`--sync` or an already-synced project) and not with `--from-snap`. |
 | `--from-snap <label>` | Recreate from the snapshot `dce-snap-<name>-<label>:latest` instead of the scope-derived image. Bypasses scope derivation and does NOT rewrite `CONTAINER_IMAGE`. Hidden volumes are ALWAYS isolated on restore: each is mounted from its snapshot volume (populated where captured, empty otherwise) and the live originals are left untouched, so `--keep-hidden-volumes` has no effect here. A restore does NOT inject credentials by default — the rebuilt container keeps exactly what the snapshot baked (nothing, for a scrubbed snapshot); pass `--inject-creds` to inject current credentials, or `--rotate-keys` to regenerate the SSH key. See [snapshots & rollback](../how-to/snapshot-and-rollback.md). |
 | `--yes`, `-y` | Skip the confirmation prompt (for scripted incident response). |
 
@@ -140,7 +136,6 @@ Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never 
 |---|---|
 | `<name>` *(required)* | Project/container name. |
 | `[command]` | Optional command to run non-interactively (`zsh -ic`) instead of opening an interactive shell. If it begins with `-`, separate it with `--`. |
-| `--no-wait` | (Synced workspaces only) Skip the Mutagen sync settle wait before the interactive shell. The sync state line still prints. Equivalent to `DCE_SYNC_NO_WAIT=1`. Non-interactive commands never wait. |
 
 ## `dce editor` — launch an editor attached to the container
 
@@ -148,14 +143,6 @@ Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never 
 |---|---|
 | `<name>` *(required)* | Project/container name. |
 | `--editor <id>` | Override the resolved editor for this invocation only. Known ids: `vscode`, `vscode-insiders`. |
-| `--no-wait` | (Synced workspaces only) Skip the Mutagen sync settle wait before launching the editor. Equivalent to `DCE_SYNC_NO_WAIT=1`. |
-
-## `dce sync-status` — show Mutagen sync state (synced workspaces)
-
-| Flag / arg | Description |
-|---|---|
-| `<name>` *(required)* | Project/container name. Must be a synced (`--sync`) workspace. |
-| `--once`, `-1` | Print a one-shot snapshot (`mutagen sync list`) and exit. Default is a live stream (`mutagen sync monitor`) until interrupted. |
 
 ## Commands taking only positional arguments
 
@@ -173,6 +160,3 @@ These take only positional arguments (or none):
 | `CONTAINER_BACKEND` | Force a backend (`apple`, `colima`, `docker`, `orbstack`, `podman`) instead of auto-detection. See [backends](backends.md). |
 | `DC_REPOS_DIR` | Override the host repos root (default `~/repos`). |
 | `DC_TEAM_DIR` / `DC_USER_DIR` | Team and user overlay/recipe roots, set by `setup.sh` in `~/.config/dce-enclave/config`. |
-| `DC_SYNC_FLUSH_TIMEOUT` | Seconds a rebuild's pre-destroy `mutagen sync flush` may block (default `120`). |
-| `DCE_SYNC_NO_WAIT` | Set to `1` to skip the Mutagen sync settle wait on `dce shell` / `dce editor` entry (synced workspaces only). |
-| `DCE_SYNC_ENTRY_WAIT_TIMEOUT` | Seconds the entry settle wait may block (default `600`). Distinct from the rebuild flush budget. See [sync workspace](../how-to/sync-workspace.md). |

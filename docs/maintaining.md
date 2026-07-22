@@ -150,16 +150,12 @@ rm -rf tests/integration/artifacts/<runid>
 
 ### Managed volume families (for anyone extending `dce clean`)
 
-dce manages three named-volume families, each visually grouped with its project
+dce manages two named-volume families, each visually grouped with its project
 and excluded from the others' sweeps by prefix:
 
 - `dce-hide-<slug>-<12hex>` — hidden volumes (`--hide`)
 - `dce-snapvol-<slug>-<label>-<12hex>` — snapshot volumes
-- `dce-sync-<slug>-<12hex>` — synced-workspace volume (`--sync`)
 
 `dce clean --hidden-volumes` scopes to the `dce-hide-` prefix and `--snapshots`
-to `dce-snapvol-*`; **neither ever touches `dce-sync-*`** (a synced project's
-volume is reclaimed only by `dce rm`, which first terminates the Mutagen
-session). If you add a new sweep or relax a prefix, preserve this exclusion — a
-contract test (`tests/contract/sync-lifecycle.sh`) asserts the sync volume is
-not swept by snapshot/hidden-volume cleanup.
+to `dce-snapvol-*`. If you add a new sweep or relax a prefix, preserve this
+exclusion so a hidden-volume or snapshot sweep never touches the other family.

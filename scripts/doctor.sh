@@ -566,52 +566,6 @@ doctor_project() {  # <name>
     # only when running and otherwise skipped with a clear reason.
     _doctor_extension_drift "$name" "$runtime_ready"
   fi
-
-  # Synced-workspace health (--sync projects). Mutagen halts the whole session
-  # on the first conflict and stops syncing everything until resolved; the
-  # symptom (edits not appearing) is silent, so a paused session is surfaced as a
-  # failure pointing at `mutagen sync resolve`. Effective ignore paths are shown
-  # for parity with what the session was created with.
-  if [[ "${CONTAINER_SYNC:-0}" == "1" ]]; then
-    if ! dce_mutagen_present; then
-      _bad "Mutagen installed" "mutagen CLI not on PATH ($(_dce_hint_mutagen))"
-    else
-      _ok "Mutagen installed ($(dce_mutagen_version))"
-      case "$(dce_sync_health "$name" 2>/dev/null || printf error)" in
-        healthy) _ok "Sync session healthy" ;;
-        paused)  _bad "Sync session healthy" \
-                   "session paused (likely a conflict); run: mutagen sync resolve" ;;
-        absent)  _bad "Sync session healthy" \
-                   "no session for $name (rebuild to recreate: dce rebuild-container $name)" ;;
-        *)       _bad "Sync session healthy" "could not query mutagen sync list" ;;
-      esac
-      if declare -p CONTAINER_SYNC_IGNORE_PATHS >/dev/null 2>&1 \
-         && [[ ${#CONTAINER_SYNC_IGNORE_PATHS[@]} -gt 0 ]]; then
-        _info "Sync-ignore: $(dce_join_by ',' "${CONTAINER_SYNC_IGNORE_PATHS[@]}")"
-      fi
-    fi
-  else
-    # Non-synced project on a VM-backed backend: bind-mount I/O crosses the VM
-    # boundary (VirtioFS). A suggestion (never a warning, never auto-applied):
-    # if dev-server file serving is slow, --sync moves the workspace onto native
-    # ext4. Heuristic: macOS/WSL2 host + a backend that actually supports --sync
-    # (docker/orbstack/colima; not apple/podman, which fail fast).
-    if dce_sync_backend_supported "$pb" 2>/dev/null; then
-      case "$(platform_os 2>/dev/null || printf unknown)" in
-        macos|wsl2)
-          _info "Tip: for slow dev-server file I/O, try a synced workspace (dce rebuild-container $name --sync)"
-          ;;
-      esac
-    fi
-  fi
-}
-
-# Per-platform Mutagen install hint (mirrors the OS-aware remediation style).
-_dce_hint_mutagen() {
-  case "$(platform_os 2>/dev/null || printf unknown)" in
-    macos) printf 'brew install mutagen-io/mutagen/mutagen' ;;
-    *)     printf 'install the release binary from the official Mutagen release archive' ;;
-  esac
 }
 
 # --- argument parsing + dispatch ---------------------------------------------

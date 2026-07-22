@@ -6,7 +6,7 @@ Short definitions for the terms used across these docs. Follow the links for ful
 
 - **Project** — one isolated dev container plus its host-side config and secrets. Created by `dce new <name>`; lives under `~/.config/dce-enclave/<name>/`. Each project gets its own container, SSH key, optional PAT, and optional `.npmrc`.
 - **Backend** — the container runtime `dce` drives: `apple` (apple/container), `docker`, `orbstack`, `colima`, or `podman`. Auto-detected or forced with `CONTAINER_BACKEND`. Details in [backends](backends.md).
-- **Workspace** — the directory mounted at `/workspace` inside the container. By default a read-write bind mount of `${DC_REPOS_DIR:-$HOME/repos}/<project>` on the host; under `--sync`, a Mutagen-synced volume mounted at the same path. See [sync workspace](../how-to/sync-workspace.md).
+- **Workspace** — the directory mounted at `/workspace` inside the container. A read-write bind mount of `${DC_REPOS_DIR:-$HOME/repos}/<project>` on the host.
 
 ## Images and overlays
 
@@ -26,7 +26,6 @@ Short definitions for the terms used across these docs. Follow the links for ful
 ## Volumes and mounts
 
 - **Hidden volume** (`dce-hide-<slug>-<hash>`) — a named volume mounted over a `/workspace`-relative path so its contents stay inside the container (e.g. `node_modules`). Created by `--hide`. See [hide generated paths](../how-to/hide-generated-paths.md).
-- **Sync volume** (`dce-sync-<slug>-<12hex>`) — a Mutagen-synced named volume that replaces the bind mount at `/workspace` under `--sync`. See [sync workspace](../how-to/sync-workspace.md).
 - **Snapshot volume** (`dce-snapvol-*`) — a captured clone of a hidden volume, created by `dce snapshot`. Used by `--from-snap` restores.
 
 ## Editor integration

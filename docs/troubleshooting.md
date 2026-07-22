@@ -21,7 +21,6 @@ dce doctor myapp        # one project + its backend
 | Port or memory change didn't take effect | [Changed ports or resource limits](#changed-ports-or-resource-limits) |
 | `git pull` / SSH fails inside the container | [SSH auth issues](#ssh-auth-issues) |
 | Podman won't start on macOS | [Podman on macOS not starting](#podman-on-macos-not-starting) |
-| `--sync` workspace problems | [Synced workspace (`--sync`)](#synced-workspace---sync) |
 
 ## Bash version too old
 
@@ -96,14 +95,3 @@ dce config sync-vscode <name> --dry-run   # preview only
 ```
 podman machine start
 ```
-
-## Synced workspace (`--sync`)
-
-See [sync workspace](how-to/sync-workspace.md) for the full guide.
-
-- **Mutagen not installed:** `--sync` requires the `mutagen` CLI on the host. dce fails fast with a per-platform install hint (macOS: `brew install mutagen-io/mutagen/mutagen`; Linux: install the release binary). dce never installs it for you.
-- **Initial sync is slow:** the first `dce new --sync` does a full host→volume copy (minus `--sync-ignore` paths). For a large Nx monorepo this is minutes, not seconds — it is not hung. Progress is shown.
-- **Edits not appearing / session paused:** Mutagen halts the whole session on the first conflict and stops syncing everything until resolved. `dce doctor` reports "session paused"; resolve with `mutagen sync resolve` (dce detects and points, it does not resolve for you).
-- **`node_modules` ended up on the host:** you used `--sync` without `--sync-ignore node_modules`. The recommended Node shape is `--sync --sync-ignore node_modules,.nx,dist` so generated paths stay on ext4 but off the host.
-- **Permission errors in the synced tree:** ownership is coerced to the `dev` user at session create. If you see ownership errors, the session was created without the ownership flags — recreate it with `dce rebuild-container <name> --sync`.
-- **apple/container backend:** `--sync` is unsupported there (no Mutagen transport) and fails fast; use `--hide` instead.

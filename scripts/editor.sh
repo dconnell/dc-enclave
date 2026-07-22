@@ -38,7 +38,6 @@ source "$ROOT_DIR/lib/editor.sh"
 source "$ROOT_DIR/lib/extensions.sh"
 
 EXPLICIT_EDITOR=""
-NO_WAIT=false
 PROJECT=""
 
 while [[ $# -gt 0 ]]; do
@@ -50,10 +49,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --editor=*)
       EXPLICIT_EDITOR="${1#--editor=}"
-      shift
-      ;;
-    --no-wait)
-      NO_WAIT=true
       shift
       ;;
     -h|--help|help)
@@ -119,12 +114,7 @@ if ! backend_is_running "$PROJECT"; then
 fi
 
 echo "  Backend: $ACTIVE_BACKEND"
-if [[ "${CONTAINER_SYNC:-0}" == "1" ]]; then
-  echo "  Workspace: /workspace (synced via mutagen — host canonical: ${REPOS_DIR:-<repos-dir>})"
-  dce_sync_short_status "$PROJECT" | sed 's/^/  /'
-else
-  echo "  Workspace: /workspace (-> ${REPOS_DIR:-<repos-dir>} on host)"
-fi
+echo "  Workspace: /workspace (-> ${REPOS_DIR:-<repos-dir>} on host)"
 
 # Read the project's git token for a status line (provider env-var name:
 # GITHUB_TOKEN / GITLAB_TOKEN), mirroring `dce shell`. Empty = unset.
@@ -190,16 +180,6 @@ if dce_ext_is_supported "$EDITOR_ID"; then
     dce_ext_enforce_declared "$PROJECT" "$EDITOR_ID" \
       "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}"
   ) || true
-fi
-
-# Synced workspace: wait for the Mutagen session to settle before launching the
-# editor, so VS Code's attached terminal opens into a settled tree. --no-wait /
-# DCE_SYNC_NO_WAIT opt out. Soft-failing (never aborts launch). Dev Containers
-# postStartCommand runs inside the container and cannot reach mutagen, so the
-# wait belongs here on the host side. See plans/sync-visibility.md.
-if [[ "${CONTAINER_SYNC:-0}" == "1" ]] && ! $NO_WAIT \
-   && [[ "${DCE_SYNC_NO_WAIT:-0}" != "1" ]]; then
-  dce_sync_wait_until_settled "$PROJECT"
 fi
 
 # dce_editor_launch_attach validates the binary, prints the "Launching editor"

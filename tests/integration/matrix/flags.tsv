@@ -29,24 +29,9 @@ new-hide-ports	all	new	$PROJECT --hide node_modules 3000:3000	0
 new-git-host-github	all	new	$PROJECT --git-host github	0	
 new-git-host-gitlab	all	new	$PROJECT --git-host gitlab	0	
 
-# --- dce new --sync / --sync-ignore (fail-fast paths; positive path needs
-#     mutagen and is covered by tests/contract/sync-lifecycle.sh) ---
-new-sync-hide-conflict	all	new	$PROJECT --sync --hide node_modules	1	mutually exclusive
-new-sync-ignore-alone	all	new	$PROJECT --sync-ignore node_modules	1	only has meaning with --sync
-new-sync-apple-reject	apple	new	$PROJECT --sync	1	apple/container
-
 # --- dce logs (follow modes covered in cases/lifecycle.sh with a timeout) ---
 logs-tail	all	logs	$PROJECT --tail 5	0	
 logs-tail-eq	all	logs	$PROJECT --tail=5	0	
-
-# --- dce shell --no-wait (non-interactive via a command so it does not hang;
-#     --no-wait is accepted and a no-op on a non-synced project) ---
-shell-no-wait-cmd	all	shell	--no-wait $PROJECT true	0	
-
-# --- dce sync-status (matrix projects are non-synced -> fails fast pointing at
-#     --sync; also represents the --once flag for coverage). The live/one-shot
-#     happy paths on a real synced project live in cases/sync.sh) ---
-sync-status-nosync	all	sync-status	$PROJECT --once	1	--sync
 
 # --- dce exec (--root MUST precede the project name: dce exec [--root] <name> <cmd>) ---
 exec-default	all	exec	$PROJECT id	0	
@@ -61,7 +46,6 @@ rm-keep-both	all	rm	$PROJECT --keep-config --keep-volumes --yes	0
 # --- dce rebuild-container (--rotate-keys / --from-snap in cases/lifecycle.sh) ---
 rb-yes	all	rebuild-container	$PROJECT --yes	0	
 rb-keep-hv	all	rebuild-container	$PROJECT --keep-hidden-volumes --yes	0	
-rb-sync-from-snap-conflict	all	rebuild-container	$PROJECT --sync --from-snap x	1	cannot be combined with --from-snap
 
 # --- dce provenance (current + history/all) ---
 prov-current	all	provenance	$PROJECT	0	

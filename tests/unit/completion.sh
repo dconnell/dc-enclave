@@ -74,7 +74,7 @@ scopes_out="$(dce_complete_scopes | sort)"
 pass "scopes dedup + membership"
 
 subs="$(dce_complete_subcommands | sort)"
-for c in new start stop status s list ls shell logs editor sync-status extensions exec restart rm \
+for c in new start stop status s list ls shell logs editor extensions exec restart rm \
          rebuild-container rebuild-image snapshot snapshots provenance clean config network net doctor install rotate-token version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
@@ -159,24 +159,15 @@ drive 3 dce start alpha "";            assert_reply "start alpha <TAB>" beta gam
 drive 4 dce start alpha beta "";       assert_reply "start alpha beta <TAB>" gamma
 drive 5 dce stop alpha beta gamma "";  assert_empty   "stop all three <TAB>"
 
-# shell: [--no-wait] one project, then free-form command (nothing past project).
-drive 2 dce shell "";       assert_reply "shell <TAB>" --no-wait alpha beta gamma
+# shell: one project, then free-form command (nothing past project).
+drive 2 dce shell "";       assert_reply "shell <TAB>" alpha beta gamma
 drive 3 dce shell alpha ""; assert_empty   "shell alpha <TAB>"
-drive 3 dce shell --no-wait ""; assert_reply "shell --no-wait <TAB>" --no-wait alpha beta gamma
-drive 4 dce shell --no-wait alpha ""; assert_empty "shell --no-wait alpha <TAB> (command region)"
 
-# sync-status: [--once|-1] one project.
-drive 2 dce sync-status ""; assert_reply "sync-status <TAB>" --once -1 alpha beta gamma
-drive 3 dce sync-status alpha ""; assert_reply "sync-status alpha <TAB>" --once -1
-drive 3 dce sync-status --once ""; assert_reply "sync-status --once <TAB>" --once -1 alpha beta gamma
-
-# editor: optional --editor <id> and/or --no-wait, then one project.
-drive 2 dce editor "";              assert_reply "editor <TAB>" --editor --no-wait alpha beta gamma
+# editor: optional --editor <id>, then one project.
+drive 2 dce editor "";              assert_reply "editor <TAB>" --editor alpha beta gamma
 drive 3 dce editor alpha "";        assert_empty   "editor alpha <TAB> (nothing past project)"
 drive 3 dce editor --editor "";     assert_reply "editor --editor <TAB>" vscode vscode-insiders
-drive 4 dce editor --editor vscode ""; assert_reply "editor --editor vscode <TAB>" --editor --no-wait alpha beta gamma
-drive 3 dce editor --no-wait "";    assert_reply "editor --no-wait <TAB>" --editor --no-wait alpha beta gamma
-drive 4 dce editor --no-wait alpha ""; assert_empty "editor --no-wait alpha <TAB> (nothing past project)"
+drive 4 dce editor --editor vscode ""; assert_reply "editor --editor vscode <TAB>" --editor alpha beta gamma
 
 # extensions: subactions at slot 2; project + flags after.
 drive 2 dce extensions ""; assert_reply "extensions <TAB>" \
@@ -193,12 +184,10 @@ drive 3 dce extensions capture ""; assert_reply "extensions capture <TAB>" alpha
 # rebuild-container: one project, then the flags.
 drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
 drive 3 dce rebuild-container alpha "--"; assert_reply "rebuild-container alpha --<TAB>" \
-  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --sync --sync-ignore --yes
+  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --yes
 
 drive 3 dce rebuild-container alpha ""; assert_reply "rebuild-container alpha <TAB>" \
-  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --sync --sync-ignore --yes -y
-drive 4 dce rebuild-container alpha --sync ""; assert_reply "rebuild-container alpha --sync <TAB>" \
-  --inject-creds --keep-hidden-volumes --rotate-keys --sync-ignore --yes -y
+  --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --yes -y
 drive 5 dce rebuild-container alpha --from-snap lbl ""; assert_reply "rebuild-container alpha --from-snap lbl <TAB>" \
   --inject-creds --keep-hidden-volumes --rotate-keys --yes -y
 
@@ -295,7 +284,7 @@ drive 3 dce snapshots list ""; assert_reply "snapshots list <project> <TAB>" alp
 # new: name is free text (no completion), pos3 = scope + flags.
 drive 2 dce new "";               assert_empty "new <name> (free text, no completion)"
 drive 3 dce new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
-  --config --cpus --git-host --hide --ip --memory --network --repo-path --save-team --save-user --sync --sync-ignore --yes -y all golang node
+  --config --cpus --git-host --hide --ip --memory --network --repo-path --save-team --save-user --yes -y all golang node
 # --network/--ip consume a value (no completion offered for the value).
 drive 4 dce new foo --network ""; assert_empty "new foo --network <val> (no completion)"
 drive 4 dce new foo --git-host ""; assert_reply "new foo --git-host <TAB>" github gitlab
@@ -465,7 +454,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dce_subcommands
-    local want="--help --version -h -v clean config doctor editor exec extensions help install list logs ls net network new provenance rebuild-container rebuild-image restart rm rotate-token s shell snapshot snapshots start status stop sync-status version"
+    local want="--help --version -h -v clean config doctor editor exec extensions help install list logs ls net network new provenance rebuild-container rebuild-image restart rm rotate-token s shell snapshot snapshots start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -474,13 +463,8 @@ if command -v zsh >/dev/null 2>&1; then
     chk() { SPEC=(); _dce_dispatch "$1"; [[ "${SPEC[*]}" == *"$2"* ]] || { print "FAIL: zsh $1 spec missing [$2] got [${SPEC[*]}]"; exit 1 }; }
     chk start            "*:project:"
     chk shell            "1:project:"
-    chk shell            "--no-wait[skip the sync settle wait]"
     chk editor           "1:project:"
     chk editor           "--editor+[editor id]"
-    chk editor           "--no-wait[skip the sync settle wait]"
-    chk sync-status      "1:project:"
-    chk sync-status      "--once[one-shot status snapshot]"
-    chk sync-status      "-1[one-shot status snapshot]"
     chk extensions       "1:subcommand: _dce_extensions_subactions"
     chk extensions       "--scope+[target scope for capture]"
     # capture-only flags must NOT be offered on non-capture subactions.
@@ -513,10 +497,6 @@ if command -v zsh >/dev/null 2>&1; then
     chk rebuild-container "--yes["
     words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "-y["
-    words=(rebuild-container alpha --sync "") CURRENT=4 SPEC=(); _dce_dispatch rebuild-container
-    [[ "${SPEC[*]}" != *"--from-snap+"* ]] || { print "FAIL: zsh rebuild-container --sync should suppress --from-snap -> [${SPEC[*]}]"; exit 1 }
-    words=(rebuild-container alpha --from-snap "") CURRENT=4 SPEC=(); _dce_dispatch rebuild-container
-    [[ "${SPEC[*]}" != *"--sync["* ]] || { print "FAIL: zsh rebuild-container --from-snap should suppress --sync -> [${SPEC[*]}]"; exit 1 }
     chk install          "2:dotfiles directory:_files -/"
     chk rotate-token     "1:project:"
     chk rebuild-image    "1:target:_dce_rebuild_image_targets"
@@ -527,16 +507,10 @@ if command -v zsh >/dev/null 2>&1; then
     chk new              "--git-host+[git host provider (github/gitlab)]"
     chk new              "*--network["
     chk new              "--ip+["
-    chk new              "--sync[replace the /workspace bind mount with a Mutagen-synced named volume]"
-    chk new              "*--sync-ignore[workspace path(s) excluded from Mutagen sync]"
     chk new              "--yes[skip the recipe-repo-path confirmation prompt]"
     chk new              "-y[skip the recipe-repo-path confirmation prompt]"
     words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--from-snap+[recreate from snapshot"
-    words=(rebuild-container alpha "") CURRENT=3
-    chk rebuild-container "--sync[enable/refresh a Mutagen-synced workspace]"
-    words=(rebuild-container alpha "") CURRENT=3
-    chk rebuild-container "*--sync-ignore[workspace path(s) excluded from Mutagen sync]"
     chk snapshot         "1:project or rm:"
     chk snapshot         "--exclude-volumes[skip ALL hidden-volume capture]"
     chk snapshot         "*--exclude-volume[exclude specific hidden volume"

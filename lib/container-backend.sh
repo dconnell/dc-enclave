@@ -724,7 +724,7 @@ dce_buildx_install_hint() {
 # heredoc RUNs the legacy builder drops), and Docker needs the buildx component
 # for that. Prints an actionable message and returns non-zero if missing; no-op
 # on podman/apple. Used by setup.sh and rebuild-image.sh before building. dce
-# verifies, never installs (matches the Mutagen stance).
+# verifies, never installs.
 dce_buildx_require() {
   if dce_buildx_present; then
     return 0

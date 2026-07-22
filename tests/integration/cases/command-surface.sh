@@ -34,7 +34,7 @@ _it_cs_help() {  # <backend> <case_id>
 
 _it_cs_help_per_command() {  # <backend> <case_id>
   local backend="$1" c
-  for c in new start stop restart status list shell logs editor sync-status exec rm \
+  for c in new start stop restart status list shell logs editor exec rm \
            rebuild-container rebuild-image snapshot provenance clean config \
            doctor network install version help; do
     it_dce "$backend" "$2" help "$c" >/dev/null || { it_case_fail "dce help $c"; return 1; }

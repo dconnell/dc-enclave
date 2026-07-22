@@ -84,7 +84,7 @@ HASH_FILE="$CARGO_REGISTRY/.dce-install-hash"
 log() { printf '%s\n' "[rust-hide] $*"; }
 
 # True when a target dir is missing OR empty -- the install trigger fires
-# regardless of WHY it is empty (hidden volume, --sync-ignore, fresh volume).
+# regardless of WHY it is empty (hidden volume or a fresh volume).
 _dir_empty() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
 
 compute_hash() {

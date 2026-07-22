@@ -27,7 +27,6 @@ dce-enclave/
 │   │   ├── git-credentials.sh          #   token/PAT/SSH insteadOf wiring + VS Code machine setting
 │   │   ├── snapshots.sh                #   snapshot image/volume naming + manifests
 │   │   ├── image-provenance.sh         #   provenance hashing, JSON escaping, JSONL logging
-│   │   ├── sync.sh                     #   synced-workspace (--sync) volume + Mutagen lifecycle
 │   │   └── config.sh                   #   project config schema, validators, hardened load/write
 │   ├── platform.sh                     # OS/shell detection, profile helpers
 │   ├── complete-data.sh                # shared completion discovery (bash + zsh)

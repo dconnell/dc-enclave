@@ -35,7 +35,6 @@ dce_complete_subcommands() {
     "shell" \
     "logs" \
     "editor" \
-    "sync-status" \
     "extensions" \
     "exec" \
     "restart" \
