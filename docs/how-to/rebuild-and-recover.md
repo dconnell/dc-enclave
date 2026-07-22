@@ -30,25 +30,6 @@ dce rebuild-container myapp-monorepo --yes
 
 For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. When the project has hidden paths configured, combining `--rotate-keys` with `--keep-hidden-volumes` triggers a loud warning (key rotation implies incident response, where preserving volumes may be unsafe).
 
-### Synced workspaces (`--sync`)
-
-For a project created with [`--sync`](sync-workspace.md), rebuild keeps the
-data-loss-free property by design:
-
-- The sync volume (`dce-sync-<slug>-<12hex>`) is **always preserved** across rebuild
-  (never in the clean-slate removal path) — there is no `--keep-*` flag for it,
-  and destroying it would force a multi-minute full re-sync.
-- A `mutagen sync flush` drains pending container→host changes **before** the
-  container is destroyed, so no edit is lost to sync lag.
-- Incident-response clean-slate still applies to `--sync-ignore` dirs (e.g.
-  `node_modules`): wipe them in-container (`rm -rf node_modules`) and the
-  install-on-start hook repopulates them.
-
-```
-dce rebuild-container myapp --sync                          # no-op if already synced
-dce rebuild-container myapp --sync --sync-ignore node_modules,dist   # refresh ignore set
-```
-
 On Docker-compatible backends, rebuild preserves any existing
 `.devcontainer/devcontainer.json` (never overwritten). If managed fields in that
 file drift from current config (scopes/hide/networks/ports), rebuild prints a
@@ -168,7 +149,7 @@ Safety and cleanup scope:
 `dce rm` removes a dev container project outright. By default it performs a full teardown:
 
 1. stops the container if it is running, then deletes it
-2. removes every managed hidden volume (`dce-hide-<project>-<hash>`); for synced projects, terminates the Mutagen session and removes the sync volume (`dce-sync-<slug>-<12hex>`)
+2. removes every managed hidden volume (`dce-hide-<project>-<hash>`)
 3. removes the per-project config + secrets directory (`~/.config/dce-enclave/<name>`), including the SSH key, GitHub token, and `.npmrc`
 
 ```

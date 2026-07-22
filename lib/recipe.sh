@@ -50,13 +50,11 @@ declare -g _DC_RECIPE_MERGED_CONTAINER_MEMORY=""
 declare -g _DC_RECIPE_MERGED_NETWORK_INPUT=""
 declare -g _DC_RECIPE_MERGED_NETWORK_IP=""
 declare -g _DC_RECIPE_MERGED_REPO_PATH_OVERRIDE=""
-declare -g _DC_RECIPE_MERGED_SYNC=""
 declare -ga _DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS=()
-declare -ga _DC_RECIPE_MERGED_SYNC_IGNORE_INPUTS=()
 declare -ga _DC_RECIPE_MERGED_PORTS=()
 
-declare -gra _DC_RECIPE_SCALAR_KEYS=(scopes cpus memory ip repo-path sync)
-declare -gra _DC_RECIPE_LIST_KEYS=(hide sync-ignore network port)
+declare -gra _DC_RECIPE_SCALAR_KEYS=(scopes cpus memory ip repo-path)
+declare -gra _DC_RECIPE_LIST_KEYS=(hide network port)
 
 # Write a recipe file atomically from already-normalized key=value lines.
 # Existing content is replaced; an empty line list writes an empty file.
@@ -111,9 +109,7 @@ _dce_recipe_reset_state() {
   _DC_RECIPE_MERGED_NETWORK_INPUT=""
   _DC_RECIPE_MERGED_NETWORK_IP=""
   _DC_RECIPE_MERGED_REPO_PATH_OVERRIDE=""
-  _DC_RECIPE_MERGED_SYNC=""
   declare -ga _DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS=()
-  declare -ga _DC_RECIPE_MERGED_SYNC_IGNORE_INPUTS=()
   declare -ga _DC_RECIPE_MERGED_PORTS=()
 }
 
@@ -231,33 +227,6 @@ dce_recipe_parse_file() {
         _DC_RECIPE_HAS["$side:$key"]=1
         _dce_recipe_append_list "$side" "$key" "$normalized"
         ;;
-      sync-ignore)
-        # Same grammar as hide: relative, traversal-free, comma list. Under
-        # --sync this is the sync-world analog of hide (Mutagen --ignore rules).
-        if ! normalized="$(dce_normalize_hidden_paths_csv "$value")"; then
-          _dce_recipe_parse_context "$file" "$lineno"
-          return 1
-        fi
-        _DC_RECIPE_HAS["$side:$key"]=1
-        _dce_recipe_append_list "$side" "$key" "$normalized"
-        ;;
-      sync)
-        # Persisted as the literal string "0"/"1" to match CONTAINER_SYNC.
-        case "$value" in
-          0|1|true|false)
-            case "$value" in
-              true) value=1 ;;
-              false) value=0 ;;
-            esac
-            ;;
-          *)
-            _dce_recipe_parse_error "$file" "$lineno" "invalid sync value '$value' (expected 0 or 1)"
-            return 1
-            ;;
-        esac
-        _DC_RECIPE_HAS["$side:$key"]=1
-        _DC_RECIPE_SCALAR["$side:$key"]="$value"
-        ;;
       network)
         if ! normalized="$(dce_normalize_network_arg "$value")"; then
           _dce_recipe_parse_context "$file" "$lineno"
@@ -343,7 +312,6 @@ _dce_recipe_materialize_merged_inputs() {
   _DC_RECIPE_MERGED_CONTAINER_MEMORY="${_DC_RECIPE_MERGED_SCALAR[memory]-}"
   _DC_RECIPE_MERGED_NETWORK_IP="${_DC_RECIPE_MERGED_SCALAR[ip]-}"
   _DC_RECIPE_MERGED_REPO_PATH_OVERRIDE="${_DC_RECIPE_MERGED_SCALAR[repo-path]-}"
-  _DC_RECIPE_MERGED_SYNC="${_DC_RECIPE_MERGED_SCALAR[sync]-}"
 
   declare -ga _DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS=()
   if [[ -n "${_DC_RECIPE_MERGED_HAS[hide]-}" ]]; then
@@ -361,27 +329,6 @@ _dce_recipe_materialize_merged_inputs() {
       fi
       if [[ -n "$normalized_csv" ]]; then
         IFS=',' read -r -a _DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS <<< "$normalized_csv"
-      fi
-    fi
-  fi
-
-  # --sync-ignore mirrors hide's grammar and merge shape (list key, replaces).
-  declare -ga _DC_RECIPE_MERGED_SYNC_IGNORE_INPUTS=()
-  if [[ -n "${_DC_RECIPE_MERGED_HAS[sync-ignore]-}" ]]; then
-    list_blob="${_DC_RECIPE_MERGED_LIST[sync-ignore]-}"
-    items=()
-    if [[ -n "$list_blob" ]]; then
-      while IFS= read -r item; do
-        [[ -n "$item" ]] || continue
-        items+=("$item")
-      done <<< "$list_blob"
-    fi
-    if [[ ${#items[@]} -gt 0 ]]; then
-      if ! normalized_csv="$(dce_normalize_hidden_paths_values "${items[@]}")"; then
-        return 1
-      fi
-      if [[ -n "$normalized_csv" ]]; then
-        IFS=',' read -r -a _DC_RECIPE_MERGED_SYNC_IGNORE_INPUTS <<< "$normalized_csv"
       fi
     fi
   fi

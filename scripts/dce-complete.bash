@@ -32,12 +32,10 @@ unset _dce_scripts_dir
 #
 # Per-subcommand grammar mirrors the real argument parsing in scripts/*.sh:
 #   start|stop              : variadic project names (0 args == all)
-#   shell                   : [--no-wait] one project, then free-form command
-#   editor                  : [--editor <id>] [--no-wait] one project
-#   sync-status             : [--once|-1] one project
+#   shell                   : one project, then free-form command
+#   editor                  : [--editor <id>] one project
 #   rebuild-container       : one project + --rotate-keys / --inject-creds /
-#                             --keep-hidden-volumes / --from-snap / --sync /
-#                             --sync-ignore
+#                             --keep-hidden-volumes / --from-snap
 #   install                 : one project + one dotfiles directory
 #   rotate-token            : one project
 #   rebuild-image           : one of {all, base}
@@ -46,7 +44,7 @@ unset _dce_scripts_dir
 #   new                     : <name> [scope] [--config <file>] [--save-team]
 #                             [--save-user] [--git-host <provider>]
 #                             [--repo-path <d>] [--cpus N]
-#                             [--memory V] [--hide <path>] [--sync] [--sync-ignore <path>] [--yes|-y]
+#                             [--memory V] [--hide <path>] [--yes|-y]
 #                             [port:port ...]
 _dce_complete() {
   local cur prev cmd
@@ -75,58 +73,26 @@ _dce_complete() {
       return 0
       ;;
     shell)
-      # [--no-wait] <name> [free-form command]. --no-wait is offered only in
-      # the pre-project slot; once a project is typed the rest is the user's
-      # command and must stay free-form (no flag leakage).
+      # <name> [free-form command]. Project at slot 2, free-form after.
       if [[ $COMP_CWORD -eq 2 ]]; then
         _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--no-wait" == "$cur"* ]] && COMPREPLY+=("--no-wait")
         return 0
       fi
-      # Past slot 2: only complete if no project positional has been typed yet
-      # (i.e. slot 2 was --no-wait and we still need the project).
+      # Past slot 2: only complete if no project positional has been typed yet.
       local _typed_proj=0 _w
       for _w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
         case "$_w" in
-          --no-wait|-*) : ;;
+          -*) : ;;
           *) _typed_proj=1 ;;
         esac
       done
-      if [[ $_typed_proj -eq 0 ]]; then
-        _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--no-wait" == "$cur"* ]] && COMPREPLY+=("--no-wait")
-      fi
-      return 0
-      ;;
-    sync-status)
-      # [--once|-1] <project>. One project positional; --once may precede or
-      # follow it. Mirrors `shell`/`logs` (one project + a flag).
-      if [[ $COMP_CWORD -eq 2 ]]; then
-        _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--once" == "$cur"* || "-1" == "$cur"* ]] && COMPREPLY+=("--once" "-1")
-        return 0
-      fi
-      # Past slot 2: if no project positional typed yet (slot 2 was a flag),
-      # still offer the project; otherwise only --once may follow the project.
-      local _typed_proj=0 _w
-      for _w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
-        case "$_w" in
-          --once|-1|-*) : ;;
-          *) _typed_proj=1 ;;
-        esac
-      done
-      if [[ $_typed_proj -eq 0 ]]; then
-        _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--once" == "$cur"* || "-1" == "$cur"* ]] && COMPREPLY+=("--once" "-1")
-      else
-        mapfile -t COMPREPLY < <(compgen -W "--once -1" -- "$cur")
-      fi
+      [[ $_typed_proj -eq 0 ]] && _dce_reply_projects "$cur"
       return 0
       ;;
     editor)
-      # Optional --editor <id> and/or --no-wait, then/at one project.
+      # Optional --editor <id>, then/at one project.
       # If we're completing --editor's value, offer editor ids; otherwise offer
-      # the project (and the flags at slot 2 if no project typed yet).
+      # the project (and the flag at slot 2 if no project typed yet).
       if [[ "$prev" == "--editor" ]]; then
         mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_editor_ids)" -- "$cur")
         return 0
@@ -134,7 +100,6 @@ _dce_complete() {
       if [[ $COMP_CWORD -eq 2 ]]; then
         _dce_reply_projects "$cur"
         [[ -z "$cur" || "--editor" == "$cur"* ]] && COMPREPLY+=("--editor")
-        [[ -z "$cur" || "--no-wait" == "$cur"* ]] && COMPREPLY+=("--no-wait")
         return 0
       fi
       # Past slot 2: walk prior words to see if a project positional is already
@@ -152,7 +117,6 @@ _dce_complete() {
       if [[ "$_typed_proj" -eq 0 ]]; then
         _dce_reply_projects "$cur"
         [[ -z "$cur" || "--editor" == "$cur"* ]] && COMPREPLY+=("--editor")
-        [[ -z "$cur" || "--no-wait" == "$cur"* ]] && COMPREPLY+=("--no-wait")
       fi
       return 0
       ;;
@@ -194,27 +158,16 @@ _dce_complete() {
       fi
       # --from-snap takes a value (a snapshot label), not completed here.
       [[ "$prev" == "--from-snap" ]] && return 0
-      # --sync-ignore takes a value (a path), not completed here.
-      [[ "$prev" == "--sync-ignore" ]] && return 0
 
-      local have_from_snap=0 have_sync=0 _w
+      local have_from_snap=0 _w
       for _w in "${COMP_WORDS[@]:3:COMP_CWORD-3}"; do
         [[ "$_w" == "--from-snap" ]] && have_from_snap=1
-        [[ "$_w" == "--sync" ]] && have_sync=1
       done
 
-      # >= 3: optional flags (order-independent), but don't suggest the known
-      # mutual-exclusion pair after one side is already present.
+      # >= 3: optional flags (order-independent), but don't suggest --from-snap
+      # once it is already present.
       local rb_flags="--rotate-keys --inject-creds --keep-hidden-volumes --yes -y"
-      if [[ $have_sync -eq 0 && $have_from_snap -eq 0 ]]; then
-        rb_flags+=" --from-snap"
-      fi
-      if [[ $have_from_snap -eq 0 ]]; then
-        if [[ $have_sync -eq 0 ]]; then
-          rb_flags+=" --sync"
-        fi
-        rb_flags+=" --sync-ignore"
-      fi
+      [[ $have_from_snap -eq 0 ]] && rb_flags+=" --from-snap"
 
       mapfile -t COMPREPLY < <(compgen -W "$rb_flags" -- "$cur")
       return 0
@@ -443,7 +396,7 @@ _dce_complete_new() {
       mapfile -t COMPREPLY < <(compgen -f -- "$cur")
       return 0
       ;;
-    --cpus|--memory|--hide|--network|--ip|--sync-ignore)
+    --cpus|--memory|--hide|--network|--ip)
       return 0
       ;;
     --git-host)
@@ -452,7 +405,7 @@ _dce_complete_new() {
       ;;
   esac
 
-  local flags="--config --save-team --save-user --git-host --repo-path --cpus --memory --hide --sync --sync-ignore --network --ip --yes -y"
+  local flags="--config --save-team --save-user --git-host --repo-path --cpus --memory --hide --network --ip --yes -y"
   if [[ $COMP_CWORD -eq 3 ]]; then
     # Second positional: a scope (with flags also accepted).
     mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_scopes) $flags" -- "$cur")

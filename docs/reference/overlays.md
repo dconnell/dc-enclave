@@ -73,15 +73,14 @@ Scope-specific overlays can build on hidden volumes. The Node.js overlay
 - fails soft by default; set `DC_NODE_INSTALL_STRICT=1` to make install errors fatal
 
 The trigger fires whenever the target directory is empty or missing — whether
-the path is a [`--hide`](../how-to/hide-generated-paths.md) named volume, a
-[`--sync --sync-ignore`](../how-to/sync-workspace.md) Mutagen-ignored path, or a
-fresh volume — so one overlay works under both topologies.
+the path is a [`--hide`](../how-to/hide-generated-paths.md) named volume or a
+fresh volume.
 
 The `golang`, `rust`, `dotnet`, and `python` example overlays follow the same
 shape with their own package manager (`go mod download`, `cargo fetch`,
 `dotnet restore`, `uv sync`) and a matching `DC_<LANG>_INSTALL_STRICT=1` env.
-See `Containerfiles/example/README.md` for each overlay's `--hide` / `--sync-ignore`
-paths and sync command.
+See `Containerfiles/example/README.md` for each overlay's `--hide` paths and
+install command.
 
 This means you get fast, correct dependency sync without any `node_modules` files touching your host.
 

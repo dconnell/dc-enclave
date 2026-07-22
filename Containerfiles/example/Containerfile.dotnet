@@ -65,7 +65,7 @@ HASH_FILE="$NUGET_CACHE/.dce-install-hash"
 log() { printf '%s\n' "[dotnet-hide] $*"; }
 
 # True when a target dir is missing OR empty -- the install trigger fires
-# regardless of WHY it is empty (hidden volume, --sync-ignore, fresh volume).
+# regardless of WHY it is empty (hidden volume or a fresh volume).
 _dir_empty() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
 
 # Any .NET project/solution manifest within a shallow tree.

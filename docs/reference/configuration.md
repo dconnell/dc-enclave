@@ -49,8 +49,6 @@ Recipe files are plain `key=value` lines. Supported keys:
 - `cpus`
 - `memory`
 - `hide` (repeatable)
-- `sync` (`0` or `1`) — opts the project into a [synced workspace](../how-to/sync-workspace.md)
-- `sync-ignore` (repeatable) — Mutagen ignore paths; only meaningful with `sync=1`
 - `network` (repeatable)
 - `ip`
 - `repo-path`
@@ -59,12 +57,8 @@ Recipe files are plain `key=value` lines. Supported keys:
 Merge and override rules:
 
 - user recipe overrides team recipe per key
-- list keys (`hide`, `sync-ignore`, `network`, `port`) replace as a whole (not union)
+- list keys (`hide`, `network`, `port`) replace as a whole (not union)
 - CLI args override recipe values for that run
-
-`sync=1` and `hide` are mutually exclusive in the merged result (recipe + CLI).
-If both are present, `dce new` fails fast and asks you to use `sync-ignore`
-under `sync` instead.
 
 ### `repo-path` trust boundary
 
@@ -103,16 +97,6 @@ dce new api --cpus 3 --hide .cache --save-user
 
 Each project's config lives at `~/.config/dce-enclave/<name>/config` and is
 written by `dce new`. The hardened loader rejects unknown keys, unsafe shell
-syntax, and out-of-contract value combinations. The sync-related keys are:
-
-- `CONTAINER_SYNC` — `0` (default) or `1`. Persisted from `--sync`; `dce
-  rebuild-container` reads it so a synced project stays synced across rebuild.
-- `CONTAINER_SYNC_IGNORE_PATHS` — array of Mutagen ignore paths, persisted from
-  `--sync-ignore`.
-
-The loader rejects a config carrying `CONTAINER_SYNC=1` alongside a non-empty
-`CONTAINER_HIDDEN_PATHS`: `--sync` and `--hide` are mutually exclusive (under
-`--sync`, exclude generated paths with `CONTAINER_SYNC_IGNORE_PATHS`). See
-[sync workspace](../how-to/sync-workspace.md).
+syntax, and out-of-contract value combinations.
 
 

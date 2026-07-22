@@ -98,15 +98,12 @@ if [[ -f "$CONFIG" ]]; then
   fi
   HIDDEN_PATHS=("${CONTAINER_HIDDEN_PATHS[@]}")
   REPOS_DIR_VAL="${REPOS_DIR:-}"
-  SYNCED=false
-  [[ "${CONTAINER_SYNC:-0}" == "1" ]] && SYNCED=true
   if backend_use "${CONTAINER_BACKEND:-}" >/dev/null 2>&1; then
     BACKEND_OK=true
     ACTIVE_BACKEND="$(backend_name)"
   fi
 else
   echo "WARN: No config for '$PROJECT' at $CONFIG; attempting best-effort removal by name."
-  SYNCED=false
   if backend_use "${CONTAINER_BACKEND:-}" >/dev/null 2>&1; then
     BACKEND_OK=true
     ACTIVE_BACKEND="$(backend_name)"
@@ -148,13 +145,6 @@ if [[ ${#HIDDEN_PATHS[@]} -gt 0 ]]; then
     echo "                 -> volumes PRESERVED (--keep-volumes)"
   else
     echo "                 -> volumes REMOVED"
-  fi
-fi
-if $SYNCED; then
-  if $KEEP_VOLUMES; then
-    echo "  Sync volume:    PRESERVED (--keep-volumes); session left running"
-  else
-    echo "  Sync volume:    dce-sync-<slug>-<12hex> session TERMINATED + volume REMOVED"
   fi
 fi
 echo "  Snapshots:      $SNAP_DISP"
@@ -201,21 +191,6 @@ if $BACKEND_OK; then
         echo "  - Already gone or in use: $hidden_volume ($hidden_path)"
       fi
     done
-  fi
-
-  # Synced projects: terminate the Mutagen session BEFORE removing the volume,
-  # else Mutagen holds the volume busy and removal fails or orphans the session.
-  # The host checkout ($REPOS_DIR) is never touched here -- only the disposable
-  # cache volume + its session. Honors --keep-volumes (preserve both).
-  if $SYNCED && ! $KEEP_VOLUMES; then
-    echo "==> Terminating sync session + removing sync volume..."
-    dce_sync_terminate "$PROJECT"
-    sync_volume="$(dce_sync_volume_name "$PROJECT")"
-    if backend_remove_volume "$sync_volume" 2>/dev/null; then
-      echo "  ✓ Removed: $sync_volume"
-    else
-      echo "  - Already gone or in use: $sync_volume"
-    fi
   fi
 
   # Reclaim snapshot artifacts this project owns so they do not leak until a

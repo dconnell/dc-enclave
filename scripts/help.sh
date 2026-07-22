@@ -31,16 +31,15 @@ _show_summary() {
   echo "                                                    Create a new isolated container project"
   echo "  new <name> [scope[,scope...]] [--config <path>] [--repo-path <path>]"
   echo "       [--save-team] [--save-user] [--git-host <provider>] [--cpus <N>] [--memory <val>]"
-  echo "       [--hide <path[,path...]> ...] [--sync] [--sync-ignore <path[,path...]> ...] [host:container ...]"
-  echo "                                                    With resource limits (and synced workspace opt-in)"
+  echo "       [--hide <path[,path...]> ...] [host:container ...]"
+  echo "                                                    With resource limits"
   echo "  start [name ...]                                  Start one or more projects, or all"
   echo "  stop [name ...]                                   Stop one or more projects, or all"
   echo "  list                                              List containers and status"
   echo "  status                                            Show overall status and per-project details"
   echo "  shell <name> [command]                            Interactive shell/command; seeds git token as provider env var (zsh -ic)"
   echo "  logs <name> [-f|--follow] [--tail N]              Fetch container log stream"
-  echo "  editor [--editor <id>] [--no-wait] <name>         Launch your editor attached to the running container (/workspace)"
-  echo "  sync-status [--once] <name>                       Show Mutagen sync state for a synced workspace (live, or --once)"
+  echo "  editor [--editor <id>] <name>                     Launch your editor attached to the running container (/workspace)"
   echo "  extensions <list|host|available|show|diff|capture> [<name>] [--scope <s>] [--editor <id>]"
   echo "                                                    Inspect, compare, and capture editor extensions"
   echo "  exec [--root] <name> <command...>                 Raw one-shot in a running container; no token (docker-exec style)"
@@ -50,7 +49,6 @@ _show_summary() {
   echo "  rebuild-container <name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes]"
   echo "                                                    Destroy and recreate container"
   echo "  rebuild-container <name> --from-snap <label>     Recreate from a snapshot"
-  echo "  rebuild-container <name> --sync [--sync-ignore <p>...]  Enable/refresh a synced workspace"
   echo "  rebuild-image [all|base]                          Rebuild managed images"
   echo "  snapshot <name> [<label>] [--exclude-volumes] [--yes]   Snapshot container FS + hidden volumes"
   echo "  snapshots list [<name>]                           List snapshots (with sizes)"
@@ -75,7 +73,7 @@ Usage: dce new <name> [scope[,scope...]] [--repo-path <path>]
               [--config <path>]
               [--save-team] [--save-user] [--git-host <provider>] [--yes|-y]
               [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...]
-              [--sync] [--sync-ignore <path[,path...]> ...] [host:container ...]
+              [host:container ...]
 
 Description:
   Creates a new isolated development container with its own SSH keys, git-host
@@ -149,27 +147,6 @@ Options:
                   --hide node_modules
                   --hide apps/web/node_modules,apps/api/node_modules
 
-  --sync        Replace the /workspace bind mount with a Mutagen-synced named
-                volume (dce-sync-<slug>-<12hex>) mounted at the SAME /workspace path,
-                so source-tree file I/O stays on the container VM's native ext4
-                instead of crossing the VirtioFS boundary. The host checkout is
-                canonical (two-way sync, host wins on conflict). The escape hatch
-                for large repos (Nx/Vite/module federation) where the bind mount
-                is too slow. Supported on docker, orbstack, colima;
-                apple/container and podman fail fast (no Mutagen transport).
-                Requires the `mutagen` CLI on the
-                host. Mutually exclusive with --hide (use --sync-ignore instead).
-                See: docs/how-to/sync-workspace.md
-
-  --sync-ignore <path[,path...]>
-                Exclude one or more /workspace-relative paths from Mutagen sync
-                (the sync-world analog of --hide). Excluded paths live on the
-                sync volume's native ext4 (fast) but are never replicated to/from
-                the host, keeping node_modules/dist/caches off the host. Same
-                grammar as --hide; may be repeated. Only meaningful with --sync.
-                Recommended Node shape:
-                  --sync --sync-ignore node_modules,.nx,dist
-
 
   --network <name[,name...]>
                Attach the container to one or more private dce networks so it can
@@ -204,7 +181,6 @@ Examples:
   dce new myapp node --repo-path ~/code/myapp
   dce new myapp --cpus 2 --memory 4g --hide node_modules 5173:5173
   dce new monorepo nodejs,golang --hide apps/web/node_modules --hide .cache/go/mod,.cache/go/build
-  dce new monorepo nodejs --sync --sync-ignore node_modules,.nx,dist 3000:3000
 
 Notes:
   - The base image 'dce-base:latest' must exist. Run scripts/setup.sh first.
@@ -334,7 +310,7 @@ EOF
 
 _show_help_shell() {
   cat <<'EOF'
-Usage: dce shell [--no-wait] <name> [command]
+Usage: dce shell <name> [command]
 
 Description:
   Opens an interactive shell inside a dev container. If the container is not
@@ -347,12 +323,6 @@ Description:
   If a command is provided, it is executed non-interactively inside the
   container (via zsh -ic) and the shell exits afterwards.
 
-  Synced workspaces (--sync): for an interactive shell (no command given), dce
-  prints a one-line sync state and waits for the Mutagen session to settle
-  before entering, so you never land in a half-synced /workspace. The wait is
-  skipped automatically when a command is given, and can be disabled with
-  --no-wait (or DCE_SYNC_NO_WAIT=1).
-
 Arguments:
   <name>     Project/container name. Must already exist.
 
@@ -361,20 +331,10 @@ Arguments:
              shell config are loaded. If a command begins with '-', separate
              it from the project with '--', e.g. dce shell myapp -- -flag.
 
-Options:
-  --no-wait  Skip the Mutagen sync settle wait for this interactive entry
-             (synced workspaces only). The sync state line is still printed.
-             Equivalent to DCE_SYNC_NO_WAIT=1.
-
 Examples:
   dce shell myapp                         Open an interactive zsh session
   dce shell myapp "git pull"              Run a single command and exit
   dce shell myapp "npm install && npm run dev"
-  dce shell --no-wait myapp              Enter without waiting for sync to settle
-
-Environment:
-  DCE_SYNC_NO_WAIT          Set to 1 to skip the sync settle wait (synced only).
-  DCE_SYNC_ENTRY_WAIT_TIMEOUT  Seconds to wait for sync to settle (default 600).
 
 Notes:
   - If the container is stopped, 'dce start' is called automatically.
@@ -387,46 +347,9 @@ Notes:
 EOF
 }
 
-_show_help_sync_status() {
-  cat <<'EOF'
-Usage: dce sync-status [--once] <name>
-
-Description:
-  Shows Mutagen sync state for a synced (--sync) workspace. Mutagen runs on the
-  host, so this is a host-side command that resolves the project's session name
-  (dce-sync-<slug>-<12hex>) for you, then runs Mutagen's own status view.
-
-  By default it streams a LIVE status view (mutagen sync monitor) until you
-  interrupt it with Ctrl-C — most useful while reconciliation is in progress.
-  Pass --once for a single one-shot snapshot instead.
-
-  This is the command dce points you at when the entry-time settle wait times
-  out or a session is paused. See: docs/how-to/sync-workspace.md.
-
-Arguments:
-  <name>     Project/container name. Must already exist and be a synced
-             (--sync) workspace.
-
-Options:
-  --once, -1   Print a one-shot status snapshot (mutagen sync list) and exit,
-               instead of the default live monitor.
-
-Examples:
-  dce sync-status myapp              Live-stream sync state (Ctrl-C to stop)
-  dce sync-status myapp --once       One-shot snapshot
-
-Notes:
-  - Refuses fast if the project is not synced, mutagen is absent, or no
-    session exists (with the command to fix each).
-  - There is no first-class sync status from INSIDE the container; mutagen is
-    host-only. As a rough proxy inside the container, `du -sh /workspace`
-    converges as reconciliation proceeds.
-EOF
-}
-
 _show_help_editor() {
   cat <<'EOF'
-Usage: dce editor [--editor <id>] [--no-wait] <name>
+Usage: dce editor [--editor <id>] <name>
 
 Description:
   Launches your editor attached to a running dev container at /workspace. The
@@ -478,20 +401,10 @@ Options:
              Override the resolved editor for this invocation only.
              Known ids: vscode, vscode-insiders.
 
-  --no-wait
-             Skip the Mutagen sync settle wait before launching the editor
-             (synced workspaces only). The sync state line is still printed.
-             Equivalent to DCE_SYNC_NO_WAIT=1.
-
 Examples:
   dce editor myapp                       Launch the default editor attached to myapp
   dce editor --editor vscode-insiders myapp
-  dce editor --no-wait myapp             Launch without waiting for sync to settle
   DCE_EDITOR=vscode dce editor myapp     Use VS Code for this shell's invocations
-
-Environment:
-  DCE_SYNC_NO_WAIT          Set to 1 to skip the sync settle wait (synced only).
-  DCE_SYNC_ENTRY_WAIT_TIMEOUT  Seconds to wait for sync to settle (default 600).
 
 Notes:
   - Requires a Docker-compatible backend (docker/orbstack/colima/podman).
@@ -752,7 +665,6 @@ _show_help_rebuild_container() {
   cat <<'EOF'
 Usage: dce rebuild-container <name> [--rotate-keys] [--inject-creds]
               [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]
-              [--sync] [--sync-ignore <path[,path...]> ...]
 
 Description:
   Destroys a container and recreates it from its selected image.
@@ -830,20 +742,6 @@ Options:
                 incident-response flows. The destruction/recreation still
                 proceeds exactly as in the interactive path.
 
-   --sync       Enable a synced workspace on a project that was created without
-                --sync (converts the bind mount to a Mutagen-synced volume). For
-                a project already created with --sync, the rebuilt container
-                stays synced automatically (this flag is not required). The
-                dce-sync volume is preserved across rebuild (never in the
-                clean-slate removal path) and a `mutagen sync flush` drains
-                pending changes before the container is destroyed, so no
-                container-side edit is lost. Mutually exclusive with --from-snap.
-
-   --sync-ignore <path[,path...]>
-                Adjust the Mutagen ignore set; re-creates the sync session so the
-                new rules apply. Same grammar as the `dce new` flag. Only
-                meaningful with --sync (or an already-synced project).
-
 Examples:
   dce rebuild-container myapp
   dce rebuild-container myapp --rotate-keys
@@ -851,8 +749,6 @@ Examples:
   dce rebuild-container myapp --rotate-keys --keep-hidden-volumes
   dce rebuild-container myapp --from-snap 20250101-120000
   dce rebuild-container myapp --yes
-  dce rebuild-container myapp --sync
-  dce rebuild-container myapp --sync --sync-ignore node_modules,dist
 
 Notes:
   - This is DESTRUCTIVE to the container filesystem. Uncommitted work inside
@@ -1424,7 +1320,6 @@ case "$COMMAND" in
   shell)              _show_help_shell ;;
   logs)               _show_help_logs ;;
   editor)             _show_help_editor ;;
-  sync-status)        _show_help_sync_status ;;
   extensions)         _show_help_extensions ;;
   exec)               _show_help_exec ;;
   restart)            _show_help_restart ;;

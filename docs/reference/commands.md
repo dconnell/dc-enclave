@@ -10,17 +10,15 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce start [name ...]` | Start one or more projects, or all configured projects if none given |
 | `dce stop [name ...]` | Stop one or more projects, or all configured projects if none given |
 | `dce list` (`dce ls`) | List DC Enclave and their running/stopped state |
-| `dce shell [--no-wait] <name> [command]` | Open a shell or run one command inside a project container; injects the project's git token as the provider env var (`GITHUB_TOKEN` / `GITLAB_TOKEN`) and wraps the command in `zsh -ic`. For a synced workspace, interactive entry waits for the Mutagen session to settle first (`--no-wait` / `DCE_SYNC_NO_WAIT=1` opts out) |
+| `dce shell <name> [command]` | Open a shell or run one command inside a project container; injects the project's git token as the provider env var (`GITHUB_TOKEN` / `GITLAB_TOKEN`) and wraps the command in `zsh -ic` |
 | `dce logs <name> [-f\|--follow] [--tail N]` | Fetch a container's stdout/stderr log stream (works on stopped containers) |
-| `dce editor [--editor <id>] [--no-wait] <name>` | Launch your editor attached to the running container at `/workspace` (VS Code by default; Docker-compatible backends only). Under PAT auth, also sync VS Code's attached-container config so editor/terminal Git uses the container credential store instead of VS Code's host-forwarding helper. For a synced workspace, waits for the Mutagen session to settle before launch (`--no-wait` / `DCE_SYNC_NO_WAIT=1` opts out). |
-| `dce sync-status [--once] <name>` | Show Mutagen sync state for a [synced workspace](../how-to/sync-workspace.md): live by default (`mutagen sync monitor`), or `--once` for a one-shot snapshot (`mutagen sync list`). Host-side only. |
+| `dce editor [--editor <id>] <name>` | Launch your editor attached to the running container at `/workspace` (VS Code by default; Docker-compatible backends only). Under PAT auth, also sync VS Code's attached-container config so editor/terminal Git uses the container credential store instead of VS Code's host-forwarding helper. |
 | `dce extensions <list\|host\|available\|show\|diff\|capture> ...` | Inspect declared/runtime editor extension sets, compare drift, and capture curated manifests under `extensions/<editor>/<scope>.txt`. |
 | `dce exec [--root] <name> <command...>` | Run a single command in a running container, docker-exec style: no token, no zsh wrapping, auto-TTY |
 | `dce restart [name ...]` | Restart one or more projects, or all configured projects |
 | `dce rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, snapshot artifacts, and config+secrets (host code preserved). Snapshot artifacts follow `--keep-volumes` (preserved with the flag, removed without it) |
 | `dce rebuild-container <name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes]` | Destroy and recreate container from selected image |
 | `dce rebuild-container <name> --from-snap <label>` | Recreate container from a saved snapshot (one-off restore; does not rewrite the configured image; credentials not injected unless `--inject-creds`/`--rotate-keys`) |
-| `dce rebuild-container <name> --sync [--sync-ignore <path[,path...]> ...]` | Enable/refresh a [synced workspace](../how-to/sync-workspace.md) on rebuild; the sync volume is preserved and flushed pre-destroy |
 | `dce rebuild-image [all\|base]` | Rebuild base image and (for `all`) all configured derived images |
 | `dce snapshot <name> [<label>] [--exclude-volumes] [--exclude-volume <path>] [--yes]` | Snapshot a container's filesystem AND hidden volumes to a tagged image (`dce-snap-<name>-<label>:latest` + `dce-snapvol-*`); source volumes are copied read-only; prompts before copying unless `--yes`; `--exclude-volumes`/`--exclude-volume` skip volumes — see [snapshots & rollback](../how-to/snapshot-and-rollback.md) |
 | `dce snapshot rm <name> <label>` | Remove one snapshot image, its captured volumes (`dce-snapvol-*`), and its manifest |
@@ -58,7 +56,7 @@ Several commands have short aliases:
 | Form | Description |
 |---|---|
 | `dce new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
-| `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--git-host <provider>] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--sync] [--sync-ignore <path[,path...]> ...] [--network <name[,name...]>] [--ip <addr>] [host:container ...]` | With recipe defaults, optional recipe save, git-host selection, resource limits, hidden paths, [synced workspace](../how-to/sync-workspace.md), and networks (see [Hiding generated paths](../how-to/hide-generated-paths.md)) |
+| `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--git-host <provider>] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--network <name[,name...]>] [--ip <addr>] [host:container ...]` | With recipe defaults, optional recipe save, git-host selection, resource limits, hidden paths, and networks (see [Hiding generated paths](../how-to/hide-generated-paths.md)) |
 
 ## Command support by backend
 
@@ -78,7 +76,6 @@ Command-level support. ✅ fully supported · 🟡 works, but some flags/subcomm
 | `dce shell` | ✅ | ✅ | ✅ |
 | `dce logs` | ✅ | ✅ | ✅ |
 | `dce editor` | ✅ | ❌ | ✅ |
-| `dce sync-status` | ✅ | ✅ | ✅ |
 | `dce extensions` | ✅ | 🟡 | ✅ |
 | `dce exec` | ✅ | ✅ | ✅ |
 | `dce restart` | ✅ | ✅ | ✅ |
@@ -105,7 +102,6 @@ These flags/subcommands run on only a subset of backends. Each fails fast with a
 | Feature | Docker / OrbStack / Colima | apple / container | Podman | Reason |
 |---|---|---|---|---|
 | `dce editor` | ✅ | ❌ | ✅ | VS Code Dev Containers needs the Docker API socket; apple/container has no attach path |
-| `dce new --sync`, `dce rebuild-container --sync` | ✅ | ❌ | ❌ | [Synced workspace](../how-to/sync-workspace.md) needs a Mutagen transport; none exists for apple or podman |
 | `dce new --ip` (static IPv4) | ✅ | ❌ | ✅ | apple/container allows a single network with no static IP |
 | `dce config sync-vscode` | ✅ | ❌ | ✅ | rewrites `.devcontainer/devcontainer.json`, which apple projects don't carry (also requires `jq`) |
 | `dce network add`, `dce network remove` | ✅ | ❌ | ✅ | apple/container sets networks only at container create time (no live attach/detach) |
@@ -114,4 +110,4 @@ These flags/subcommands run on only a subset of backends. Each fails fast with a
 
 > **Note:** `dce network create` on apple/container additionally requires macOS 26+ for user-defined networks; the other backends have no such version floor.
 
-See [backends](backends.md) for runtime auto-detection, the `--sync` transport matrix, and per-platform setup notes.
+See [backends](backends.md) for runtime auto-detection and per-platform setup notes.
