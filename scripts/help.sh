@@ -187,8 +187,11 @@ Notes:
   - Config is stored in ~/.config/dce-enclave/<name>/config
   - Secrets (SSH key, GitHub token, .npmrc) are stored alongside the config
     with restrictive permissions (chmod 600/700).
-  - For Docker-compatible backends, a .devcontainer/devcontainer.json is
-    generated for VS Code Dev Containers integration.
+  - A .devcontainer/devcontainer.json is generated for VS Code Dev Containers
+    integration (every backend; apple/container uses VS Code's experimental
+    apple-container attach -- see `dce help editor`).
+  - apple/container projects also get --dns configured at create time, since
+    apple's default resolver does not forward external DNS. Override: DCE_DNS.
   - Existing devcontainer.json is preserved (never overwritten). If an existing
     file's managed fields drift from current config, `dce new` prints a notice;
     reconcile with `dce config sync-vscode <name>`.
@@ -369,10 +372,11 @@ Description:
   See docs/reference/backends.md for why "attach" (not "reopen in container")
   is the right path.
 
-  This command REFUSES on the apple/container backend: apple/container is not
-  Docker-API compatible, so the VS Code Dev Containers extension cannot attach.
-  To edit, open the host repo folder with your editor directly, or switch to a
-  Docker-compatible backend.
+  On apple/container, this uses VS Code Dev Containers' EXPERIMENTAL
+  apple-container attach path (the "Dev Containers: Attach to Running Apple
+  Container..." command). Enable "Dev Containers: Experimental: Apple Container
+  Support" (dev.containers.experimentalAppleContainerSupport) in VS Code first,
+  or the attach will not resolve. macOS only.
 
 Editor selection (first match wins):
   --editor <id>     Explicit one-shot override.
@@ -407,7 +411,9 @@ Examples:
   DCE_EDITOR=vscode dce editor myapp     Use VS Code for this shell's invocations
 
 Notes:
-  - Requires a Docker-compatible backend (docker/orbstack/colima/podman).
+  - Works on every backend. docker/orbstack/colima/podman use the standard
+    Dev Containers attach; apple/container uses VS Code's EXPERIMENTAL
+    apple-container attach (enable dev.containers.experimentalAppleContainerSupport).
   - VS Code's "Dev Containers" extension must be installed for the attach to
     succeed; `scripts/setup.sh` warns if it is missing.
   - If the host PAT has changed since the container last saw it, `dce editor`
@@ -444,8 +450,9 @@ Description:
   declared state.
 
   v1 supports the vscode editor only (namespace "vscode"). Container-derived
-  subcommands require a Docker-compatible backend and a running container
-  (they do NOT auto-start); static subcommands are backend-agnostic.
+  subcommands require a running container (they do NOT auto-start) and work on
+  every backend (docker exec / container exec); static subcommands are
+  backend-agnostic.
 
 Subcommands:
   list <project>              Extensions installed in the project's container.

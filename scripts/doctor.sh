@@ -383,7 +383,7 @@ _doctor_extension_drift() {
   local dc_file=""
   [[ -n "${REPOS_DIR:-}" ]] && dc_file="$REPOS_DIR/.devcontainer/devcontainer.json"
   if [[ -z "$dc_file" || ! -f "$dc_file" ]]; then
-    _skip "devcontainer.json in sync" "no devcontainer.json (apple backend or not yet created)"
+    _skip "devcontainer.json in sync" "no devcontainer.json (not yet created)"
   else
     local global_loaded=false
     local global_cfg

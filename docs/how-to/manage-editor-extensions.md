@@ -61,8 +61,9 @@ dce extensions diff myapp
 - installed in container but not declared (`container \ declared`)
 - declared but currently not installed (`declared \ container`)
 
-When runtime prerequisites are missing (container stopped, apple backend,
-`code` CLI absent in-container), `diff` prints a clean `SKIP` message.
+When runtime prerequisites are missing (container stopped, or `code` CLI absent
+in-container before the first VS Code attach), `diff` prints a clean `SKIP`
+message. Works on every backend, including apple/container (via `container exec`).
 
 ## Capture extensions into manifests
 

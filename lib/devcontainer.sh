@@ -20,7 +20,8 @@
 #       that preserves user-authored keys/mounts (`dce config sync-vscode`).
 #   - dce_devcontainer_build_file    : base-vs-derived Containerfile path.
 #
-# Apple/container has no devcontainer.json; callers gate on docker-compatible.
+# Apple/container now seeds a devcontainer.json too (experimental VS Code Dev
+# Containers apple-container attach); callers no longer gate on docker-compat.
 # =============================================================================
 
 # Auto-source deps if this lib is loaded directly (single-import convenience).

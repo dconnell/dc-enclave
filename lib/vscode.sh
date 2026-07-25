@@ -2,9 +2,10 @@
 # =============================================================================
 # lib/vscode.sh - VS Code "attach to running container" config helpers.
 #
-# Only Docker-compatible backends use this. When a container is created or
-# rebuilt, we seed VS Code's per-container "named attach" config
-# (workspaceFolder=/workspace) so "Attach to Running Container" lands in the
+# Used by every backend (docker-compatible AND apple/container). When a
+# container is created or rebuilt, we seed VS Code's per-container "named
+# attach" config (workspaceFolder=/workspace) so "Attach to Running Container"
+# (and apple/container's "Attach to Running Apple Container") lands in the
 # right workspace across image rebuilds/re-tags. Existing configs are preserved.
 # =============================================================================
 

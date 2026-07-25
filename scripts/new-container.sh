@@ -800,84 +800,96 @@ dce_inject_ssh_deploy_key "$PROJECT"
 echo "==> Configuring git in container..."
 dce_ensure_git_credentials "$PROJECT"
 
-if $DOCKER_COMPATIBLE; then
-  echo "==> Generating Dev Containers config for Docker-compatible backend..."
-  # Docker-compatible: write a .devcontainer/devcontainer.json so VS Code Dev
-  # Containers can build/attach the same recipe (existing file is preserved).
-  DEVCONTAINER_DIR="$REPOS_DIR/.devcontainer"
-  DEVCONTAINER_FILE="$DEVCONTAINER_DIR/devcontainer.json"
+# Seed .devcontainer/devcontainer.json + the VS Code named-attach config for
+# every backend. apple/container now uses VS Code Dev Containers' EXPERIMENTAL
+# apple-container attach path (dev.containers.experimentalAppleContainerSupport),
+# which consults the same .devcontainer/devcontainer.json + nameConfigs storage
+# as docker -- so the seed is identical and attach lands in /workspace with
+# declared extensions installed. Existing files are preserved; drift is
+# reported read-only.
+echo "==> Generating Dev Containers config..."
+DEVCONTAINER_DIR="$REPOS_DIR/.devcontainer"
+DEVCONTAINER_FILE="$DEVCONTAINER_DIR/devcontainer.json"
 
-  if [[ -f "$DEVCONTAINER_FILE" ]]; then
-    echo "  ✓ $DEVCONTAINER_FILE already exists - not overwritten."
-    echo "  Update it manually, or reconcile it with:"
-    echo "    dce config sync-vscode $PROJECT"
-    echo "  (Containerfile for this recipe: $DEVCONTAINER_BUILD_FILE)"
-    # Read-only drift notice: if the managed fields in the existing file no
-    # longer match what `dce new` would generate, point the operator at the diff
-    # and the sync command. Non-fatal; safe under --yes / non-interactive use.
-    _new_nets_csv=""
-    [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]] && _new_nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
-    _new_ports_csv=""
-    [[ ${#PORTS[@]} -gt 0 ]] && _new_ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
-    # Resolve the extension adoption state so declaration drift is reported for
-    # adopted projects (manifests_exist) and suppressed pre-adoption (migration
-    # guard). Mirrors the seeding resolution in the else-branch below.
-    _new_ext_csv=""
-    _new_ext_adopted="false"
-    if dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null; then
-      _new_ext_adopted="true"
-      _new_ext_csv="$(dce_ext_resolve_csv vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null)"
-    fi
-    dce_devcontainer_detect_drift "$PROJECT" "$DEVCONTAINER_FILE" "$DEVCONTAINER_BUILD_FILE" \
-      "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" \
-      "vscode" "$_new_ext_csv" "$_new_ext_adopted" >&2 || true
-  else
-    mkdir -p "$DEVCONTAINER_DIR"
-
-    _new_nets_csv=""
-    [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]] && _new_nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
-    _new_ports_csv=""
-    [[ ${#PORTS[@]} -gt 0 ]] && _new_ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
-
-    # Resolve the editor-extensions set for this project's scopes (vscode in v1)
-    # so the seeded devcontainer.json carries customizations.vscode.extensions
-    # and VS Code auto-installs them on first open (plans/extensions.md). Global
-    # config (team/user roots) was loaded above for scope/image derivation.
-    _new_ext_csv=""
-    if dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null; then
-      _new_ext_csv="$(dce_ext_resolve_csv vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null)"
-    fi
-
-    # The seeded JSON is produced by the single shared renderer so `dce new`,
-    # drift detection, and `dce config sync-vscode` all agree on managed state.
-    # Pass the current git auth method so the renderer can emit the VS Code
-    # git-auth override only when a PAT is configured (see dce_devcontainer_render).
-    dce_devcontainer_render "$PROJECT" "$DEVCONTAINER_BUILD_FILE" "$ROOT_DIR" \
-      "$SECRET_DIR" "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" "$HOST_TZ" \
-      "$(dce_git_auth_method)" "vscode" "$_new_ext_csv" \
-      > "$DEVCONTAINER_FILE"
-
-    echo "  ✓ Created $DEVCONTAINER_FILE"
-    echo "  To attach VS Code to the running '$PROJECT' container:"
-    echo "    Dev Containers: Attach to Running Container..."
-    echo "  (Do not use 'Reopen in Container' — it builds a separate editor container; see README.)"
+if [[ -f "$DEVCONTAINER_FILE" ]]; then
+  echo "  ✓ $DEVCONTAINER_FILE already exists - not overwritten."
+  echo "  Update it manually, or reconcile it with:"
+  echo "    dce config sync-vscode $PROJECT"
+  echo "  (Containerfile for this recipe: $DEVCONTAINER_BUILD_FILE)"
+  # Read-only drift notice: if the managed fields in the existing file no
+  # longer match what `dce new` would generate, point the operator at the diff
+  # and the sync command. Non-fatal; safe under --yes / non-interactive use.
+  _new_nets_csv=""
+  [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]] && _new_nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
+  _new_ports_csv=""
+  [[ ${#PORTS[@]} -gt 0 ]] && _new_ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
+  # Resolve the extension adoption state so declaration drift is reported for
+  # adopted projects (manifests_exist) and suppressed pre-adoption (migration
+  # guard). Mirrors the seeding resolution in the else-branch below.
+  _new_ext_csv=""
+  _new_ext_adopted="false"
+  if dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null; then
+    _new_ext_adopted="true"
+    _new_ext_csv="$(dce_ext_resolve_csv vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null)"
   fi
-
-  echo "==> Seeding VS Code named attach config..."
-  ATTACH_CONFIG_COUNT=0
-  while IFS= read -r attach_config_file; do
-    [[ -z "$attach_config_file" ]] && continue
-    ATTACH_CONFIG_COUNT=$((ATTACH_CONFIG_COUNT + 1))
-    echo "  ✓ $attach_config_file"
-  done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace")
-
-  if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
-    echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
-  fi
+  dce_devcontainer_detect_drift "$PROJECT" "$DEVCONTAINER_FILE" "$DEVCONTAINER_BUILD_FILE" \
+    "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" \
+    "vscode" "$_new_ext_csv" "$_new_ext_adopted" >&2 || true
 else
+  mkdir -p "$DEVCONTAINER_DIR"
+
+  _new_nets_csv=""
+  [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]] && _new_nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
+  _new_ports_csv=""
+  [[ ${#PORTS[@]} -gt 0 ]] && _new_ports_csv="$(dce_join_by ',' "${PORTS[@]}")"
+
+  # Resolve the editor-extensions set for this project's scopes (vscode in v1)
+  # so the seeded devcontainer.json carries customizations.vscode.extensions
+  # and VS Code auto-installs them on first open (plans/extensions.md). Global
+  # config (team/user roots) was loaded above for scope/image derivation.
+  _new_ext_csv=""
+  if dce_ext_manifests_exist vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null; then
+    _new_ext_csv="$(dce_ext_resolve_csv vscode "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null)"
+  fi
+
+  # The seeded JSON is produced by the single shared renderer so `dce new`,
+  # drift detection, and `dce config sync-vscode` all agree on managed state.
+  # Pass the current git auth method so the renderer can emit the VS Code
+  # git-auth override only when a PAT is configured (see dce_devcontainer_render).
+  dce_devcontainer_render "$PROJECT" "$DEVCONTAINER_BUILD_FILE" "$ROOT_DIR" \
+    "$SECRET_DIR" "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" "$HOST_TZ" \
+    "$(dce_git_auth_method)" "vscode" "$_new_ext_csv" \
+    > "$DEVCONTAINER_FILE"
+
+  echo "  ✓ Created $DEVCONTAINER_FILE"
+  echo "  To attach VS Code to the running '$PROJECT' container:"
+  if $DOCKER_COMPATIBLE; then
+    echo "    Dev Containers: Attach to Running Container..."
+  else
+    echo "    Dev Containers: Attach to Running Apple Container... (experimental;"
+    echo "        enable dev.containers.experimentalAppleContainerSupport in VS Code)"
+  fi
+  echo "  (Do not use 'Reopen in Container' — it builds a separate editor container; see README.)"
+fi
+
+echo "==> Seeding VS Code named attach config..."
+ATTACH_CONFIG_COUNT=0
+while IFS= read -r attach_config_file; do
+  [[ -z "$attach_config_file" ]] && continue
+  ATTACH_CONFIG_COUNT=$((ATTACH_CONFIG_COUNT + 1))
+  echo "  ✓ $attach_config_file"
+done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace")
+
+if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
+  echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
+fi
+
+# apple/container additionally seeds a VS Code terminal profile that routes
+# shell tabs through `dce shell` -- the pre-attach terminal workflow. Harmless
+# alongside the Dev Containers attach path (terminals in an attached session
+# already open inside the container).
+if ! $DOCKER_COMPATIBLE; then
   echo "==> Generating VS Code workspace settings for apple/container backend..."
-  # apple/container has no Dev Containers extension; route VS Code terminals
-  # through `dce shell` via a terminal profile instead.
   VSCODE_DIR="$REPOS_DIR/.vscode"
   VSCODE_SETTINGS="$VSCODE_DIR/settings.json"
   mkdir -p "$VSCODE_DIR"
@@ -916,7 +928,8 @@ echo ""
 if $DOCKER_COMPATIBLE; then
   echo "  [ ] (Optional) Open $REPOS_DIR in VS Code Dev Containers"
 else
-  echo "  [ ] Open $REPOS_DIR in VS Code (terminals auto-connect)"
+  echo "  [ ] (Optional) Open $REPOS_DIR in VS Code Dev Containers (experimental on apple/container;"
+  echo "      enable dev.containers.experimentalAppleContainerSupport)"
 fi
 echo "  [ ] Set up dotfiles in VS Code settings for personal config"
 echo "      (see README: Personal configuration / dotfiles)"

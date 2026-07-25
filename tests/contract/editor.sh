@@ -165,11 +165,103 @@ exit 0
 STUB
 chmod +x "$STUB_DIR/docker"
 
-# A minimal apple/container stub. editor.sh refuses BEFORE issuing any
-# container commands (the refuse check is right after backend_use), so the
-# stub only has to exist on PATH so backend_use's CLI-presence probe passes.
+# An apple/container stub. `dce editor` now launches on apple (experimental),
+# so this stub has to answer the same predicates editor.sh + start.sh exercise
+# for the docker stub: running/exists lists, start, exec (git-credential wiring
+# + VS Code Server probes), and `inspect` for backend_apple_attach_ref's
+# {id, image} resolution. It mirrors the docker stub's exec probe surface so
+# extension-enforcement coverage can be reused on apple later.
 cat > "$STUB_DIR/container" <<'STUB'
 #!/usr/bin/env bash
+_log="${DC_STUB_LOG:?}"
+_run="${DC_STUB_RUNNING:?}"
+_ctrs="${DC_STUB_CONTAINERS:?}"
+_have_creds_env="${DC_STUB_CONTAINER_CREDS+x}"
+_creds="${DC_STUB_CONTAINER_CREDS-}"
+_inspect_id="${DC_STUB_APPLE_INSPECT_ID:-}"
+_inspect_image="${DC_STUB_APPLE_INSPECT_IMAGE:-}"
+printf 'CALL container %s\n' "$*" >> "$_log"
+
+_drain_stdin=false
+for _a in "$@"; do
+  case "$_a" in
+    -i|--interactive|-i*|-it) _drain_stdin=true ;;
+  esac
+done
+
+case "${1:-}" in
+  system)
+    # backend_system_start for apple runs `container system start`; tolerate.
+    exit 0
+    ;;
+  ls)
+    # backend_is_running: `container ls -q`; backend_exists: `container ls -a -q`.
+    any=""
+    for _a in "$@"; do [[ "$_a" == "-a" ]] && any=1; done
+    if [[ -n "$any" ]]; then
+      [[ -f "$_ctrs" ]] && cat "$_ctrs"
+    else
+      [[ -f "$_run" ]] && cat "$_run"
+    fi
+    exit 0
+    ;;
+  start)
+    _name="${@: -1}"
+    grep -qxF -- "$_name" "$_run" 2>/dev/null || printf '%s\n' "$_name" >> "$_run"
+    exit 0
+    ;;
+  create)
+    exit 0
+    ;;
+  inspect)
+    # backend_apple_attach_ref reads .[0].configuration.id and
+    # .[0].configuration.image.reference via jq. Emit the shape VS Code's
+    # `container inspect` returns. Defaults: id = the inspected name, image =
+    # the DC_STUB_APPLE_INSPECT_IMAGE override (or dce-base:latest).
+    _name="${@: -1}"
+    _id="${_inspect_id:-$_name}"
+    _image="${_inspect_image:-dce-base:latest}"
+    printf '[{"configuration":{"id":"%s","image":{"reference":"%s"}}}]\n' "$_id" "$_image"
+    exit 0
+    ;;
+  exec)
+    if [[ -n "$_have_creds_env" ]]; then
+      if [[ "$*" == *'cat ~/.git-credentials'* ]]; then
+        printf '%s' "$_creds"
+        exit 0
+      fi
+      if [[ "$*" == *'test -f ~/.git-credentials'* ]]; then
+        [[ -n "$_creds" ]] && exit 0 || exit 1
+      fi
+    fi
+    $_drain_stdin && cat > /dev/null
+    # _dce_ext_vscode_container_bin resolver probe: sh -c '...command -v code...'.
+    if [[ "$3" == "sh" && "$4" == "-c" && "$*" == *"command -v code"* ]]; then
+      if [[ "${DC_STUB_EXT_SERVER_ABSENT:-0}" == "1" ]]; then
+        exit 1
+      fi
+      printf '%s\n' '/home/dev/.vscode-server/bin/stubhash/bin/code-server'
+      exit 0
+    fi
+    if [[ "${@: -1}" == "--list-extensions" ]]; then
+      [[ -f "${DC_STUB_CONTAINER_EXT:-}" ]] && cat "${DC_STUB_CONTAINER_EXT}" 2>/dev/null || true
+      exit 0
+    fi
+    if [[ "${@: -2:1}" == "--install-extension" ]]; then
+      _id="${@: -1}"
+      if [[ -n "${DC_STUB_INSTALL_LOG:-}" ]]; then
+        printf 'INSTALL %s\n' "$_id" >> "$DC_STUB_INSTALL_LOG"
+      fi
+      if [[ -n "${DC_STUB_INSTALL_FAIL_IDS:-}" ]]; then
+        for _bad in $DC_STUB_INSTALL_FAIL_IDS; do
+          [[ "$_bad" == "$_id" ]] && exit 1
+        done
+      fi
+      exit 0
+    fi
+    exit 0
+    ;;
+esac
 exit 0
 STUB
 chmod +x "$STUB_DIR/container"
@@ -393,29 +485,59 @@ grep -Eq 'Known editors:.*vscode' <<<"$err_out" \
 pass "Section 5: unknown explicit editor hard-errors with guidance"
 
 # ===========================================================================
-# Section 6 - apple backend refuses with actionable guidance
+# Section 6 - apple backend: experimental launch via apple-container URI
+#
+# `dce editor` no longer refuses on apple; it launches VS Code with an
+# apple-container+<hex> URI (experimental upstream support), resolving {id,
+# image} from `container inspect`. The container stub answers inspect with a
+# known {id, image}; the fake `code` captures the --folder-uri argv.
 # ===========================================================================
 make_project "zeta" running
-# Flip the project config to apple backend (no real apple/container needed:
-# editor.sh refuses BEFORE any backend probe of running state).
 sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/zeta/config"
 rm -f "$DC_ROOT/zeta/config.bak"
 
-if run_editor zeta 2>/dev/null; then
-  fail "apple: editor should refuse on apple backend"
-fi
-err_out="$(run_editor zeta 2>&1 || true)"
-grep -Fq "'dce editor' is unsupported on backend 'apple'" <<<"$err_out" \
-  || fail "apple: missing refuse message (got: $err_out)"
-grep -Eq 'Docker-compatible backend' <<<"$err_out" \
-  || fail "apple: missing switch-backend guidance"
+: > "$DOCKER_LOG"; : > "$CODE_LOG"
+DC_STUB_APPLE_INSPECT_IMAGE="dce-base:latest" \
+  run_editor zeta >"$WORK/sec6.out" 2>"$WORK/err" || fail "editor zeta (apple) exited non-zero
+-- stderr:$(cat "$WORK/err")"
 
-# Editor was NOT launched on apple (no code call recorded for zeta).
-: > "$CODE_LOG"
-run_editor zeta >/dev/null 2>&1 || true
-[[ ! -s "$CODE_LOG" ]] || fail "apple: editor binary was invoked despite refuse"
+# Editor launched exactly once with the apple-container scheme (NOT docker's
+# attached-container scheme).
+code_calls="$(grep -c '^CALL code ' "$CODE_LOG" || true)"
+[[ "$code_calls" -eq 1 ]] || fail "apple: expected 1 code call, got $code_calls"
+grep -Fq -- '--folder-uri vscode-remote://apple-container+' "$CODE_LOG" \
+  || fail "apple: code argv missing apple-container URI (got $(cat "$CODE_LOG"))"
+grep -Fq 'vscode-remote://attached-container+' "$CODE_LOG" \
+  && fail "apple: code argv used docker attached-container URI (got $(cat "$CODE_LOG"))"
 
-pass "Section 6: apple backend refuses before any editor invocation"
+# The hex token decodes to {"id":"zeta","image":"dce-base:latest"} -- the pair
+# the container inspect stub reported. VS Code parses the authority with
+# JSON.parse, so assert via the decoded JSON rather than a fragile hex literal.
+hex="$(grep -oE 'apple-container\+[0-9a-f]+' "$CODE_LOG" | head -n1)"
+hex="${hex#*+}"
+decoded=""
+for ((i = 0; i < ${#hex}; i += 2)); do
+  # shellcheck disable=SC2059
+  # pair is constructed from a charset-restricted hex string emitted by the lib.
+  decoded+="$(printf '%b' "\\x${hex:i:2}")"
+done
+[[ "$decoded" == *'"id":"zeta"'* ]] || fail "apple: URI hex id mismatch (decoded: $decoded)"
+[[ "$decoded" == *'"image":"dce-base:latest"'* ]] || fail "apple: URI hex image mismatch (decoded: $decoded)"
+# Workspace path tail.
+grep -Fq "apple-container+${hex}/workspace" "$CODE_LOG" \
+  || fail "apple: URI missing /workspace tail"
+
+# Experimental notice surfaced.
+grep -Fqi 'EXPERIMENTAL' "$WORK/sec6.out" \
+  || fail "apple: missing experimental notice (got: $(cat "$WORK/sec6.out"))"
+grep -Fqi 'experimentalAppleContainerSupport' "$WORK/sec6.out" \
+  || fail "apple: missing experimentalAppleContainerSupport setting hint"
+
+# The attach ref was resolved from `container inspect zeta` (live, not config).
+grep -Eq 'CALL container inspect zeta' "$DOCKER_LOG" \
+  || fail "apple: backend_apple_attach_ref did not inspect container (got: $(cat "$DOCKER_LOG"))"
+
+pass "Section 6: apple backend launches via experimental apple-container URI"
 
 # ===========================================================================
 # Section 7 - usage: missing project arg

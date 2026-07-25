@@ -462,11 +462,6 @@ dce_ext_install_one() {
 dce_ext_check_runtime_drift() {
   local project="$1" editor="$2" team_root="$3" user_root="$4" scopes_csv="$5"
 
-  if ! backend_is_docker_compatible "$(backend_name 2>/dev/null || printf unknown)" \
-     2>/dev/null; then
-    printf 'skip'
-    return 0
-  fi
   if ! backend_is_running "$project" 2>/dev/null; then
     printf 'skip'
     return 0
@@ -518,10 +513,6 @@ dce_ext_check_runtime_drift() {
 dce_ext_enforce_declared() {
   local project="$1" editor="$2" team_root="$3" user_root="$4" scopes_csv="$5"
 
-  # Non-attach backends have no in-container extension store; nothing to enforce.
-  if ! backend_is_docker_compatible "$(backend_name 2>/dev/null || printf unknown)" 2>/dev/null; then
-    return 0
-  fi
   if ! backend_is_running "$project" 2>/dev/null; then
     return 0
   fi

@@ -56,4 +56,4 @@ dce status
 dce rebuild-container myapp-monorepo
 ```
 
-For apple backend, `dce editor` refuses (apple/container is not Docker-API compatible, so the Dev Containers extension cannot attach). Open the host repo folder with your editor directly; the `dce new`-seeded `.vscode/settings.json` terminal profile still routes shell tabs through `dce shell`.
+For apple backend, `dce editor` launches VS Code via the experimental apple-container attach path: enable **Dev Containers: Experimental: Apple Container Support** (`dev.containers.experimentalAppleContainerSupport`) in VS Code settings first, or the attach will not resolve. The `dce new`-seeded `.vscode/settings.json` terminal profile is also available as an alternative workflow (open the host repo folder; terminals route through `dce shell`).

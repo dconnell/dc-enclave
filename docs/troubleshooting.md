@@ -47,6 +47,16 @@ sudo apt-get install docker-buildx-plugin   # Docker apt repo (Linux/WSL2)
 - install apple/container, Docker Desktop, OrbStack, Colima, or Podman
 - rerun scripts/setup.sh
 
+## apple/container: no DNS / no network inside the container
+
+apple/container's auto-configured resolver (the vmnet gateway) does not forward external DNS, so a fresh container can ping IPs (`8.8.8.8`) but not resolve names (`google.com`) — which surfaces as `getaddrinfo EAI_AGAIN` from `npm`/`git`/`code --install-extension`. dce already passes `--dns 1.1.1.1 --dns 8.8.8.8` at `container create` for apple to fix this. If you still see it:
+
+- the container predates the fix — recreate it: `dce rebuild-container <name>` (DNS is set at create time)
+- override the servers: `DCE_DNS=9.9.9.9,149.112.112.112 dce rebuild-container <name>`
+- verify: `dce exec <name> getent hosts google.com`
+
+If the container has **no network at all** (can't even ping `8.8.8.8`), a host VPN is likely conflicting with apple/container's vmnet NAT. This is an apple/container networking limitation, not a dce bug — disconnect the VPN, or investigate a user-defined network (`container create --network <name>[,mac=…][,mtu=…]`).
+
 ## Forcing a specific backend
 
 ```

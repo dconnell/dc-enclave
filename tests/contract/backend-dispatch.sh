@@ -113,7 +113,13 @@ dispatch_expected() {
       [[ "$backend" == apple ]] && s="container ls -a -q"                      || s="$bin ps -a --format {{.Names}}" ;;
     is_running)
       [[ "$backend" == apple ]] && s="container ls -q"                         || s="$bin ps --format {{.Names}}" ;;
-    create)           s="$bin create --name myproj --volume src:dst img:latest" ;;
+    create)
+      # apple defaults to public DNS resolvers at create time (its vmnet-gateway
+      # resolver does not forward external DNS); docker-family adds none unless
+      # DCE_DNS is set (tested separately below).
+      [[ "$backend" == apple ]] \
+        && s="container create --name myproj --volume src:dst --dns 1.1.1.1 --dns 8.8.8.8 img:latest" \
+        || s="$bin create --name myproj --volume src:dst img:latest" ;;
     start)            s="$bin start myproj" ;;
     stop)             s="$bin stop myproj" ;;
     logs)
@@ -182,6 +188,7 @@ for spec in "apple container" "docker docker" "orbstack docker" "colima docker" 
   _DC_CLI="$bin"
   _DC_PODMAN_HOST_GATEWAY_SUPPORTED=""
   _DC_PODMAN_HOST_GATEWAY_WARNED=0
+  unset DCE_DNS
 
   for func in "${FUNCS[@]}"; do
     # podman create is exercised separately (host-gateway branch).
@@ -212,6 +219,36 @@ backend_create myproj img:latest --volume src:dst >/dev/null 2>&1 </dev/null || 
 expect_logged "podman / create (host-gateway unsupported)" \
   "podman create --help" \
   "podman create --name myproj --volume src:dst img:latest"
+
+# ---------------------------------------------------------------------------
+# DCE_DNS override: applies to every backend; apple default applies when unset.
+# ---------------------------------------------------------------------------
+# apple + DCE_DNS set (comma list) -> exactly those servers, no defaults.
+DEV_CONTAINERS_BACKEND=apple; _DC_CLI=container
+export DCE_DNS="9.9.9.9,149.112.112.112"
+: > "$LOG"
+backend_create myproj img:latest --volume src:dst >/dev/null 2>&1 </dev/null || true
+expect_logged "apple / create (DCE_DNS override)" \
+  "container create --name myproj --volume src:dst --dns 9.9.9.9 --dns 149.112.112.112 img:latest"
+unset DCE_DNS
+
+# apple + DCE_DNS="" (set but empty) -> opt out: no --dns at all.
+DEV_CONTAINERS_BACKEND=apple; _DC_CLI=container
+export DCE_DNS=""
+: > "$LOG"
+backend_create myproj img:latest --volume src:dst >/dev/null 2>&1 </dev/null || true
+expect_logged "apple / create (DCE_DNS empty opt-out)" \
+  "container create --name myproj --volume src:dst img:latest"
+unset DCE_DNS
+
+# docker + DCE_DNS set -> honored (docker-family default is otherwise none).
+DEV_CONTAINERS_BACKEND=docker; _DC_CLI=docker
+export DCE_DNS="1.0.0.1"
+: > "$LOG"
+backend_create myproj img:latest --volume src:dst >/dev/null 2>&1 </dev/null || true
+expect_logged "docker / create (DCE_DNS override)" \
+  "docker create --name myproj --volume src:dst --dns 1.0.0.1 img:latest"
+unset DCE_DNS
 
 # ---------------------------------------------------------------------------
 # backend_exec_interactive: args before "--" are exec options, after are cmd.
