@@ -4,11 +4,13 @@
 # running dev container at /workspace. Starts the container if it isn't
 # running (same preflight as `dce shell`).
 #
-# Docker-compatible backends only. apple/container is refused: the VS Code Dev
-# Containers extension requires the Docker API socket, which apple/container
-# does not expose (the same root cause as the devcontainer.json gate at
-# lib/devcontainer.sh:23). The command refuses with actionable guidance rather
-# than silently doing something else.
+# Docker-compatible backends use the standard "attached-container" URI; the
+# apple/container backend uses VS Code Dev Containers' EXPERIMENTAL
+# apple-container attach path (dev.containers.experimentalAppleContainerSupport).
+# dce editor launches both programmatically via a --folder-uri vscode-remote://
+# URI; for apple, the {id, image} pair is resolved live from `container inspect`
+# so the URI matches what VS Code's own "Attach to Running Apple Container"
+# picker would build.
 #
 # Editor selection precedence (see dce_editor_select in lib/editor.sh):
 #   --editor <id>  >  $DCE_EDITOR  >  DCE_EDITOR in global config  >
@@ -93,17 +95,14 @@ dce_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 ACTIVE_BACKEND="$(backend_name)"
 
-if ! backend_is_docker_compatible "$ACTIVE_BACKEND"; then
-  # Hard refuse on apple/container. dce editor is an attach command; on a
-  # backend with no attach path, refuse rather than silently opening the host
-  # folder (which is a different command than the user invoked).
-  dce_die "'dce editor' is unsupported on backend '$ACTIVE_BACKEND'.
-       apple/container is not Docker-API compatible, so the VS Code Dev
-       Containers extension cannot attach to it.
-       To open the host repo folder directly, launch your editor yourself
-       on: ${REPOS_DIR:-<repos-dir>}
-       To use 'dce editor', switch to a Docker-compatible backend
-       (docker/orbstack/colima/podman)."
+if [[ "$ACTIVE_BACKEND" == "apple" ]]; then
+  # Experimental: VS Code Dev Containers' apple-container attach is upstream-
+  # experimental (dev.containers.experimentalAppleContainerSupport) and macOS-
+  # only. Surface that clearly so a failed attach points at the setting rather
+  # than at dce. Advisory only -- the launch proceeds.
+  echo "  Note: apple/container Dev Containers attach is EXPERIMENTAL in VS Code."
+  echo "        Enable \"Dev Containers: Experimental: Apple Container Support\""
+  echo "        (dev.containers.experimentalAppleContainerSupport) in VS Code settings."
 fi
 
 EDITOR_ID="$(dce_editor_select "$EXPLICIT_EDITOR")"
@@ -182,7 +181,18 @@ if dce_ext_is_supported "$EDITOR_ID"; then
   ) || true
 fi
 
-# dce_editor_launch_attach validates the binary, prints the "Launching editor"
+# dce_editor_launch_attach* validates the binary, prints the "Launching editor"
 # line, and execs the editor (replacing this process). The CLI forks and
-# returns immediately under the VS Code-family launchers.
-dce_editor_launch_attach "$EDITOR_ID" "$PROJECT" "/workspace"
+# returns immediately under the VS Code-family launchers. The launch URI flavor
+# is backend-specific: docker-compatible uses the attached-container scheme;
+# apple/container uses the experimental apple-container scheme, keyed on the
+# live {id, image} pair resolved from `container inspect` (CONTAINER_IMAGE is
+# the fallback image reference if jq is unavailable).
+if [[ "$ACTIVE_BACKEND" == "apple" ]]; then
+  ref="$(backend_apple_attach_ref "$PROJECT" "${CONTAINER_IMAGE:-}")"
+  apple_id="${ref%%$'\t'*}"
+  apple_image="${ref#*$'\t'}"
+  dce_editor_launch_attach_apple "$EDITOR_ID" "$PROJECT" "$apple_id" "$apple_image" "/workspace"
+else
+  dce_editor_launch_attach "$EDITOR_ID" "$PROJECT" "/workspace"
+fi

@@ -205,6 +205,32 @@ dce_editor_vscode_attached_container_uri() {
   printf 'vscode-remote://attached-container+%s%s' "$hex" "$workspace"
 }
 
+# Build the VS Code "apple-container" attach folder URI (experimental upstream
+# support, gated by dev.containers.experimentalAppleContainerSupport). Format:
+#
+#   vscode-remote://apple-container+<hex>/<workspace_path>
+#
+# <hex> is the UTF-8 hex of JSON.stringify({id, image}), where `id` is the
+# container name and `image` its image reference -- the pair VS Code's own
+# "Attach to Running Apple Container" picker reads from `container list`. VS Code
+# parses the authority back with JSON.parse(Buffer.from(config,'hex')), so the
+# JSON key order is irrelevant; only valid {id, image} matters. The JSON is
+# built by hand (the editor launch path does not depend on jq); the hex encoder
+# is the same dce_editor_hex_encode used for the docker path (container names
+# and dce image refs are ASCII, matching Buffer.from(...,'utf8').toString('hex')).
+dce_editor_vscode_apple_container_uri() {
+  local id="$1"
+  local image="$2"
+  local workspace="${3:-/workspace}"
+  local id_esc="" image_esc=""
+  id_esc="$(dce_json_escape "$id")"
+  image_esc="$(dce_json_escape "$image")"
+  local json="{\"id\":\"$id_esc\",\"image\":\"$image_esc\"}"
+  local hex=""
+  hex="$(dce_editor_hex_encode "$json")"
+  printf 'vscode-remote://apple-container+%s%s' "$hex" "$workspace"
+}
+
 # Resolve the editor binary path. Returns 0 and echoes the path on success,
 # 1 (silent) when no candidate is found.
 #
@@ -275,7 +301,7 @@ dce_editor_find_binary() {
   return 1
 }
 
-# Launch the editor attached to a running container's workspace.
+# Launch the editor attached to a running container's workspace (Docker family).
 #
 # All VS Code-family editors share the vscode-remote attached-container URI
 # scheme and the --folder-uri flag, so one adapter covers them; only binary
@@ -289,6 +315,37 @@ dce_editor_launch_attach() {
   local editor="$1"
   local project="$2"
   local workspace="${3:-/workspace}"
+
+  local uri=""
+  uri="$(dce_editor_vscode_attached_container_uri "$project" "$workspace")"
+  dce_editor_launch_uri "$editor" "$project" "$uri"
+}
+
+# Launch the editor attached to a running apple/container's workspace
+# (experimental upstream Dev Containers support). Same launcher tail as the
+# Docker path; only the URI flavor differs. The caller resolves the live
+# {id, image} pair (backend_apple_attach_ref) and passes it here.
+dce_editor_launch_attach_apple() {
+  local editor="$1"
+  local project="$2"
+  local id="$3"
+  local image="$4"
+  local workspace="${5:-/workspace}"
+
+  local uri=""
+  uri="$(dce_editor_vscode_apple_container_uri "$id" "$image" "$workspace")"
+  dce_editor_launch_uri "$editor" "$project" "$uri"
+}
+
+# Shared launcher tail: resolve the editor binary, print the launch line, and
+# exec it on the given folder URI (replacing this process). Extracted from
+# dce_editor_launch_attach so the Docker and apple-container flavors share one
+# binary-discovery + exec path. The per-platform missing-binary guidance lives
+# here so both flavors surface it identically.
+dce_editor_launch_uri() {
+  local editor="$1"
+  local project="$2"
+  local uri="$3"
 
   local binary=""
   if ! binary="$(dce_editor_find_binary "$editor")"; then
@@ -307,9 +364,6 @@ dce_editor_launch_attach() {
     dce_die "Editor binary not found for '$editor'.
   $hint"
   fi
-
-  local uri=""
-  uri="$(dce_editor_vscode_attached_container_uri "$project" "$workspace")"
 
   printf '  Launching editor (%s) attached to: %s\n' "$editor" "$project"
   exec "$binary" --folder-uri "$uri"

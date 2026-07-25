@@ -14,7 +14,7 @@
 #                     secret bootstrap (perms), generated Containerfile layer
 #                     order, create argv shape (volume/port/resource order,
 #                     image positional last), devcontainer.json.
-#   dce new (apple):   .vscode/settings.json terminal-profile branch.
+#   dce new (apple):   devcontainer.json + .vscode/settings.json terminal-profile.
 #   rebuild:          never builds; stop->delete->create->start order; create
 #                     argv parity with `dce new`; default removes hidden volumes.
 #   rebuild flags:    fail-fast on missing image (no destructive calls);
@@ -586,7 +586,10 @@ fi
 pass "rebuild: no extension warning pre-adoption (migration guard)"
 
 # ===========================================================================
-# dce new (apple backend): VS Code terminal-profile settings.json branch
+# dce new (apple backend): devcontainer.json + VS Code terminal-profile seed
+# (apple/container now uses VS Code Dev Containers' experimental attach path,
+#  so it seeds the same .devcontainer/devcontainer.json as docker-compatible,
+#  and additionally keeps the .vscode/settings.json terminal profile.)
 # ===========================================================================
 APROJ="appleproj"
 BACKEND=apple
@@ -595,22 +598,28 @@ run_script "$ROOT_DIR/scripts/new-container.sh" "$APROJ" nodejs 3000:3000 \
   >"$WORK/apple.stdout" 2>"$WORK/apple.stderr" \
   || fail "dce new (apple) exited non-zero"
 
+# apple now seeds a Dev Containers devcontainer.json (experimental attach path).
+apple_dc="$WORK/home/repos/$APROJ/.devcontainer/devcontainer.json"
+[[ -f "$apple_dc" ]] || fail "apple: devcontainer.json missing (experimental attach seed)"
+grep -Fq '"workspaceFolder": "/workspace"' "$apple_dc" || fail "apple: devcontainer.json workspaceFolder"
+grep -Fq '"remoteUser": "dev"' "$apple_dc" || fail "apple: devcontainer.json remoteUser"
+grep -Fq '"forwardPorts": [3000]' "$apple_dc" || fail "apple: devcontainer.json forwardPorts"
+
+# apple still seeds the VS Code terminal-profile settings.json (alternative
+# non-attach terminal workflow; harmless alongside the Dev Containers path).
 vs_settings="$WORK/home/repos/$APROJ/.vscode/settings.json"
 [[ -f "$vs_settings" ]] || fail "apple: .vscode/settings.json missing"
 grep -Fq '"terminal.integrated.defaultProfile.osx": "dce-container"' "$vs_settings" \
   || fail "apple: defaultProfile.dce-container missing"
 grep -Fq "scripts/shell.sh $APROJ" "$vs_settings" \
   || fail "apple: terminal profile must reference dce shell.sh $APROJ"
-# apple branch must NOT write a Dev Containers devcontainer.json.
-[[ ! -f "$WORK/home/repos/$APROJ/.devcontainer/devcontainer.json" ]] \
-  || fail "apple: must not write devcontainer.json"
 # apple/container also receives the host TZ via --env (backend-agnostic).
 APPLE_CREATE="$(grep -E 'create --name appleproj' "$LOG" | head -n1)"
 grep -Fq -- "--env TZ=America/New_York" <<<"$APPLE_CREATE" \
   || fail "apple create: --env TZ missing
 $APPLE_CREATE"
 
-pass "dce new (apple): VS Code terminal-profile settings.json branch"
+pass "dce new (apple): devcontainer.json + terminal-profile settings.json seed"
 
 echo ""
 echo "All new/rebuild lifecycle checks passed."

@@ -139,13 +139,15 @@ NOJQ
   grep -Fqi 'optional everywhere else' "$WORK/nojq.err" \
     || fail "config sync-vscode: missing-jq error should mention optional-everywhere-else policy"
 
-  # (F4) apple backend is rejected.
+  # (F4) apple backend is supported (experimental): sync-vscode rewrites managed
+  # fields the same way as docker-compatible, since apple now seeds/reads a
+  # devcontainer.json too.
   dce_set_config_key "$SECRET2/config" CONTAINER_BACKEND "apple"
-  if run_config sync-vscode "$PROJ2" >/dev/null 2>"$WORK/apple.err"; then
-    fail "config sync-vscode: apple backend must be rejected"
+  if ! run_config sync-vscode "$PROJ2" >"$WORK/apple.out" 2>"$WORK/apple.err"; then
+    fail "config sync-vscode: apple backend must succeed (experimental) -- $(cat "$WORK/apple.err")"
   fi
-  grep -Fqi 'docker-compatible' "$WORK/apple.err" \
-    || fail "config sync-vscode: apple rejection message must mention docker-compatible"
+  grep -Fqi 'Rewrote managed fields' "$WORK/apple.out" \
+    || fail "config sync-vscode: apple success must report rewrite (got $(cat "$WORK/apple.out"))"
   dce_set_config_key "$SECRET2/config" CONTAINER_BACKEND "docker"
 
   # (F5) malformed JSON is rejected without mutating the input file.
@@ -167,7 +169,7 @@ NOJQ
   grep -Fqi 'devcontainer.json' "$WORK/miss.err" \
     || fail "config sync-vscode: missing-file error must mention devcontainer.json"
 
-  pass "dce config sync-vscode: sync/dry-run/nojq/apple-guard/malformed-json/missing-file"
+  pass "dce config sync-vscode: sync/dry-run/nojq/apple-ok/malformed-json/missing-file"
 fi
 
 # =============================================================================

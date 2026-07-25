@@ -65,7 +65,7 @@ config-set-mem	all	config	set $PROJECT memory=256m	0
 config-ls	all	config	ls	0	
 config-sync-dry	docker_family	config	sync-vscode $PROJECT --dry-run	0	
 config-sync	docker_family	config	sync-vscode $PROJECT	0	
-config-sync-apple	apple	config	sync-vscode $PROJECT	1	no devcontainer.json
+config-sync-apple	apple	config	sync-vscode $PROJECT	0	Rewrote managed fields
 
 # --- dce snapshot (rm + restore in cases/lifecycle.sh) ---
 snap-exclude-volumes	all	snapshot	$PROJECT --exclude-volumes --yes	0	

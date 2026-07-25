@@ -73,9 +73,15 @@ When VS Code is attached, a workspace extension in the container can open a term
 
 apple backend:
 
-- dce new generates ${DC_REPOS_DIR:-$HOME/repos}/<project>/.vscode/settings.json
-- Integrated terminal profile routes through dce shell
-- Existing settings.json is not overwritten
-- `dce editor` **refuses** on apple: apple/container is not Docker-API compatible, so the VS Code Dev Containers extension cannot attach. Open the host repo folder with your editor directly; the seeded terminal profile still routes shell tabs through `dce shell`.
+> **Experimental VS Code Dev Containers support.** VS Code Dev Containers can attach to apple/container behind the `dev.containers.experimentalAppleContainerSupport` setting (macOS only; requires the `container` CLI). It is upstream-experimental and may be rougher than the Docker backends — dce wires it up but does not guarantee parity.
+
+> **Container DNS.** apple/container's auto-configured resolver (the vmnet gateway, e.g. `192.168.64.1`) does not forward external DNS, so by default a container can reach IPs but not resolve hostnames — which breaks extension install, `git clone` over https, `npm install`, etc. dce works around this by passing `--dns 1.1.1.1 --dns 8.8.8.8` at `container create` time for apple projects. Override with the `DCE_DNS` env var (comma-separated IPs; set it empty to opt out). This only takes effect on a fresh `dce new` / `dce rebuild-container` (DNS is set at create time).
+>
+> **VPN caveat.** When a host VPN is active, apple/container's vmnet NAT may not route through the VPN interface, leaving the container with no network at all (not just no DNS). This is an apple/container networking limitation; dce cannot reconfigure host routing. Disconnect the VPN, or investigate a user-defined network (`container create --network <name>[,mac=…][,mtu=…]`) that routes differently.
+
+- `dce new` generates `${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json` (the same Dev Containers config as the Docker backends) plus the VS Code attached-container **named** config (`workspaceFolder=/workspace`)
+- `dce new` also seeds a `.vscode/settings.json` terminal profile that routes VS Code terminals through `dce shell` (an alternative workflow for when you open the host folder instead of attaching)
+- `dce editor <name>` launches VS Code attached to the apple container at `/workspace` via the experimental `apple-container` URI; enable `dev.containers.experimentalAppleContainerSupport` in VS Code first or the attach will not resolve
+- Existing files are not overwritten; `dce config sync-vscode <name>` rewrites managed fields on demand
 
 VS Code is optional. Alias-based shell workflow is always supported.

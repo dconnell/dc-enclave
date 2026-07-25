@@ -401,9 +401,6 @@ Usage: dce config sync-vscode <name> [--dry-run]"
   config="$(_cfg_require_config "$project")"
   dce_load_project_config "$config"
 
-  if [[ "${CONTAINER_BACKEND:-}" == "apple" ]]; then
-    dce_die "sync-vscode applies to docker-compatible backends; project '$project' uses apple (no devcontainer.json)."
-  fi
   if ! command -v jq >/dev/null 2>&1; then
     dce_die "sync-vscode requires jq (it is optional everywhere else).
   Install jq, then rerun."

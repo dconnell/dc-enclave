@@ -6,7 +6,7 @@
 # predicates) and the host `code` binary. Covers: show/list/host/available/diff
 # outputs, capture (explicit IDs + --all), merge de-dup + comment preservation,
 # --user/--team targeting, scope validation, unknown-editor rejection, apple
-# refusal, and usage failures.
+# parity (container-derived ops via `container exec`), and usage failures.
 #
 # Pure host-side helper coverage (resolve/parse/format/namespace/set math) lives
 # in tests/unit/extensions-helpers.sh.
@@ -119,6 +119,50 @@ esac
 exit 0
 STUB
 chmod +x "$STUB_DIR/docker"
+
+# Fake container (apple/container): mirrors the docker stub so apple-backend
+# extension ops (list/diff/capture --all) exercise the same code paths via
+# `container exec` / `container ls` instead of `docker exec` / `docker ps`.
+cat > "$STUB_DIR/container" <<'STUB'
+#!/usr/bin/env bash
+_log="${DC_STUB_LOG:?}"
+_run="${DC_STUB_RUNNING:?}"
+_ext="${DC_STUB_CONTAINER_EXT:?}"
+printf 'CALL container %s\n' "$*" >> "$_log"
+
+case "${1:-}" in
+  system)
+    exit 0
+    ;;
+  ls)
+    any=""
+    for _a in "$@"; do [[ "$_a" == "-a" ]] && any=1; done
+    if [[ -n "$any" ]]; then
+      [[ -f "${DC_STUB_CONTAINERS:-/dev/null}" ]] && cat "${DC_STUB_CONTAINERS}" 2>/dev/null || true
+    else
+      [[ -f "$_run" ]] && cat "$_run" 2>/dev/null || true
+    fi
+    exit 0
+    ;;
+  exec)
+    _all="$*"
+    if [[ "$3" == "sh" && "$4" == "-c" && "$_all" == *"command -v code"* ]]; then
+      if [[ "${DC_STUB_CODE_ABSENT:-0}" == "1" ]]; then exit 127; fi
+      printf '%s\n' '/home/dev/.vscode-server/bin/stubhash/bin/code'
+      exit 0
+    fi
+    if [[ "${@: -1}" == "--list-extensions" ]]; then
+      if [[ "${DC_STUB_CODE_ABSENT:-0}" == "1" || "${DC_STUB_LIST_FAIL:-0}" == "1" ]]; then exit 127; fi
+      [[ -f "$_ext" ]] && cat "$_ext" 2>/dev/null || true
+      exit 0
+    fi
+    if [[ "${@: -2:1}" == "--install-extension" ]]; then exit 0; fi
+    exit 0
+    ;;
+esac
+exit 0
+STUB
+chmod +x "$STUB_DIR/container"
 
 # Fake host `code`: `code --list-extensions` emits HOST_EXT_FILE; other calls
 # are logged (and succeed) so the lib's macOS-app fallback never triggers.
@@ -421,25 +465,31 @@ fi
 pass "unknown editor rejected"
 
 # ===========================================================================
-# 11. apple backend: container-derived ops refuse; static ops work.
+# 11. apple backend: container-derived ops now work (experimental attach path),
+#     via `container exec`; static ops still work.
 # ===========================================================================
 make_project "beta" "nodejs" running
 # Rewrite beta's backend to apple.
 sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$HOME/.config/dce-enclave/beta/config"
 rm -f "$HOME/.config/dce-enclave/beta/config.bak"
-# apple has no docker stub relevant; `dce extensions list beta` must refuse.
-if DC_STUB_RUNNING="$RUNNING_FILE" DC_STUB_LOG="$DOCKER_LOG" \
-   PATH="$STUB_DIR:$ORIG_PATH" HOME="$WORK/home" \
-   "$DC_BIN" extensions list beta >/dev/null 2>&1; then
-  fail "extensions list on apple must refuse"
-fi
-# show is static -> works even on apple.
-if ! DC_STUB_RUNNING="$RUNNING_FILE" DC_STUB_LOG="$DOCKER_LOG" \
-     PATH="$STUB_DIR:$ORIG_PATH" HOME="$WORK/home" \
-     "$DC_BIN" extensions show beta >/dev/null 2>&1; then
-  fail "extensions show on apple must work (static op)"
-fi
-pass "apple: container-derived ops refuse; static show works"
+# Deterministic declared + installed state for beta.
+seed_manifest user nodejs "node.declared\n"
+printf 'node.declared\nextra.runtime\n' > "$CONTAINER_EXT_FILE"
+
+# list (apple) succeeds and returns the in-container installed set (the call
+# routes through `container exec`, answered by the container stub).
+OUT="$(run_ext list beta 2>"$WORK/beta.err")" \
+  || fail "extensions list on apple must succeed (got: $(cat "$WORK/beta.err"))"
+grep -Fq 'node.declared' <<<"$OUT" || fail "list (apple): missing installed id node.declared"
+grep -Fq 'extra.runtime' <<<"$OUT" || fail "list (apple): missing installed id extra.runtime"
+# Proof it used the container CLI, not docker.
+grep -Eq 'CALL container exec beta' "$DOCKER_LOG" || fail "list (apple): did not call container exec"
+
+# show (static) still works on apple.
+OUT="$(run_ext show beta 2>"$WORK/beta.err")" \
+  || fail "extensions show on apple must work (static op)"
+grep -Fq 'node.declared' <<<"$OUT" || fail "show (apple): missing declared id"
+pass "apple: container-derived ops work via container exec; static show works"
 
 # ===========================================================================
 # 12. container not running -> error (no auto-start).
@@ -461,13 +511,14 @@ OUT="$(DC_STUB_CODE_ABSENT=1 run_ext diff alpha 2>&1)" \
 grep -Fqi 'skip' <<<"$OUT" || fail "diff (code absent): missing skip message"
 pass "diff: code-absent -> clean skip"
 
-# apple backend: diff must skip cleanly (host/static guidance path).
-OUT="$(DC_STUB_RUNNING="$RUNNING_FILE" DC_STUB_LOG="$DOCKER_LOG" \
-   PATH="$STUB_DIR:$ORIG_PATH" HOME="$WORK/home" \
-   "$DC_BIN" extensions diff beta 2>&1)" \
-  || fail "diff (apple) must skip with exit 0"
-grep -Fqi 'skip' <<<"$OUT" || fail "diff (apple): missing skip message"
-pass "diff: apple backend -> clean skip"
+# apple backend: diff now runs (no longer skipped via a docker-compat gate).
+# beta is apple, running, nodejs scope, declared={node.declared},
+# installed={node.declared, extra.runtime} -> undeclared={extra.runtime}.
+OUT="$(run_ext diff beta 2>&1)" \
+  || fail "diff (apple) must succeed with exit 0"
+grep -Fqi 'Editor:' <<<"$OUT" || fail "diff (apple): missing report header (got: $OUT)"
+grep -Fq 'extra.runtime' <<<"$OUT" || fail "diff (apple): undeclared id not reported"
+pass "diff: apple backend runs (no docker-compat skip)"
 
 # ===========================================================================
 # 13. missing project arg -> usage failure.
@@ -545,18 +596,19 @@ rm -f "$TEAM_DIR/extensions/vscode/all.txt" "$USER_DIR/extensions/vscode/all.txt
 TOK="$(with_backend; PATH="$STUB_DIR:$ORIG_PATH" HOME="$WORK/home" dce_ext_check_runtime_drift delta vscode "$TEAM_DIR" "$USER_DIR" "")"
 [[ "$TOK" == "skip" ]] || fail "runtime_drift(skip/pre-adoption): expected skip got [$TOK]"
 
-# skip: apple backend (non-docker-compatible). beta is apple. The helper's
-# contract is "caller has selected the backend via backend_use"; here we select
-# apple directly via DEV_CONTAINERS_BACKEND (the post-backend_use state) rather
-# than calling `backend_use apple`, which would fail: no `container` CLI stub is
-# on PATH, so it returns 1 and leaves the backend unset, causing backend_name to
-# auto-detect the docker stub and compute drift instead of skipping.
+# drift: apple backend now computes real drift (the docker-compat short-circuit
+# was removed). beta is apple, running, nodejs scope, declared={node.declared},
+# installed={node.declared, extra.runtime} -> drift. The helper's contract is
+# "caller has selected the backend via backend_use"; select apple directly via
+# DEV_CONTAINERS_BACKEND (the post-backend_use state). The container stub on
+# PATH answers `container ls` / `container exec` so the helper runs end-to-end.
 TOK="$(DC_STUB_RUNNING="$RUNNING_FILE" DC_STUB_LOG="$DOCKER_LOG" \
+  DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
   PATH="$STUB_DIR:$ORIG_PATH" HOME="$WORK/home" \
   DEV_CONTAINERS_BACKEND=apple \
   dce_ext_check_runtime_drift beta vscode "$TEAM_DIR" "$USER_DIR" "nodejs")"
-[[ "$TOK" == "skip" ]] || fail "runtime_drift(skip/apple): expected skip got [$TOK]"
-pass "dce_ext_check_runtime_drift: match/drift/absent/skip tokens (running/pre-adoption/apple)"
+[[ "$TOK" == "drift" ]] || fail "runtime_drift(drift/apple): expected drift got [$TOK]"
+pass "dce_ext_check_runtime_drift: match/drift/absent/skip tokens (running/pre-adoption/apple-computes-drift)"
 
 echo ""
 echo "All extensions contract checks passed."

@@ -495,27 +495,25 @@ else
   echo "    dce rebuild-container $PROJECT --from-snap $FROM_SNAP --inject-creds"
 fi
 
-if $DOCKER_COMPATIBLE; then
-  echo ""
-  echo "==> Step 6: Seeding VS Code named attach config..."
-  ATTACH_CONFIG_COUNT=0
-  while IFS= read -r attach_config_file; do
-    [[ -z "$attach_config_file" ]] && continue
-    ATTACH_CONFIG_COUNT=$((ATTACH_CONFIG_COUNT + 1))
-    echo "  ✓ $attach_config_file"
-  done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace")
+echo ""
+echo "==> Step 6: Seeding VS Code named attach config..."
+ATTACH_CONFIG_COUNT=0
+while IFS= read -r attach_config_file; do
+  [[ -z "$attach_config_file" ]] && continue
+  ATTACH_CONFIG_COUNT=$((ATTACH_CONFIG_COUNT + 1))
+  echo "  ✓ $attach_config_file"
+done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace")
 
-  if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
-    echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
-  fi
+if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
+  echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
 fi
 
 # Drift notice: the seeded .devcontainer/devcontainer.json is never rewritten by
 # a rebuild, so a prior `dce config set` (scopes/hide/networks/ports) can leave
 # VS Code desynced from the freshly-rebuilt container. Detection is read-only
 # and non-fatal (safe under --yes); it just points at the diff + sync-vscode.
-# Docker-compatible only (apple has no devcontainer.json).
-if $DOCKER_COMPATIBLE && [[ -n "${REPOS_DIR:-}" ]]; then
+# Runs on every backend (apple/container now seeds a devcontainer.json too).
+if [[ -n "${REPOS_DIR:-}" ]]; then
   _rb_dc_file="$REPOS_DIR/.devcontainer/devcontainer.json"
   if [[ -f "$_rb_dc_file" ]]; then
     _rb_nets_csv=""

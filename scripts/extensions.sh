@@ -19,8 +19,9 @@
 #   capture <project> --scope <s> (--all | <id>...) [--user|--team]
 #                        merge IDs into a manifest (selective by default)
 #
-# v1 supports the vscode editor only. Container-derived ops require a
-# Docker-compatible backend + a running container (no auto-start); static ops
+# v1 supports the vscode editor only. Container-derived ops require a running
+# container (no auto-start) and work on every backend (docker-compatible AND
+# apple/container, via the Docker CLI or `container exec`); static ops
 # (host/show/capture with explicit IDs) are backend-agnostic. See
 # plans/extensions.md.
 # =============================================================================
@@ -76,9 +77,9 @@ Flags:
   --all                       capture: snapshot the full container install set.
   -h, --help                  Show this help.
 
-Container-derived ops (list, available, diff, capture --all) require a
-Docker-compatible backend and a running container (they do not auto-start).
-Static ops (host, show, capture with explicit IDs) are backend-agnostic.
+Container-derived ops (list, available, diff, capture --all) require a running
+container (they do not auto-start) and work on every backend. Static ops (host,
+show, capture with explicit IDs) are backend-agnostic.
 
 Examples:
   dce extensions show myapp
@@ -184,18 +185,6 @@ _load_project() {
 # Resolve and select the project's backend (runtime/container-derived ops only).
 _select_backend() {
   backend_use "${CONTAINER_BACKEND:-}"
-  ACTIVE_BACKEND="$(backend_name)"
-}
-
-# Refuse on apple/container (no Docker API -> editor cannot attach). Assumes the
-# project is already loaded.
-_refuse_apple() {
-  if ! backend_is_docker_compatible "$ACTIVE_BACKEND"; then
-    dce_die "'dce extensions $SUBACTION' is unsupported on backend '$ACTIVE_BACKEND'.
-       apple/container is not Docker-API compatible, so the editor cannot
-       attach and there is no container extension store to read.
-       Use a Docker-compatible backend (docker/orbstack/colima/podman)."
-  fi
 }
 
 _skip_diff() {
@@ -291,7 +280,6 @@ case "$SUBACTION" in
     _reject_unexpected_ids list
     _load_project "$PROJECT"
     _select_backend
-    _refuse_apple
     _require_running
     INSTALLED=()
     if ! _load_lines INSTALLED dce_ext_list_installed "$EDITOR" "$PROJECT"; then
@@ -330,7 +318,6 @@ case "$SUBACTION" in
     _reject_unexpected_ids available
     _load_project "$PROJECT"
     _select_backend
-    _refuse_apple
     _require_running
     INSTALLED=()
     if ! _load_lines INSTALLED dce_ext_list_installed "$EDITOR" "$PROJECT"; then
@@ -360,13 +347,6 @@ case "$SUBACTION" in
     [[ -n "$PROJECT" ]] || dce_die "'dce extensions diff' requires <project>"
     _reject_unexpected_ids diff
     _load_project "$PROJECT"
-    # The apple skip is decided by backend TYPE, not by CLI availability, so check
-    # docker-compatibility from the loaded config value before _select_backend
-    # (which validates the backend CLI is installed). Otherwise an apple project
-    # whose `container` CLI is absent dies here instead of skipping cleanly.
-    if ! backend_is_docker_compatible "${CONTAINER_BACKEND:-}"; then
-      _skip_diff "runtime drift unavailable on backend '${CONTAINER_BACKEND:-(unknown)}' (apple/container has no attach-mode extension store)"
-    fi
     _select_backend
     if ! backend_is_running "$PROJECT"; then
       _skip_diff "container '$PROJECT' is not running (start it first to check runtime drift)"
@@ -429,7 +409,6 @@ case "$SUBACTION" in
     NEW_IDS=()
     if $ALL; then
       _select_backend
-      _refuse_apple
       _require_running
       NEW_IDS=()
       if ! _load_lines NEW_IDS dce_ext_list_installed "$EDITOR" "$PROJECT"; then

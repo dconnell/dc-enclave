@@ -1078,10 +1078,69 @@ backend_is_running() {
   esac
 }
 
+# Resolve the {id, image} pair VS Code's experimental apple-container attach URI
+# needs, by inspecting the live container. Prints "<id>\t<image>" on stdout.
+# Used by `dce editor`'s apple launch path (lib/editor.sh). `id` is what
+# `container exec` keys on (the container name); `image` is informational for
+# VS Code (shown in the workspace title). Reads both from `container inspect`
+# via jq so the URI matches exactly what VS Code's own picker would build; the
+# same .configuration.image.reference field is already read this way by the
+# apple snapshot path (_backend_apple_container_commit). When jq is unavailable
+# or inspect fails, falls back to (name, fallback_image) so the launch still
+# proceeds -- the attach keys on `id`, which is always the container name.
+backend_apple_attach_ref() {
+  local name="$1"
+  local fallback_image="${2:-}"
+
+  local raw=""
+  raw="$(container inspect "$name" 2>/dev/null || true)"
+  if [[ -n "$raw" ]] && command -v jq >/dev/null 2>&1; then
+    local id="" image=""
+    id="$(printf '%s' "$raw" | jq -r '.[0].configuration.id // empty' 2>/dev/null || true)"
+    image="$(printf '%s' "$raw" | jq -r '.[0].configuration.image.reference // empty' 2>/dev/null || true)"
+    if [[ -n "$id" && -n "$image" ]]; then
+      printf '%s\t%s\n' "$id" "$image"
+      return 0
+    fi
+  fi
+
+  [[ -n "$fallback_image" ]] || fallback_image="(unknown)"
+  printf '%s\t%s\n' "$name" "$fallback_image"
+}
+
 # Create a container from an image with the given create flags.
 #
 # For Podman we add a host.docker.internal=host-gateway alias when supported,
 # so containers can reach the host by the same name as Docker backends; older
+# Resolve the DNS nameserver IPs to pass to a container at create time (--dns).
+# Prints one IP per line on stdout (empty output = pass no --dns). Semantics:
+#   - $DCE_DNS overrides on every backend (comma- or space-separated). An empty
+#     value (variable set but empty) opts out entirely.
+#   - Otherwise the apple/container backend defaults to public resolvers, because
+#     apple/container's auto-configured resolver (the vmnet gateway, e.g.
+#     192.168.64.1) does not forward external DNS -- containers can reach IPs but
+#     not resolve hostnames, breaking extension install / git over https / npm.
+#   - Docker-compatible backends default to none: their embedded DNS resolver
+#     (e.g. 127.0.0.11) already resolves correctly.
+backend_dns_servers() {
+  local backend="${1:-}"
+
+  if [[ -v DCE_DNS ]]; then
+    local raw="${DCE_DNS//,/ }"
+    # shellcheck disable=SC2206  # word-split DCE_DNS tokens (IPs have no spaces) by design
+    local -a parts=($raw)
+    local s
+    for s in "${parts[@]}"; do
+      [[ -n "$s" ]] && printf '%s\n' "$s"
+    done
+    return 0
+  fi
+
+  if [[ "$backend" == "apple" ]]; then
+    printf '%s\n' 1.1.1.1 8.8.8.8
+  fi
+}
+
 # Podman gets a one-time warning to use host.containers.internal instead.
 backend_create() {
   local name="$1"
@@ -1099,6 +1158,17 @@ backend_create() {
       dce_warn "Podman host-gateway alias is unavailable; use host.containers.internal inside containers."
       _DC_PODMAN_HOST_GATEWAY_WARNED=1
     fi
+  fi
+
+  # DNS nameservers (apple defaults to public resolvers; DCE_DNS overrides on
+  # every backend). --dns is accepted by `container create` and `docker create`.
+  local dns_servers=""
+  dns_servers="$(backend_dns_servers "$backend")"
+  if [[ -n "$dns_servers" ]]; then
+    local d
+    while IFS= read -r d; do
+      [[ -n "$d" ]] && create_args+=(--dns "$d")
+    done <<< "$dns_servers"
   fi
 
   case "$backend" in

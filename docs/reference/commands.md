@@ -64,7 +64,7 @@ DC Enclave supports five container runtimes (see [backends](backends.md)): the D
 
 ### Command matrix
 
-Command-level support. ✅ fully supported · 🟡 works, but some flags/subcommands are unsupported (see [Backend-limited features](#backend-limited-features)) · ❌ unsupported. Most commands run on every backend; `dce editor` is the only one that refuses outright — others showing 🟡 still work, just with caveats on specific options.
+Command-level support. ✅ fully supported · 🟡 works, but some flags/subcommands are unsupported (see [Backend-limited features](#backend-limited-features)) · ⚠️ experimental · ❌ unsupported. Most commands run on every backend; others showing 🟡 still work, just with caveats on specific options.
 
 | Command | Docker / OrbStack / Colima | apple / container | Podman |
 |---|---|---|---|
@@ -75,8 +75,8 @@ Command-level support. ✅ fully supported · 🟡 works, but some flags/subcomm
 | `dce list` | ✅ | ✅ | ✅ |
 | `dce shell` | ✅ | ✅ | ✅ |
 | `dce logs` | ✅ | ✅ | ✅ |
-| `dce editor` | ✅ | ❌ | ✅ |
-| `dce extensions` | ✅ | 🟡 | ✅ |
+| `dce editor` | ✅ | ⚠️ | ✅ |
+| `dce extensions` | ✅ | ✅ | ✅ |
 | `dce exec` | ✅ | ✅ | ✅ |
 | `dce restart` | ✅ | ✅ | ✅ |
 | `dce rm` | ✅ | ✅ | ✅ |
@@ -101,12 +101,12 @@ These flags/subcommands run on only a subset of backends. Each fails fast with a
 
 | Feature | Docker / OrbStack / Colima | apple / container | Podman | Reason |
 |---|---|---|---|---|
-| `dce editor` | ✅ | ❌ | ✅ | VS Code Dev Containers needs the Docker API socket; apple/container has no attach path |
+| `dce editor` | ✅ | ⚠️ experimental | ✅ | apple/container uses VS Code Dev Containers' experimental apple-container attach (`dev.containers.experimentalAppleContainerSupport`); macOS only |
 | `dce new --ip` (static IPv4) | ✅ | ❌ | ✅ | apple/container allows a single network with no static IP |
-| `dce config sync-vscode` | ✅ | ❌ | ✅ | rewrites `.devcontainer/devcontainer.json`, which apple projects don't carry (also requires `jq`) |
+| `dce config sync-vscode` | ✅ | ✅ | ✅ | rewrites `.devcontainer/devcontainer.json` (also requires `jq`) |
 | `dce network add`, `dce network remove` | ✅ | ❌ | ✅ | apple/container sets networks only at container create time (no live attach/detach) |
 | `dce network rm --force` | ✅ | ❌ | ✅ | force-removing a network with live members requires live-detach, which apple can't do |
-| `dce extensions list`, `available`, `diff`, `capture --all` | ✅ | ❌ | ✅ | read the in-container VS Code Server store over the Docker API (need a running container); `show`, `host`, and `capture <id>...` are static and work on apple |
+| `dce extensions list`, `available`, `diff`, `capture --all` | ✅ | ✅ | ✅ | read the in-container VS Code Server store over the backend exec API (`docker exec` / `container exec`); need a running container. `show`, `host`, and `capture <id>...` are static |
 
 > **Note:** `dce network create` on apple/container additionally requires macOS 26+ for user-defined networks; the other backends have no such version floor.
 

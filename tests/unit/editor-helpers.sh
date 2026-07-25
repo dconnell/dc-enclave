@@ -156,6 +156,43 @@ hex_in_uri="${hex_in_uri%%/*}"
 pass "Section C: hex encoder + attach URI"
 
 # ===========================================================================
+# Section E - apple-container attach URI
+#
+# VS Code's experimental apple-container attach authority is
+# `apple-container+<hex>` where <hex> is the UTF-8 hex of
+# JSON.stringify({id, image}). VS Code parses it back with JSON.parse, so key
+# order is irrelevant; only valid {id, image} matters. dce builds the JSON by
+# hand (no jq dependency in the editor launch path) and hex-encodes with the
+# same dce_editor_hex_encode used for the docker path.
+# ===========================================================================
+# Hardcoded small case: {"id":"a","image":"b"} -> known hex.
+uri="$(dce_editor_vscode_apple_container_uri "a" "b" "/workspace")"
+expected="vscode-remote://apple-container+7b226964223a2261222c22696d616765223a2262227d/workspace"
+[[ "$uri" == "$expected" ]] \
+  || fail "apple uri (got $uri)"
+
+# Default workspace.
+uri="$(dce_editor_vscode_apple_container_uri "a" "b")"
+[[ "$uri" == "vscode-remote://apple-container+7b226964223a2261222c22696d616765223a2262227d/workspace" ]] \
+  || fail "apple uri default workspace (got $uri)"
+
+# Realistic id + image; round-trip the hex back and parse the JSON so the test
+# does not depend on a hand-computed hex string for the longer case.
+uri="$(dce_editor_vscode_apple_container_uri "myapp" "dce-base:latest" "/workspace")"
+hex_in="${uri#*apple-container+}"
+hex_in="${hex_in%%/*}"
+decoded="$(hex_decode "$hex_in")"
+# id and image must both appear as JSON string values. jq is optional in dce;
+# assert via grep on the decoded JSON so the test runs without jq too.
+[[ "$decoded" == *'"id":"myapp"'* ]] || fail "apple uri: decoded JSON missing id (got $decoded)"
+[[ "$decoded" == *'"image":"dce-base:latest"'* ]] || fail "apple uri: decoded JSON missing image (got $decoded)"
+# Folder path tail.
+grep -qF 'apple-container+' <<<"$uri" || fail "apple uri: missing authority"
+[[ "$uri" == *"/workspace" ]] || fail "apple uri: missing /workspace tail"
+
+pass "Section E: apple-container attach URI"
+
+# ===========================================================================
 # Section D - binary discovery (cross-platform)
 #
 # platform_os reads uname -s / /proc/version, so we cannot fake the host OS
