@@ -170,19 +170,84 @@ while IFS= read -r _attach_cfg; do
   echo "  ✓ VS Code named attach: $_attach_cfg"
 done < <(dce_vscode_seed_named_attach_config "$PROJECT" "/workspace" "$AUTH_METHOD" || true)
 
-# Attach-mode extension convergence (plans/extensions.md §6). VS Code's
-# attached-container open (the vscode-remote://attached-container URI used by
+# Validate a positive-numeric watch knob (fractional allowed). Values stay
+# strings because bash arithmetic cannot hold fractions; the numeric >0 check
+# therefore runs in awk. Invalid input degrades to the default (with a
+# warning) rather than failing the launch -- the watcher is best-effort.
+_dce_editor_watch_interval_or_default() {  # <value> <default> <env-name>
+  local value="$1" default="$2" name="$3"
+  # Absence is not misconfiguration: take the default quietly.
+  [[ -n "$value" ]] || { printf '%s' "$default"; return 0; }
+  if [[ "$value" =~ ^[0-9]+([.][0-9]+)?$ ]] && awk -v n="$value" 'BEGIN { exit !(n + 0 > 0) }'; then
+    printf '%s' "$value"
+  else
+    dce_warn "$name='$value' is not a positive number; using the default (${default}s)"
+    printf '%s' "$default"
+  fi
+}
+
+# First-open fallback (plans/extensions-first-open-convergence.md): spawn the
+# detached extension watcher and tell the user where its log lands. Only
+# post-adoption projects with a non-empty declared set qualify (the same
+# guards dce_ext_enforce_declared applies internally), so pre-adoption
+# projects keep the exact silent no-op they had before.
+_dce_editor_spawn_ext_watch() {
+  dce_ext_manifests_exist "$EDITOR_ID" "$DC_TEAM_DIR" "$DC_USER_DIR" \
+    "${CONTAINER_OVERLAY_SCOPES:-}" || return 0
+  local declared=""
+  declared="$(dce_ext_resolve_set "$EDITOR_ID" "$DC_TEAM_DIR" "$DC_USER_DIR" \
+    "${CONTAINER_OVERLAY_SCOPES:-}" 2>/dev/null)" || return 0
+  [[ -z "${declared// /}" ]] && return 0
+
+  local interval=""
+  interval="$(_dce_editor_watch_interval_or_default "${DCE_EXT_WATCH_INTERVAL:-}" 5 "DCE_EXT_WATCH_INTERVAL")"
+  local timeout=""
+  timeout="$(_dce_editor_watch_interval_or_default "${DCE_EXT_WATCH_TIMEOUT:-}" 300 "DCE_EXT_WATCH_TIMEOUT")"
+
+  local watch_log=""
+  watch_log="$(_dce_ext_watch_log_path "$PROJECT")" || {
+    # A name the path helper rejects ('/' is the only real path-escape
+    # character) cannot carry watcher state: warn and skip the watcher
+    # entirely (no spawn, no notice) -- the same tolerate-and-continue posture
+    # as every other best-effort guard in this launch path.
+    dce_warn "project name '$PROJECT' is not usable for watcher state paths; skipping the background extension watcher"
+    return 0
+  }
+  # Pre-create the log under a user-only umask: the nohup redirect below would
+  # otherwise create it with the ambient umask, leaving it group/world-readable
+  # until the winning watcher's chmod 600 lands.
+  ( umask 077; : >> "$watch_log" ) 2>/dev/null || true
+  # nohup + & (not setsid, which is not macOS-portable) so the watcher
+  # survives this process being replaced by the editor exec below. Its output
+  # lands only in the log; the launch proceeds immediately.
+  nohup "$SCRIPT_DIR/_editor-ext-watch.sh" "$PROJECT" "$EDITOR_ID" \
+    "$interval" "$timeout" </dev/null >>"$watch_log" 2>&1 &
+  echo "  VS Code Server not yet injected into '$PROJECT' (first open); declared"
+  echo "  extensions will be installed by the background watcher (log: $watch_log)."
+}
+
+# Attach-mode extension convergence (plans/extensions.md §6 +
+# plans/extensions-first-open-convergence.md). VS Code's attached-container
+# open (the vscode-remote://attached-container URI used by
 # dce_editor_launch_attach) does not reliably process
-# customizations.vscode.extensions, so install any declared-but-missing
-# extensions now via the in-container code-server CLI. Idempotent + advisory;
-# gated on the extension-managed editor set (vscode in v1) and a
-# previously-injected VS Code Server. Wrapped so a missing/broken global config
-# (which dce_load_global_config dce_die-exits on) never blocks the launch.
+# customizations.vscode.extensions, so declared-but-missing extensions are
+# installed via the in-container code-server CLI. Chicken-and-egg: the
+# code-server CLI is itself injected by VS Code only AFTER it attaches, so a
+# first-ever open cannot converge synchronously -- with the server present we
+# enforce inline (unchanged); with it absent we hand the work to the detached
+# watcher, which polls for the server and runs the same enforcement
+# post-launch. Idempotent + advisory; gated on the extension-managed editor
+# set (vscode in v1). Wrapped so a missing/broken global config (which
+# dce_load_global_config dce_die-exits on) never blocks the launch.
 if dce_ext_is_supported "$EDITOR_ID"; then
   (
     dce_load_global_config 2>/dev/null || exit 0
-    dce_ext_enforce_declared "$PROJECT" "$EDITOR_ID" \
-      "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}"
+    if dce_ext_list_installed "$EDITOR_ID" "$PROJECT" >/dev/null 2>&1; then
+      dce_ext_enforce_declared "$PROJECT" "$EDITOR_ID" \
+        "$DC_TEAM_DIR" "$DC_USER_DIR" "${CONTAINER_OVERLAY_SCOPES:-}"
+    else
+      _dce_editor_spawn_ext_watch
+    fi
   ) || true
 fi
 

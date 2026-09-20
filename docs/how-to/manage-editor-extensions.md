@@ -116,11 +116,21 @@ declared-but-missing id.
 
 This is idempotent and advisory:
 
-- pre-adoption (no manifests) and first-ever opens (VS Code Server not yet
-  injected → no in-container `code-server`) are skipped; re-run `dce editor`
-  after the first open and the missing extensions are installed.
+- pre-adoption (no manifests) is a silent no-op.
+- when the container already has VS Code Server, the install runs synchronously
+  before launch.
+- on a first-ever open (VS Code Server not yet injected → no in-container
+  `code-server`), `dce editor` still launches immediately and spawns a detached
+  background watcher that polls the container until the server lands (default:
+  every 5 seconds, up to 300 seconds), then runs the same idempotent install.
+  The watcher logs to `${TMPDIR:-/tmp}/dce-ext-watch.<project>.log` (truncated
+  on each watch, mode 600 — the log is not persistent). Tunables:
+  `DCE_EXT_WATCH_INTERVAL` and `DCE_EXT_WATCH_TIMEOUT` (seconds); invalid
+  values warn and fall back to the defaults.
 - per-id install failures are reported but never block the launch; the next
-  `dce editor` retries.
+  `dce editor` retries. If the watcher times out because the editor never
+  attached, re-run `dce editor` — the synchronous path converges once the
+  server exists.
 
 Run `dce editor <project>` after the manifests
 are synced.

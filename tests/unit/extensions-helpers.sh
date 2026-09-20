@@ -12,6 +12,10 @@
 #   - dce_ext_manifests_exist (migration-guard predicate)
 #   - dce_ext_format (ids / manifest / json)
 #   - dce_ext_minus (set difference)
+#   - _dce_ext_watch_lock_stale (watcher single-flight lock freshness;
+#     test-first: the helper lands with the detached-watcher implementation in
+#     plans/extensions-first-open-convergence.md, so these cases FAIL -- rc 127
+#     -- until then)
 #
 # Container/host dispatch (dce_ext_list_installed / _list_host / _install_one)
 # is exercised end-to-end in tests/contract/extensions.sh.
@@ -223,6 +227,49 @@ dce_ext_is_valid_id ""                        && fail "is_valid_id: empty must b
 dce_ext_is_valid_id ".nohostpublisher"        && fail "is_valid_id: leading dot rejected"
 dce_ext_is_valid_id "-bad.id"                 && fail "is_valid_id: leading hyphen rejected"
 pass "is_valid_id: publisher.name format gate"
+
+# =============================================================================
+# I. _dce_ext_watch_lock_stale: single-flight lock freshness for the detached
+#    extension watcher (plans/extensions-first-open-convergence.md).
+#    Contract: return 0 (stale) when the lock dir is missing, the deadline
+#    file is missing/unreadable/non-numeric, or deadline <= now; return 1
+#    (fresh) when deadline > now. The helper is implemented in Task B; until then every
+#    call here yields rc 127 (undefined function) and FAILS, which is the
+#    expected test-first state. rc is always captured explicitly so an
+#    unexpected 127 reports as a FAIL, never a set -e abort or a silently
+#    inverted `if`.
+# =============================================================================
+STALE_LOCK="$WORK/watch-lock"
+
+# Future deadline -> fresh (return 1).
+mkdir -p "$STALE_LOCK"
+printf '%s\n' "$(($(date +%s) + 300))" > "$STALE_LOCK/deadline"
+rc=0; _dce_ext_watch_lock_stale "$STALE_LOCK" || rc=$?
+[[ "$rc" -eq 1 ]] || fail "lock_stale: future deadline must be FRESH (want rc=1, got rc=$rc)"
+
+# Past deadline -> stale (return 0).
+printf '%s\n' "$(($(date +%s) - 10))" > "$STALE_LOCK/deadline"
+rc=0; _dce_ext_watch_lock_stale "$STALE_LOCK" || rc=$?
+[[ "$rc" -eq 0 ]] || fail "lock_stale: past deadline must be STALE (want rc=0, got rc=$rc)"
+
+# Lock dir present, deadline file missing -> stale (return 0).
+rm -f "$STALE_LOCK/deadline"
+rc=0; _dce_ext_watch_lock_stale "$STALE_LOCK" || rc=$?
+[[ "$rc" -eq 0 ]] || fail "lock_stale: missing deadline file must be STALE (want rc=0, got rc=$rc)"
+
+# Lock dir missing entirely -> stale (return 0).
+rm -rf "$STALE_LOCK"
+rc=0; _dce_ext_watch_lock_stale "$STALE_LOCK" || rc=$?
+[[ "$rc" -eq 0 ]] || fail "lock_stale: missing lock dir must be STALE (want rc=0, got rc=$rc)"
+
+# Deadline file holds non-numeric garbage -> stale (return 0): corrupt content
+# is treated like a missing one (fail open), matching the documented truth
+# table -- a garbage lock must never wedge convergence.
+mkdir -p "$STALE_LOCK"
+printf 'garbage\n' > "$STALE_LOCK/deadline"
+rc=0; _dce_ext_watch_lock_stale "$STALE_LOCK" || rc=$?
+[[ "$rc" -eq 0 ]] || fail "lock_stale: garbage deadline must be STALE (want rc=0, got rc=$rc)"
+pass "lock_stale: future -> fresh; past / missing-file / missing-dir / garbage -> stale"
 
 echo ""
 echo "All extensions helper checks passed."

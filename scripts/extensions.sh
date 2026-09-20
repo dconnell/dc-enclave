@@ -374,7 +374,7 @@ case "$SUBACTION" in
       echo "  (none)"
     fi
     echo ""
-    echo "Declared but not installed (will converge on next editor open):"
+    echo "Declared but not installed (converges automatically on editor open):"
     if [[ ${#MISSING[@]} -gt 0 ]]; then
       for e in "${MISSING[@]}"; do printf '  %s\n' "$e"; done
     else

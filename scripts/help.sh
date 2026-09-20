@@ -466,7 +466,9 @@ Subcommands:
                               scopes (what sync will write).
   diff <project>              Runtime drift in BOTH directions: installed but
                               not declared (capture these before a rebuild), and
-                              declared but not installed (converges on next open).
+                              declared but not installed (converges automatically
+                              on editor open: in the background on the first
+                              open, synchronously on later opens).
   capture <project> --scope <scope> (--all | <id>...) [--user|--team]
                               Merge extension IDs into a manifest. Selective by
                               default (explicit IDs); --all snapshots the
@@ -496,9 +498,9 @@ Migration recipe (adopt manifests without losing current extensions):
 
 Notes:
   - Declared extensions survive `dce rebuild-container` via devcontainer.json
-    (VS Code re-installs them on next open); UNDECLARED extensions are lost on
-    rebuild -- `dce extensions diff` shows them, and `dce rebuild-container`
-    warns before destroying them.
+    (VS Code reinstalls them when the rebuilt container is opened); UNDECLARED
+    extensions are lost on rebuild -- `dce extensions diff` shows them, and
+    `dce rebuild-container` warns before destroying them.
   - `dce config sync-vscode` fully-manages the array once any manifest exists;
     before adoption it leaves a hand-curated array untouched (migration guard).
   - Drift surfaces in `dce doctor <project>` and `dce extensions diff`, and as a

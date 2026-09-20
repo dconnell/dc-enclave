@@ -7,6 +7,14 @@
 # `code` (to capture the launch argv). Apple refusal, selection precedence,
 # URI shape, and the start-if-not-running branch are all covered.
 #
+# Section 16 covers the detached first-open extension watcher
+# (plans/extensions-first-open-convergence.md): spawn + notice, convergence,
+# timeout, single-flight, mid-watch stop, stale-lock takeover, and the
+# pre-adoption no-op. Its stubs add a file-backed probe counter
+# (DC_STUB_EXT_SERVER_APPEAR_AFTER) and its sections use bounded-poll helpers
+# (wait_for_pattern / wait_watcher_done) + tiny watcher intervals so no
+# watcher can outlive the section that spawned it.
+#
 # Pure host-side helper coverage (id normalization, selection, URI encoder,
 # binary discovery contract) lives in tests/unit/editor-helpers.sh.
 # =============================================================================
@@ -129,7 +137,32 @@ case "${1:-}" in
 
     # --- attach-mode extension enforcement probes (plans/extensions.md §6) ---
     # _dce_ext_vscode_container_bin resolver: sh -c '...command -v code...'.
+    #
+    # DC_STUB_EXT_SERVER_APPEAR_AFTER=<n> (with DC_STUB_EXT_PROBE_COUNT=<file>)
+    # simulates a VS Code Server that is injected only after the nth
+    # CLI-resolution probe -- what a first-ever attach looks like while the
+    # detached watcher polls. The counter must be a FILE: every probe is a
+    # separate stub process. A missing/unreadable/unwritable counter degrades
+    # to count 0 (the probe still advances in memory) instead of erroring.
+    # APPEAR_AFTER unset -> exactly the old behavior, including the
+    # DC_STUB_EXT_SERVER_ABSENT switch below.
     if [[ "$3" == "sh" && "$4" == "-c" && "$*" == *"command -v code"* ]]; then
+      if [[ -n "${DC_STUB_EXT_SERVER_APPEAR_AFTER:-}" ]]; then
+        _probe_count=0
+        if [[ -n "${DC_STUB_EXT_PROBE_COUNT:-}" && -r "$DC_STUB_EXT_PROBE_COUNT" ]]; then
+          _probe_count="$(cat "$DC_STUB_EXT_PROBE_COUNT" 2>/dev/null || printf '0')"
+          case "$_probe_count" in '' | *[!0-9]*) _probe_count=0 ;; esac
+        fi
+        _probe_count=$((_probe_count + 1))
+        if [[ -n "${DC_STUB_EXT_PROBE_COUNT:-}" ]]; then
+          printf '%s\n' "$_probe_count" > "$DC_STUB_EXT_PROBE_COUNT" 2>/dev/null || true
+        fi
+        if [[ "$_probe_count" -le "$DC_STUB_EXT_SERVER_APPEAR_AFTER" ]]; then
+          exit 1
+        fi
+        printf '%s\n' '/home/dev/.vscode-server/bin/stubhash/bin/code-server'
+        exit 0
+      fi
       if [[ "${DC_STUB_EXT_SERVER_ABSENT:-0}" == "1" ]]; then
         exit 1
       fi
@@ -236,7 +269,32 @@ case "${1:-}" in
     fi
     $_drain_stdin && cat > /dev/null
     # _dce_ext_vscode_container_bin resolver probe: sh -c '...command -v code...'.
+    #
+    # DC_STUB_EXT_SERVER_APPEAR_AFTER=<n> (with DC_STUB_EXT_PROBE_COUNT=<file>)
+    # simulates a VS Code Server that is injected only after the nth
+    # CLI-resolution probe -- what a first-ever attach looks like while the
+    # detached watcher polls. The counter must be a FILE: every probe is a
+    # separate stub process. A missing/unreadable/unwritable counter degrades
+    # to count 0 (the probe still advances in memory) instead of erroring.
+    # APPEAR_AFTER unset -> exactly the old behavior, including the
+    # DC_STUB_EXT_SERVER_ABSENT switch below.
     if [[ "$3" == "sh" && "$4" == "-c" && "$*" == *"command -v code"* ]]; then
+      if [[ -n "${DC_STUB_EXT_SERVER_APPEAR_AFTER:-}" ]]; then
+        _probe_count=0
+        if [[ -n "${DC_STUB_EXT_PROBE_COUNT:-}" && -r "$DC_STUB_EXT_PROBE_COUNT" ]]; then
+          _probe_count="$(cat "$DC_STUB_EXT_PROBE_COUNT" 2>/dev/null || printf '0')"
+          case "$_probe_count" in '' | *[!0-9]*) _probe_count=0 ;; esac
+        fi
+        _probe_count=$((_probe_count + 1))
+        if [[ -n "${DC_STUB_EXT_PROBE_COUNT:-}" ]]; then
+          printf '%s\n' "$_probe_count" > "$DC_STUB_EXT_PROBE_COUNT" 2>/dev/null || true
+        fi
+        if [[ "$_probe_count" -le "$DC_STUB_EXT_SERVER_APPEAR_AFTER" ]]; then
+          exit 1
+        fi
+        printf '%s\n' '/home/dev/.vscode-server/bin/stubhash/bin/code-server'
+        exit 0
+      fi
       if [[ "${DC_STUB_EXT_SERVER_ABSENT:-0}" == "1" ]]; then
         exit 1
       fi
@@ -771,24 +829,6 @@ grep -Fq 'editor extensions: installing' "$WORK/sec15a.out" \
   || fail "nu: missing install status line (got: $(cat "$WORK/sec15a.out"))"
 pass "Section 15a: enforcement installs declared-but-missing; idempotent over installed"
 
-# (b) First-ever open: VS Code Server not yet injected -> skip with a notice,
-# editor still launches (the next `dce editor` will enforce after the server
-# lands on this attach).
-make_project "xi" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/xi/config"
-: > "$INSTALL_LOG"
-: > "$CODE_LOG"
-DC_STUB_EXT_SERVER_ABSENT=1 DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
-  run_editor xi >"$WORK/sec15b.out" 2>"$WORK/err" || fail "editor xi exited non-zero
--- stderr:$(cat "$WORK/err")"
-grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
-  || fail "xi: editor not launched despite server-absent skip"
-[[ ! -s "$INSTALL_LOG" ]] \
-  || fail "xi: no install should run when server absent (log: $(cat "$INSTALL_LOG"))"
-grep -Fqi 'VS Code Server not yet injected' "$WORK/sec15b.out" \
-  || fail "xi: missing server-absent skip notice (got: $(cat "$WORK/sec15b.out"))"
-pass "Section 15b: first-ever open (server absent) -> skip notice, editor still launches"
-
 # (c) Pre-adoption (no manifests): enforcement is a no-op; no install calls.
 make_project "omicron" running
 : > "$INSTALL_LOG"
@@ -823,6 +863,473 @@ grep -Fq 'INSTALL bad.id' "$INSTALL_LOG" \
 grep -Fq 'bad.id' "$WORK/sec15d.out" \
   || fail "pi: failing id not surfaced in status (got: $(cat "$WORK/sec15d.out"))"
 pass "Section 15d: per-id install failure is non-fatal (editor still launches)"
+
+# ===========================================================================
+# Section 16 helpers - bounded polling for the detached extension watcher.
+#
+# The watcher spawned by `dce editor` on a first-ever open
+# (plans/extensions-first-open-convergence.md) outlives the run_editor
+# invocation, so its log/lock must be polled with a deadline instead of
+# checked once. Every Section 16 subsection that can spawn a watcher MUST:
+#   1. point TMPDIR at a fresh dir under $WORK (the watcher's lock + log live
+#      under "${TMPDIR}/dce-ext-watch.<project>.*"; isolating per section
+#      keeps projects from observing each other),
+#   2. bound the watcher with tiny DCE_EXT_WATCH_INTERVAL/TIMEOUT values so
+#      it can never outlive the section,
+#   3. join it BEFORE the section's `pass` line, so the EXIT trap's
+#      `rm -rf "$WORK"` can never race a live watcher. Canonical join rules:
+#      (1) a watcher spawned in the background is joined with
+#      wait_watcher_done FIRST (lock appear -> disappear), and only then are
+#      one-shot content greps run -- once the lock is gone the process is
+#      proven exited and its log final;
+#      (2) a foreground/direct invocation needs no poll: the process
+#      exit/wait IS the join -- assert lock absence one-shot afterwards.
+# ===========================================================================
+
+# Poll <file> every 0.1s until it contains <fixed-string>, or timeout. Must
+# tolerate the file not existing yet: the watcher truncates its log at start,
+# but a just-spawned watcher may not have gotten there. Returns 0 when found,
+# 1 on timeout.
+wait_for_pattern() {  # <file> <fixed-string> <timeout_seconds>
+  local file="$1" pattern="$2" timeout="$3"
+  local deadline=$(( SECONDS + timeout ))
+  while (( SECONDS < deadline )); do
+    if [[ -f "$file" ]] && grep -Fq -- "$pattern" "$file"; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  [[ -f "$file" ]] && grep -Fq -- "$pattern" "$file"
+}
+
+# Join a spawned watcher with a two-phase bounded poll (0.1s cadence, one
+# deadline computed at entry and shared by both phases):
+#   Phase 1 -- wait for the lock dir to APPEAR. A just-spawned watcher (nohup
+#     child via run_editor, or a direct background invocation) needs ~50-200ms
+#     to start bash, source its libs, and mkdir the lock, so an immediate
+#     "is the lock gone" check would succeed before the watcher ever held the
+#     lock and silently turn the join into a no-op.
+#   Phase 2 -- wait for the lock dir to DISAPPEAR (= the watcher exited: it
+#     removes the lock via its EXIT trap).
+# Returns 0 when the lock appeared and was then released, 1 when the overall
+# <timeout> budget is exceeded in either phase. Callers must only use this for
+# watchers that are certain to spawn (all current call sites do).
+# TMPDIR may conventionally carry a trailing '/', so strip it before
+# concatenating -- the code under test joins
+# "${TMPDIR}/dce-ext-watch.<project>.lock", and POSIX collapses the doubled
+# slash either way, but the assertions below compare literal paths.
+wait_watcher_done() {  # <project> <timeout_seconds>
+  local project="$1" timeout="$2"
+  local base="${TMPDIR:-/tmp}"
+  base="${base%/}"
+  local lock="$base/dce-ext-watch.${project}.lock"
+  local deadline=$(( SECONDS + timeout ))
+  while (( SECONDS < deadline )) && [[ ! -e "$lock" ]]; do
+    sleep 0.1
+  done
+  [[ -e "$lock" ]] || return 1 # lock never appeared within the budget
+  while (( SECONDS < deadline )) && [[ -e "$lock" ]]; do
+    sleep 0.1
+  done
+  [[ ! -e "$lock" ]]
+}
+
+# ===========================================================================
+# Section 16 - detached extension watcher on first-ever open
+# (plans/extensions-first-open-convergence.md).
+#
+# Today a first-ever `dce editor` open (VS Code Server not yet injected into
+# the container) skips extension enforcement and tells the user to re-run.
+# The converged behavior: when the server is absent AND the project is
+# post-adoption with a non-empty declared set, editor.sh spawns the detached
+# watcher (nohup scripts/_editor-ext-watch.sh ...) with a per-project log +
+# single-flight lock under TMPDIR, prints a background notice carrying the
+# log path, and still launches the editor immediately; the watcher polls
+# until the server lands, runs the same enforcement (same stubbed INSTALL
+# calls), and logs its outcome. Pre-adoption or empty-declared projects keep
+# today's silent no-op (16f).
+#
+# The former Section 15b (sync-path skip notice when the server is absent)
+# was removed: 16a/16h supersede its scenario for post-adoption projects and
+# 16f pins the pre-adoption no-op. Section 15a/15c/15d (the unchanged
+# synchronous path) are untouched above.
+#
+# Test-first state: every subsection here except 16f FAILS until the
+# implementation lands -- scripts/_editor-ext-watch.sh does not exist yet and
+# editor.sh neither spawns a watcher nor prints the background/log-path
+# notice. 16f is expected to pass before AND after.
+# ===========================================================================
+WATCH_SCRIPT="$ROOT_DIR/scripts/_editor-ext-watch.sh"
+
+# Invoke the watcher script directly -- the way editor.sh spawns it -- with the
+# stubbed backend env wired. This is the direct-call equivalent of run_editor:
+# every var is pinned per call, so nothing leaks between sections. Callers
+# add/override specific vars with an env prefix, e.g.
+#   DC_STUB_EXT_SERVER_APPEAR_AFTER=1 run_watcher upsilon vscode 0.2 10
+run_watcher() {
+  PATH="$STUB_DIR:$ORIG_PATH" \
+    HOME="$WORK/home" CONTAINER_BACKEND="docker" \
+    DC_STUB_LOG="$DOCKER_LOG" \
+    DC_STUB_RUNNING="$RUNNING_FILE" \
+    DC_STUB_CONTAINERS="$CONTAINERS_FILE" \
+    DC_STUB_CONTAINER_EXT="${DC_STUB_CONTAINER_EXT:-}" \
+    DC_STUB_INSTALL_LOG="${DC_STUB_INSTALL_LOG:-}" \
+    DC_STUB_EXT_SERVER_ABSENT="${DC_STUB_EXT_SERVER_ABSENT:-0}" \
+    DC_STUB_EXT_SERVER_APPEAR_AFTER="${DC_STUB_EXT_SERVER_APPEAR_AFTER:-}" \
+    DC_STUB_EXT_PROBE_COUNT="${DC_STUB_EXT_PROBE_COUNT:-}" \
+    "$WATCH_SCRIPT" "$@"
+}
+
+# ---------------------------------------------------------------------------
+# (16a) Post-adoption + server absent: editor.sh must spawn the detached
+# watcher, print the background notice WITH the log path, still launch the
+# editor synchronously, and NOT install anything itself (server absent). The
+# watcher then polls until its timeout (the stubbed server never appears)
+# and logs the retry-hint timeout line -- waiting for that line doubles as
+# the join guarantee before this section ends.
+# ---------------------------------------------------------------------------
+make_project "rho" running
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/rho/config"
+seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
+printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
+: > "$INSTALL_LOG"
+: > "$CODE_LOG"
+TMPDIR="$WORK/tmp16a"
+export TMPDIR
+mkdir -p "$TMPDIR"
+rho_watch_log="${TMPDIR%/}/dce-ext-watch.rho.log"
+DC_STUB_EXT_SERVER_ABSENT=1 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
+  DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  DCE_EXT_WATCH_INTERVAL=0.2 DCE_EXT_WATCH_TIMEOUT=2 \
+  run_editor rho >"$WORK/sec16a.out" 2>"$WORK/err" || fail "editor rho exited non-zero
+-- stderr:$(cat "$WORK/err")"
+unset DCE_EXT_WATCH_INTERVAL DCE_EXT_WATCH_TIMEOUT
+
+# Editor launched synchronously despite the absent server.
+grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
+  || fail "rho: editor not launched alongside the watcher (got $(cat "$CODE_LOG"))"
+
+# The notice must say the work moved to the background and point at the log.
+grep -Fq 'VS Code Server not yet injected' "$WORK/sec16a.out" \
+  || fail "rho: missing server-absent notice (got: $(cat "$WORK/sec16a.out"))"
+grep -Fq 'background' "$WORK/sec16a.out" \
+  || fail "rho: notice does not mention the background watcher (got: $(cat "$WORK/sec16a.out"))"
+grep -Fq "$rho_watch_log" "$WORK/sec16a.out" \
+  || fail "rho: notice missing the watcher log path $rho_watch_log (got: $(cat "$WORK/sec16a.out"))"
+
+# The launch path itself must not have installed anything (server absent).
+[[ ! -s "$INSTALL_LOG" ]] \
+  || fail "rho: install ran in the launch path despite absent server (log: $(cat "$INSTALL_LOG"))"
+
+# A watcher was actually spawned: either it still holds its single-flight
+# lock or it already wrote its log.
+[[ -e "${TMPDIR%/}/dce-ext-watch.rho.lock" || -f "$rho_watch_log" ]] \
+  || fail "rho: no watcher lock or log -- nothing was spawned"
+
+# Join the watcher before the EXIT trap removes $WORK: the server never
+# appears, so the watcher must end on its 2s timeout with the retry hint.
+wait_watcher_done rho 10 || fail "rho: watcher lock still held 10s after spawn"
+# The watcher is proven exited, so its log is final: one-shot greps.
+grep -Fq 'not injected within' "$rho_watch_log" \
+  || fail "rho: watcher log missing timeout line (got: $(cat "$rho_watch_log" 2>/dev/null || true))"
+grep -Fq 'dce editor' "$rho_watch_log" \
+  || fail "rho: timeout line missing the 'dce editor' retry hint (log: $(cat "$rho_watch_log" 2>/dev/null || true))"
+pass "Section 16a: server absent + declared set -> detached watcher, non-blocking launch, notice with log path"
+
+# ---------------------------------------------------------------------------
+# (16b) The watcher converges once the server lands. APPEAR_AFTER=2 keeps the
+# stubbed server absent for the first 2 CLI-resolution probes (editor.sh's
+# availability check + the watcher's first poll; the count lives in a file
+# because every probe is a separate stub process), so editor.sh spawns the
+# watcher, and the watcher's next poll sees the server, breaks, and runs the
+# same enforcement as the synchronous path. Idempotence must hold through the
+# watcher: the already-installed id is never re-installed.
+# ---------------------------------------------------------------------------
+make_project "sigma" running
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/sigma/config"
+seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
+printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
+: > "$INSTALL_LOG"
+: > "$CODE_LOG"
+rm -f "$WORK/sigma-count" # probe counter; the stub initializes it from 0
+TMPDIR="$WORK/tmp16b"
+export TMPDIR
+mkdir -p "$TMPDIR"
+sigma_watch_log="${TMPDIR%/}/dce-ext-watch.sigma.log"
+DC_STUB_EXT_SERVER_APPEAR_AFTER=2 DC_STUB_EXT_PROBE_COUNT="$WORK/sigma-count" \
+  DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  DCE_EXT_WATCH_INTERVAL=0.2 DCE_EXT_WATCH_TIMEOUT=15 \
+  run_editor sigma >"$WORK/sec16b.out" 2>"$WORK/err" || fail "editor sigma exited non-zero
+-- stderr:$(cat "$WORK/err")"
+unset DC_STUB_EXT_SERVER_APPEAR_AFTER DC_STUB_EXT_PROBE_COUNT \
+  DCE_EXT_WATCH_INTERVAL DCE_EXT_WATCH_TIMEOUT
+
+# Join the watcher first (lock appear -> disappear): once the lock is gone
+# the watcher is proven exited and its output is final, so the convergence
+# and idempotence assertions below are one-shot greps.
+wait_watcher_done sigma 10 || fail "sigma: watcher lock still held 10s after spawn"
+grep -Fq 'INSTALL beta.missing' "$INSTALL_LOG" \
+  || fail "sigma: watcher never installed the missing id (install log: $(cat "$INSTALL_LOG" 2>/dev/null || true))"
+grep -Fq 'INSTALL alpha.installed' "$INSTALL_LOG" \
+  && fail "sigma: already-installed id re-installed through the watcher (not idempotent)"
+grep -Fq 'watch complete' "$sigma_watch_log" \
+  || fail "sigma: watcher log missing completion line (got: $(cat "$sigma_watch_log" 2>/dev/null || true))"
+pass "Section 16b: watcher converges when the server lands; idempotence preserved"
+
+# ---------------------------------------------------------------------------
+# (16c) Timeout skip: the server never lands, so the watcher must give up on
+# schedule and log the retry hint pointing at `dce editor` -- with no install
+# attempted along the way.
+# ---------------------------------------------------------------------------
+make_project "tau" running
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/tau/config"
+seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
+: > "$CONTAINER_EXT_FILE"
+: > "$INSTALL_LOG"
+: > "$CODE_LOG"
+TMPDIR="$WORK/tmp16c"
+export TMPDIR
+mkdir -p "$TMPDIR"
+tau_watch_log="${TMPDIR%/}/dce-ext-watch.tau.log"
+DC_STUB_EXT_SERVER_ABSENT=1 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
+  DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  DCE_EXT_WATCH_INTERVAL=0.2 DCE_EXT_WATCH_TIMEOUT=1 \
+  run_editor tau >"$WORK/sec16c.out" 2>"$WORK/err" || fail "editor tau exited non-zero
+-- stderr:$(cat "$WORK/err")"
+unset DCE_EXT_WATCH_INTERVAL DCE_EXT_WATCH_TIMEOUT
+
+wait_watcher_done tau 10 || fail "tau: watcher lock still held 10s after spawn"
+wait_for_pattern "$tau_watch_log" 'not injected within' 10 \
+  || fail "tau: watcher log missing timeout line (got: $(cat "$tau_watch_log" 2>/dev/null || true))"
+grep -Fq 'dce editor' "$tau_watch_log" \
+  || fail "tau: timeout line missing the 'dce editor' retry hint (log: $(cat "$tau_watch_log" 2>/dev/null || true))"
+[[ ! -s "$INSTALL_LOG" ]] \
+  || fail "tau: installs recorded despite the server never landing (log: $(cat "$INSTALL_LOG"))"
+pass "Section 16c: watcher times out with the retry hint; no installs attempted"
+
+# ---------------------------------------------------------------------------
+# (16d) Single-flight: two concurrent watchers for the same project must not
+# double-install. The first invocation is launched in the background; the
+# second runs in the foreground right after and must observe the fresh lock,
+# log "already active", and exit 0 while the first converges (APPEAR_AFTER=1:
+# the server appears on the 2nd probe). Each declared-but-missing id must be
+# installed exactly once across both invocations.
+# ---------------------------------------------------------------------------
+make_project "upsilon" running
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/upsilon/config"
+seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\ngamma.missing\n'
+printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
+: > "$INSTALL_LOG"
+# Expected test-first failure: the watcher script does not exist until the
+# implementation lands.
+[[ -x "$WATCH_SCRIPT" ]] \
+  || fail "upsilon: scripts/_editor-ext-watch.sh does not exist yet (expected pre-implementation failure)"
+rm -f "$WORK/upsilon-count" # probe counter; the stub initializes it from 0
+TMPDIR="$WORK/tmp16d"
+export TMPDIR
+mkdir -p "$TMPDIR"
+ups_watch_log="${TMPDIR%/}/dce-ext-watch.upsilon.log"
+# The test synchronizes on the first watcher's lock dir existing (0.1s poll,
+# bounded at 10s) instead of a fixed sleep stagger: a fixed sleep races the
+# first watcher's ~50-200ms nohup/bash startup, whereas waiting for the lock
+# guarantees the second launch is a true latecomer that must observe the fresh
+# lock (the watchers still overlap, since the first polls for up to 10s).
+ups_lock="${TMPDIR%/}/dce-ext-watch.upsilon.lock"
+ups_fg_rc=0
+ups_bg_rc=0
+DC_STUB_EXT_SERVER_ABSENT=0 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
+  DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  DC_STUB_EXT_SERVER_APPEAR_AFTER=1 DC_STUB_EXT_PROBE_COUNT="$WORK/upsilon-count" \
+  run_watcher upsilon vscode 0.2 10 >>"$ups_watch_log" 2>&1 &
+ups_bg=$!
+ups_lock_deadline=$(( SECONDS + 10 ))
+while (( SECONDS < ups_lock_deadline )) && [[ ! -d "$ups_lock" ]]; do
+  sleep 0.1
+done
+[[ -d "$ups_lock" ]] \
+  || fail "upsilon: first watcher never took its lock ($ups_lock absent after 10s)"
+sleep 0.1 # tiny margin once the lock exists, so the two processes overlap
+DC_STUB_EXT_SERVER_ABSENT=0 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
+  DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  DC_STUB_EXT_SERVER_APPEAR_AFTER=1 DC_STUB_EXT_PROBE_COUNT="$WORK/upsilon-count" \
+  run_watcher upsilon vscode 0.2 10 >>"$ups_watch_log" 2>&1 || ups_fg_rc=$?
+wait "$ups_bg" || ups_bg_rc=$?
+# Defensive: POSIX-mode bash would persist env-prefix assignments on function
+# calls past the call (see run_editor); drop the schedule vars so later
+# sections start from a clean slate.
+unset DC_STUB_EXT_SERVER_APPEAR_AFTER DC_STUB_EXT_PROBE_COUNT
+[[ "$ups_fg_rc" -eq 0 && "$ups_bg_rc" -eq 0 ]] \
+  || fail "upsilon: both watcher invocations must exit 0 (fg=$ups_fg_rc bg=$ups_bg_rc, log: $ups_watch_log)"
+
+wait_for_pattern "$ups_watch_log" 'already active' 10 \
+  || fail "upsilon: second watcher did not log 'already active' (log: $(cat "$ups_watch_log" 2>/dev/null || true))"
+ups_n_beta="$(grep -cxF 'INSTALL beta.missing' "$INSTALL_LOG" || true)"
+ups_n_gamma="$(grep -cxF 'INSTALL gamma.missing' "$INSTALL_LOG" || true)"
+[[ "$ups_n_beta" -eq 1 ]] \
+  || fail "upsilon: beta.missing installed $ups_n_beta times, expected exactly 1 (log: $(cat "$INSTALL_LOG"))"
+[[ "$ups_n_gamma" -eq 1 ]] \
+  || fail "upsilon: gamma.missing installed $ups_n_gamma times, expected exactly 1 (log: $(cat "$INSTALL_LOG"))"
+# The first watcher was already reaped by `wait "$ups_bg"` above -- that wait
+# IS the join, and the EXIT trap removes the lock synchronously before reap.
+[[ ! -e "$ups_lock" ]] \
+  || fail "upsilon: lock must be removed after the first watcher exits"
+grep -Fq 'watch complete' "$ups_watch_log" \
+  || fail "upsilon: watcher log missing completion line (got: $(cat "$ups_watch_log" 2>/dev/null || true))"
+pass "Section 16d: concurrent watchers are single-flight; each missing id installed exactly once"
+
+# ---------------------------------------------------------------------------
+# (16e) Container stops mid-watch: the watcher must notice the container went
+# away (backend_is_running fails -- the stubs re-read the running list file on
+# every call), log it, and exit 0 without attempting any install. Invoked
+# directly in the background with a generous timeout; phi is dropped from the
+# running list ~0.8s in, so the "stopped" line must appear well before the
+# timeout path could.
+# ---------------------------------------------------------------------------
+make_project "phi" running
+: > "$CONTAINER_EXT_FILE"
+: > "$INSTALL_LOG"
+TMPDIR="$WORK/tmp16e"
+export TMPDIR
+mkdir -p "$TMPDIR"
+phi_watch_log="${TMPDIR%/}/dce-ext-watch.phi.log"
+phi_rc=0
+DC_STUB_EXT_SERVER_ABSENT=1 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
+  DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  DC_STUB_EXT_SERVER_APPEAR_AFTER='' DC_STUB_EXT_PROBE_COUNT='' \
+  run_watcher phi vscode 0.5 10 >>"$phi_watch_log" 2>&1 &
+phi_bg=$!
+sleep 0.8
+sed -i.bak '/^phi$/d' "$RUNNING_FILE"
+rm -f "$RUNNING_FILE.bak"
+wait "$phi_bg" || phi_rc=$?
+unset DC_STUB_EXT_SERVER_APPEAR_AFTER DC_STUB_EXT_PROBE_COUNT
+[[ "$phi_rc" -eq 0 ]] \
+  || fail "phi: watcher exited non-zero after the container stopped (rc=$phi_rc, log: $phi_watch_log)"
+wait_for_pattern "$phi_watch_log" 'stopped' 10 \
+  || fail "phi: watcher log missing stopped line (got: $(cat "$phi_watch_log" 2>/dev/null || true))"
+[[ ! -s "$INSTALL_LOG" ]] \
+  || fail "phi: installs recorded for a stopped container (log: $(cat "$INSTALL_LOG"))"
+# The watcher was already reaped by `wait "$phi_bg"` above -- that wait IS
+# the join, and the EXIT trap removes the lock synchronously before reap.
+[[ ! -e "${TMPDIR%/}/dce-ext-watch.phi.lock" ]] \
+  || fail "phi: lock must be removed after the watcher exits"
+pass "Section 16e: container stopped mid-watch -> watcher logs it and exits without installs"
+
+# ---------------------------------------------------------------------------
+# (16f) Pre-adoption + server absent: the silent no-op MUST stay silent. No
+# manifests are seeded for chi and no scopes are declared, so editor.sh
+# launches the editor and neither spawns a watcher, prints a background
+# notice, nor touches TMPDIR. Regression guard expected to PASS both before
+# and after the implementation. No join is needed: pre-adoption categorically
+# spawns no watcher, and the lock+log absence assertions below prove none was
+# ever created.
+# ---------------------------------------------------------------------------
+make_project "chi" running
+: > "$CONTAINER_EXT_FILE"
+: > "$INSTALL_LOG"
+: > "$CODE_LOG"
+TMPDIR="$WORK/tmp16f"
+export TMPDIR
+mkdir -p "$TMPDIR"
+DC_STUB_EXT_SERVER_ABSENT=1 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
+  DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  DCE_EXT_WATCH_INTERVAL=0.2 DCE_EXT_WATCH_TIMEOUT=1 \
+  run_editor chi >"$WORK/sec16f.out" 2>"$WORK/err" || fail "editor chi exited non-zero
+-- stderr:$(cat "$WORK/err")"
+unset DCE_EXT_WATCH_INTERVAL DCE_EXT_WATCH_TIMEOUT
+
+grep -Fq -- '--folder-uri vscode-remote://attached-container+' "$CODE_LOG" \
+  || fail "chi: editor not launched (pre-adoption)"
+grep -Fq 'background' "$WORK/sec16f.out" \
+  && fail "chi: pre-adoption must not print a background notice (got: $(cat "$WORK/sec16f.out"))"
+[[ ! -e "${TMPDIR%/}/dce-ext-watch.chi.lock" ]] \
+  || fail "chi: watcher lock created for a pre-adoption project"
+[[ ! -e "${TMPDIR%/}/dce-ext-watch.chi.log" ]] \
+  || fail "chi: watcher log created for a pre-adoption project"
+[[ ! -s "$INSTALL_LOG" ]] \
+  || fail "chi: pre-adoption must not install anything (log: $(cat "$INSTALL_LOG"))"
+pass "Section 16f: pre-adoption + server absent -> nothing spawned, nothing printed (silent no-op)"
+
+# ---------------------------------------------------------------------------
+# (16g) Stale lock takeover: a leftover lock whose deadline is in the past
+# must NOT block a fresh watcher. The stale lock is removed and retaken; the
+# fresh watcher converges immediately (APPEAR_AFTER=0 -> server present on
+# the very first probe) and no "already active" line is ever logged.
+# ---------------------------------------------------------------------------
+make_project "psi" running
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/psi/config"
+seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
+: > "$CONTAINER_EXT_FILE"
+: > "$INSTALL_LOG"
+TMPDIR="$WORK/tmp16g"
+export TMPDIR
+mkdir -p "$TMPDIR"
+psi_lock="${TMPDIR%/}/dce-ext-watch.psi.lock"
+psi_watch_log="${TMPDIR%/}/dce-ext-watch.psi.log"
+mkdir -p "$psi_lock"
+# Portable "10 seconds ago" (date -v-10S is macOS-only).
+printf '%s\n' "$(($(date +%s) - 10))" > "$psi_lock/deadline"
+psi_rc=0
+DC_STUB_EXT_SERVER_ABSENT=0 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
+  DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
+  DC_STUB_EXT_SERVER_APPEAR_AFTER=0 DC_STUB_EXT_PROBE_COUNT='' \
+  run_watcher psi vscode 0.2 10 >>"$psi_watch_log" 2>&1 || psi_rc=$?
+unset DC_STUB_EXT_SERVER_APPEAR_AFTER DC_STUB_EXT_PROBE_COUNT
+[[ "$psi_rc" -eq 0 ]] \
+  || fail "psi: direct watcher invocation failed (rc=$psi_rc, log: $psi_watch_log)"
+wait_for_pattern "$INSTALL_LOG" 'INSTALL beta.missing' 10 \
+  || fail "psi: watcher did not take over the stale lock and install (log: $(cat "$INSTALL_LOG" 2>/dev/null || true))"
+grep -Fq 'already active' "$psi_watch_log" \
+  && fail "psi: stale lock was treated as still active (log: $(cat "$psi_watch_log" 2>/dev/null || true))"
+# A foreground invocation's wait/exit IS the join: the EXIT trap must have
+# removed the lock synchronously by the time the process is reaped.
+[[ ! -e "$psi_lock" ]] || fail "psi: lock must be removed after a foreground watcher exits"
+pass "Section 16g: stale lock is removed and retaken; the watcher converges"
+
+# ---------------------------------------------------------------------------
+# (16h) Apple mirror of 16a: the detached-watcher behavior is backend-neutral.
+# Backend selection mirrors Section 6 (CONTAINER_BACKEND=apple in the project
+# config + DC_STUB_APPLE_INSPECT_IMAGE for the attach-ref inspect); every 16a
+# assertion carries over, with the apple-container launch URI.
+# ---------------------------------------------------------------------------
+make_project "omega" running
+sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/omega/config"
+rm -f "$DC_ROOT/omega/config.bak"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/omega/config"
+seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
+printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
+: > "$INSTALL_LOG"
+: > "$CODE_LOG"
+TMPDIR="$WORK/tmp16h"
+export TMPDIR
+mkdir -p "$TMPDIR"
+omega_watch_log="${TMPDIR%/}/dce-ext-watch.omega.log"
+DC_STUB_EXT_SERVER_ABSENT=1 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
+  DC_STUB_INSTALL_LOG="$INSTALL_LOG" DC_STUB_APPLE_INSPECT_IMAGE="dce-base:latest" \
+  DCE_EXT_WATCH_INTERVAL=0.2 DCE_EXT_WATCH_TIMEOUT=2 \
+  run_editor omega >"$WORK/sec16h.out" 2>"$WORK/err" || fail "editor omega (apple) exited non-zero
+-- stderr:$(cat "$WORK/err")"
+unset DCE_EXT_WATCH_INTERVAL DCE_EXT_WATCH_TIMEOUT
+
+grep -Fq -- '--folder-uri vscode-remote://apple-container+' "$CODE_LOG" \
+  || fail "omega: editor not launched on the apple path (got $(cat "$CODE_LOG"))"
+grep -Fq 'VS Code Server not yet injected' "$WORK/sec16h.out" \
+  || fail "omega: missing server-absent notice (got: $(cat "$WORK/sec16h.out"))"
+grep -Fq 'background' "$WORK/sec16h.out" \
+  || fail "omega: notice does not mention the background watcher (got: $(cat "$WORK/sec16h.out"))"
+grep -Fq "$omega_watch_log" "$WORK/sec16h.out" \
+  || fail "omega: notice missing the watcher log path (got: $(cat "$WORK/sec16h.out"))"
+[[ ! -s "$INSTALL_LOG" ]] \
+  || fail "omega: install ran in the launch path despite absent server (log: $(cat "$INSTALL_LOG"))"
+[[ -e "${TMPDIR%/}/dce-ext-watch.omega.lock" || -f "$omega_watch_log" ]] \
+  || fail "omega: no watcher lock or log -- nothing was spawned"
+wait_watcher_done omega 10 || fail "omega: watcher lock still held 10s after spawn"
+# The watcher is proven exited, so its log is final: one-shot greps.
+grep -Fq 'not injected within' "$omega_watch_log" \
+  || fail "omega: watcher log missing timeout line (got: $(cat "$omega_watch_log" 2>/dev/null || true))"
+grep -Fq 'dce editor' "$omega_watch_log" \
+  || fail "omega: timeout line missing the 'dce editor' retry hint (log: $(cat "$omega_watch_log" 2>/dev/null || true))"
+pass "Section 16h: apple backend mirrors 16a (detached watcher + non-blocking launch)"
 
 echo ""
 echo "All editor contract checks passed."
