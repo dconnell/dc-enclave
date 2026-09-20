@@ -27,12 +27,8 @@ _show_summary() {
   echo "Usage: dce <command> [args]"
   echo ""
   echo "Commands:"
-  echo "  new <name> [scope[,scope...]] [host:container ...]"
+  echo "  new <name> [scope[,scope...]] [flags] [port|host:container ...]"
   echo "                                                    Create a new isolated container project"
-  echo "  new <name> [scope[,scope...]] [--config <path>] [--repo-path <path>]"
-  echo "       [--save-team] [--save-user] [--git-host <provider>] [--cpus <N>] [--memory <val>]"
-  echo "       [--hide <path[,path...]> ...] [host:container ...]"
-  echo "                                                    With resource limits"
   echo "  start [name ...]                                  Start one or more projects, or all"
   echo "  stop [name ...]                                   Stop one or more projects, or all"
   echo "  list                                              List containers and status"
@@ -69,132 +65,124 @@ _show_summary() {
 
 _show_help_new() {
   cat <<'EOF'
-Usage: dce new <name> [scope[,scope...]] [--repo-path <path>]
-              [--config <path>]
-              [--save-team] [--save-user] [--git-host <provider>] [--yes|-y]
-              [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...]
-              [host:container ...]
+Usage: dce new <name> [scope[,scope...]] [--cpus <N>] [--memory <val>]
+              [--repo-path <path>] [--hide <path[,path...]> ...]
+              [--network <name[,name...]>] [--ip <addr>] [--git-host <provider>]
+              [--config <path>] [--save-team] [--save-user] [--yes|-y]
+              [port|host:container ...]
 
 Description:
-  Creates a new isolated development container with its own SSH keys, git-host
-  token placeholder, .npmrc template, and a dedicated workspace mount.
+  Creates a new isolated dev container: per-project SSH deploy key, git-host
+  token placeholder, .npmrc template, and a host directory bind-mounted as
+  /workspace. The container is created and started, then wired for editors
+  (.devcontainer/devcontainer.json).
 
-  Image selection is scope-driven:
-  - The shared base image is always dce-base:latest.
-  - If effective overlay scopes are present, a deterministic derived image
-    (dce-img-<hash>:latest) is selected.
-  - If the derived image does not exist, it is composed and built.
-  - If it exists, it is reused.
-
-  Effective overlays are loaded only from:
-  - $DC_TEAM_DIR/overlays/Containerfile.<scope>
-  - $DC_USER_DIR/overlays/Containerfile.<scope>
-
-  Named scopes that do not exist in either team or user overlays fail fast.
+  The image is chosen from scopes:
+  - No scopes: the shared base image (dce-base:latest).
+  - With scopes: a deterministic derived image (dce-img-<hash>:latest),
+    composed from team/user overlays -- built if missing, reused if present.
+    Overlays live at $DC_TEAM_DIR/overlays/Containerfile.<scope> and
+    $DC_USER_DIR/overlays/Containerfile.<scope>; a scope missing from both
+    fails fast.
 
 Arguments:
-  <name>      Project name. Allowed chars: letters, numbers, dot, underscore,
-              hyphen. Must not already exist.
+  <name>     Project name (letters, numbers, dot, underscore, hyphen). Must
+             not already exist as a config or container.
 
-  <scope>     Optional overlay scope(s), comma-separated.
+  <scope>    Optional overlay scopes, comma-separated (e.g. node,postgres).
+             If given, must be the FIRST argument after <name> -- before any
+             flag or port.
+
+  port       Published port(s); repeatable. Docker-style forms:
+               5173          host 5173 -> container 5173
+               8080:3000     host 8080 -> container 3000
+             A bare port maps the same port on both sides (5173 == 5173:5173).
+             Ports may appear anywhere after <name> (and after <scope>).
 
 Options:
-  --config <path>
-               Load one explicit container recipe file (key=value) and use it
-               as defaults for this run. When set, name-based recipe lookup is
-               skipped. CLI flags still override recipe values.
-
-  --repo-path <path>
-               Override the default repo mount location. Defaults to
-               $DC_REPOS_DIR/<name> or ~/repos/<name>.
-
-               Recipe-sourced repo-path is gated: an auto-loaded recipe cannot
-               silently widen the host bind mount. If a recipe repo-path
-               resolves outside the default repos dir, you are asked to confirm
-               before it is mounted read-write as /workspace (--yes/-y honors it
-               and prints a notice). Values resolving to /, your home, the repos
-               root, or a parent of it are rejected, as are values with
-               characters unsafe for a bind-mount source. CLI --repo-path (this
-               flag) is never gated.
-
-  --save-team
-               Save only the CLI-supplied recipe keys from this run to
-               $DC_TEAM_DIR/container-recipes/<name> in key=value form.
-               Recipe-defaulted values are not written.
-
-  --save-user
-               Save only the CLI-supplied recipe keys from this run to
-               $DC_USER_DIR/container-recipes/<name> in key=value form.
-               Recipe-defaulted values are not written.
-
-               You can pass both flags to write both files.
-
-  --yes, -y   Skip the recipe-repo-path confirmation prompt: honor a recipe-
-               sourced repo-path that resolves outside the default repos dir and
-               print a visible notice instead of prompting. Has no effect on CLI
-               --repo-path or on recipe paths inside the default repos dir.
-
-  --cpus <N>  CPU limit for the container (e.g. 2, 1.5). Passed to the backend.
+  --cpus <N>
+             CPU limit (e.g. 2, 1.5).
 
   --memory <val>
-               Memory limit for the container (e.g. 4g, 512m). Passed to the
-               backend.
+             Memory limit (e.g. 4g, 512m).
+
+  --repo-path <path>
+             Host directory to bind-mount as /workspace. Default:
+             $DC_REPOS_DIR/<name> (~/repos/<name>).
+             CLI --repo-path is unrestricted. A recipe-sourced repo-path is
+             gated: values resolving to /, your home, the repos root, or a
+             parent of it -- and relative paths that escape the repos root --
+             are rejected; absolute paths outside the default repos dir
+             prompt for confirmation (--yes honors them with a notice).
+             Characters unsafe in a bind-mount source are rejected from any
+             source.
 
   --hide <path[,path...]>
-                Keep one or more /workspace-relative paths in a named volume so
-                generated files do not appear on the host. May be repeated.
-                Examples:
-                  --hide node_modules
-                  --hide apps/web/node_modules,apps/api/node_modules
-
+             Keep /workspace-relative paths in named volumes so generated
+             files (node_modules, caches) stay off the host. Repeatable.
+             Examples:
+               --hide node_modules
+               --hide apps/web/node_modules,apps/api/node_modules
 
   --network <name[,name...]>
-               Attach the container to one or more private dce networks so it can
-               reach other containers on the same network by name, without
-               publishing ports to the host. Each entry is a network name, or
-               name:ip to pin a static IPv4. Example: --network myapp,obs
+             Private dce network(s) to join, so peers reach each other by
+             name without published ports. Entries are names or name:ip
+             (static IPv4); the first entry is the primary. Networks must
+             already exist: `dce network create <name>`.
+             apple/container: a single network, no static IPs.
+             Example: --network myapp,obs
 
-  --ip <addr>  Static IPv4 for the primary (first) network, e.g. 10.0.0.5.
-                Equivalent to writing name:ip on the first --network entry. Not
-                supported on the apple/container backend.
+  --ip <addr>
+             Static IPv4 for the primary network (e.g. 10.0.0.5); shorthand
+             for name:ip on the first --network entry. Not supported on
+             apple/container.
 
   --git-host <provider>
-                Select the git host this project authenticates against
-                (default: github). Determines the token file name, placeholder
-                sentinel, HTTPS credential username, SSH host-key pin, and the
-                env var the token is exported as in `dce shell`
-                (GITHUB_TOKEN / GITLAB_TOKEN). Known providers: github, gitlab.
-                Read-only after create; to switch hosts, re-run `dce new`.
+             Git host to authenticate against (default: github). Chooses the
+             token file name, placeholder sentinel, credential username, SSH
+             host-key pin, and the env var `dce shell` seeds (GITHUB_TOKEN /
+             GITLAB_TOKEN). Known providers: github, gitlab. Fixed at create;
+             to switch, re-run `dce new`.
 
-  host:container
-              Port mapping(s) to publish, in Docker syntax. A bare port number
-              (e.g. 5173) maps the same port on both host and container. A
-              colon-separated pair (e.g. 8080:3000) maps different ports.
+  --config <path>
+             Load one explicit recipe file (key=value) as this run's
+             defaults; name-based recipe lookup is skipped. CLI flags still
+             override recipe values.
+
+  --save-team
+             Save the CLI-supplied keys from this run as a team recipe at
+             $DC_TEAM_DIR/container-recipes/<name>.
+
+  --save-user
+             Same as --save-team, written to $DC_USER_DIR/container-recipes/
+             <name>. Both flags may be given; recipe-defaulted values are
+             never written, only what you passed on the CLI.
+
+  --yes, -y  Skip the recipe repo-path confirmation prompt: the value is
+             honored with a visible notice instead. No effect on CLI
+             --repo-path or recipe paths inside the default repos dir.
 
 Examples:
-  dce new myapp
-  dce new myapp golang
-  dce new myapp node,postgres
+  dce new myapp                          base image, no scopes
+  dce new myapp node,postgres            scopes -> derived image
+  dce new myapp node 5173                publish 5173 (== 5173:5173)
+  dce new web node 3000 8080:3000        multiple ports; one remapped
+  dce new api nodejs --cpus 2 --memory 4g --hide node_modules 3000 --save-team
+  dce new myapp --network myapp --ip 10.0.0.5
   dce new myapp --config ~/.config/dce-enclave/team/container-recipes/api
-  dce new api nodejs --cpus 2 --memory 4g --hide node_modules 3000:3000 --save-team
-  dce new api --cpus 3 --hide .cache --save-user
   dce new myapp node --repo-path ~/code/myapp
-  dce new myapp --cpus 2 --memory 4g --hide node_modules 5173:5173
-  dce new monorepo nodejs,golang --hide apps/web/node_modules --hide .cache/go/mod,.cache/go/build
+  dce new mono nodejs,golang --hide apps/web/node_modules --hide .cache/go/mod
 
 Notes:
-  - The base image 'dce-base:latest' must exist. Run scripts/setup.sh first.
-  - Config is stored in ~/.config/dce-enclave/<name>/config
-  - Secrets (SSH key, GitHub token, .npmrc) are stored alongside the config
-    with restrictive permissions (chmod 600/700).
-  - A .devcontainer/devcontainer.json is generated for VS Code Dev Containers
-    integration (every backend; apple/container uses VS Code's experimental
-    apple-container attach -- see `dce help editor`).
-  - apple/container projects also get --dns configured at create time, since
-    apple's default resolver does not forward external DNS. Override: DCE_DNS.
-  - Existing devcontainer.json is preserved (never overwritten). If an existing
-    file's managed fields drift from current config, `dce new` prints a notice;
-    reconcile with `dce config sync-vscode <name>`.
+  - Requires dce-base:latest on the backend; run scripts/setup.sh first.
+  - Config and secrets are stored in ~/.config/dce-enclave/<name>/ with
+    restrictive permissions (chmod 600/700).
+  - .devcontainer/devcontainer.json is seeded once and never overwritten;
+    drift prints a notice -- reconcile with `dce config sync-vscode <name>`.
+  - apple/container: DNS is set at create time (override: DCE_DNS); VS Code
+    attach is experimental (see `dce help editor`).
+  - Create-time choices (cpus, memory, hide, network, ports, scopes) change
+    later via `dce config set` + `dce rebuild-container`.
 EOF
 }
 
@@ -203,18 +191,21 @@ _show_help_start() {
 Usage: dce start [name ...]
 
 Description:
-  Starts one or more dev containers. If no project name is given, all
-  configured containers are started.
+  Starts one or more dev containers. With no name, starts every configured
+  project.
 
-  If the container backend (Docker, Colima, OrbStack, Podman, etc.) is not
-  running, this command attempts to start it and prints guidance if it cannot.
+  If the container backend (Docker, Colima, OrbStack, Podman, ...) is not
+  running, dce tries to start it and prints guidance if it cannot.
 
-  When a container is started, SSH keys are re-injected if they are missing
-  from the container filesystem.
+  Starting a stopped container also repairs it: hidden-volume mounts are
+  re-verified, the SSH deploy key is re-injected if missing, git
+  credentials are re-seeded, and the project's hosts fragment is
+  reconciled into /etc/hosts. An already-running container is left
+  untouched.
 
 Arguments:
-  [name ...]  One or more project names to start. If omitted, all configured
-              containers are started.
+  [name ...]  One or more project names to start. If omitted, all
+              configured containers are started.
 
 Examples:
   dce start              Start all containers
@@ -222,8 +213,9 @@ Examples:
   dce start web api db   Start multiple containers
 
 Notes:
-  - The project must already exist (created via 'dce new').
-  - Run 'dce status' afterwards to verify running state.
+  - The project must already exist (created via `dce new`).
+  - With multiple names, the first failure stops the run.
+  - Run `dce status` afterwards to verify running state.
 EOF
 }
 
@@ -232,16 +224,17 @@ _show_help_stop() {
 Usage: dce stop [name ...]
 
 Description:
-  Stops one or more dev containers. If no project name is given, all
-  configured containers are stopped.
+  Stops one or more dev containers. With no name, stops every configured
+  project. Already-stopped containers are reported as such, not treated as
+  errors.
 
-  Stopping preserves the container filesystem - the container can be restarted
-  with 'dce start' without data loss. Use 'dce rebuild-container' to fully
-  destroy and recreate a container.
+  Stopping preserves the container filesystem: `dce start` brings it back
+  with no data loss. Nothing is removed -- not the container, images,
+  volumes, or config.
 
 Arguments:
-  [name ...]  One or more project names to stop. If omitted, all configured
-              containers are stopped.
+  [name ...]  One or more project names to stop. If omitted, all
+              configured containers are stopped.
 
 Examples:
   dce stop              Stop all containers
@@ -249,8 +242,8 @@ Examples:
   dce stop web api db   Stop multiple containers
 
 Notes:
-  - If a container is already stopped, it is reported as such (no error).
-  - Stopping does not remove images or config.
+  - With multiple names, the first failure stops the run.
+  - To destroy and recreate a container, use `dce rebuild-container`.
 EOF
 }
 
@@ -259,19 +252,21 @@ _show_help_status() {
 Usage: dce status
 
 Description:
-  Shows detailed status of all configured dev containers, including:
-  - Container name and running state
-  - Backend (apple/container, Docker, OrbStack, Colima, Podman)
-  - Image and overlay scopes
-  - Resource limits (CPU/memory) if set
-  - Port mappings
-  - Workspace mount path
-  - SSH key and GitHub token status
+  Shows the state of every configured dev container:
+
+  - Per project: running state, backend, image + overlay scopes, resource
+    limits, port mappings, networks, hidden paths, workspace mount path,
+    SSH key status, and git-host token status (provider-aware: GitHub,
+    GitLab, ...). With jq installed, the image's provenance line is shown.
+  - Stale containers: projects whose container image predates their
+    configured image, with a `dce rebuild-container` hint.
+  - Backend system info plus a backend-wide container listing (including
+    non-dce containers).
 
   Ends with a quick-command cheat sheet for common operations.
 
 Arguments:
-  (none)
+  (none -- extra arguments are ignored)
 
 Aliases:
   s         dce s is equivalent to dce status
@@ -281,8 +276,10 @@ Examples:
   dce s
 
 Notes:
-  - Requires a reachable container backend to show live state.
-  - Use 'dce list' for a compact summary instead.
+  - The default backend must be reachable to show live state. Each project
+    may override the backend; those entries degrade gracefully if their
+    backend is unreachable.
+  - Use `dce list` for a compact summary instead.
 EOF
 }
 
@@ -291,9 +288,13 @@ _show_help_list() {
 Usage: dce list
 
 Description:
-  Prints a compact one-line-per-container summary showing the container name
-  and its running/stopped state. Useful for a quick overview without the
-  detail provided by 'dce status'.
+  Compact one-line-per-project overview. Five columns:
+
+    NAME     project name (one line per configured project)
+    STATUS   running | stopped | missing (no container) | unknown
+    BACKEND  container backend for the project
+    SCOPES   overlay scopes (blank for base image)
+    WARN     STALE when the container image predates the configured image
 
 Arguments:
   (none)
@@ -307,7 +308,9 @@ Examples:
 
 Notes:
   - Requires a reachable container backend.
-  - Only shows containers managed by DC Enclave (prefixed with 'dce-').
+  - Lists projects with a config under ~/.config/dce-enclave/, running or
+    not -- it does not enumerate raw backend containers.
+  - STALE means drift is proven: rebuild with `dce rebuild-container`.
 EOF
 }
 
@@ -316,37 +319,38 @@ _show_help_shell() {
 Usage: dce shell <name> [command]
 
 Description:
-  Opens an interactive shell inside a dev container. If the container is not
-  running, it is started automatically.
+  Opens an interactive zsh inside a dev container (started automatically if
+  stopped). The prompt is prefixed with the project name.
 
-  The project's git token is injected into the shell environment as the
-  provider's env var (GITHUB_TOKEN for github, GITLAB_TOKEN for gitlab), if a
-  non-placeholder token is set. The shell prompt is prefixed with the project name.
+  With a command, runs it non-interactively and exits. The command is
+  executed via `zsh -ic`, so aliases and interactive shell config are
+  loaded. Multiple words are joined into a single command string -- quote
+  compound commands:
 
-  If a command is provided, it is executed non-interactively inside the
-  container (via zsh -ic) and the shell exits afterwards.
+      dce shell myapp "npm install && npm run dev"
+
+  If the project's git token is set (non-placeholder), it is exported into
+  the shell as the provider's env var: GITHUB_TOKEN for github,
+  GITLAB_TOKEN for gitlab.
 
 Arguments:
-  <name>     Project/container name. Must already exist.
+  <name>     Project name. Must already exist.
 
-  [command]  Optional command to run instead of opening an interactive shell.
-             The command is executed via 'zsh -ic' so aliases and interactive
-             shell config are loaded. If a command begins with '-', separate
-             it from the project with '--', e.g. dce shell myapp -- -flag.
+  [command]  Optional command to run instead of opening an interactive
+             shell. If it begins with '-', separate it from the project
+             with `--`: dce shell myapp -- -flag.
 
 Examples:
-  dce shell myapp                         Open an interactive zsh session
-  dce shell myapp "git pull"              Run a single command and exit
+  dce shell myapp                         Interactive zsh session
+  dce shell myapp "git pull"              One command, then exit
   dce shell myapp "npm install && npm run dev"
 
 Notes:
-  - If the container is stopped, 'dce start' is called automatically.
-  - The workspace directory /workspace is mounted from the host repos dir.
-  - The provider env var (GITHUB_TOKEN / GITLAB_TOKEN) is available if the
-    token file has been filled in.
-  - For a raw, scriptable command with NO token and NO zsh wrapping
-    (docker-exec style, args passed verbatim), use 'dce exec' instead. The
-    container must already be running for 'dce exec'. See: dce help exec.
+  - A stopped container is started automatically.
+  - /workspace is the host repos dir, bind-mounted.
+  - For a raw, scriptable exec with NO token and NO zsh wrapping
+    (docker-exec style, args passed verbatim), use `dce exec` -- the
+    container must already be running. See: dce help exec.
 EOF
 }
 
@@ -355,74 +359,65 @@ _show_help_editor() {
 Usage: dce editor [--editor <id>] <name>
 
 Description:
-  Launches your editor attached to a running dev container at /workspace. The
-  editor counterpart to `dce shell`. If the container is not running, it is
-  started automatically (same preflight as `dce shell`).
+  Launches your editor attached to a running dev container at /workspace --
+  the editor counterpart of `dce shell`. A stopped container is started
+  automatically (same preflight as `dce shell`).
 
-   For PAT auth, `dce editor` also syncs VS Code's attached-container named
-   config so editor/terminal Git uses the container's PAT-backed
-   `~/.git-credentials` (`credential.helper = store`) instead of VS Code's
-   host-credential forwarding helper. This is attach-mode-specific and separate
-   from `dce config sync-vscode`, which only manages `.devcontainer/`
-   `devcontainer.json`.
+  On Docker-compatible backends (docker/orbstack/colima/podman) this is the
+  CLI equivalent of VS Code's "Dev Containers: Attach to Running
+  Container..." command: it points your editor at the exact container dce
+  manages. On apple/container it uses VS Code Dev Containers' EXPERIMENTAL
+  apple-container attach (enable "Dev Containers: Experimental: Apple
+  Container Support" -- dev.containers.experimentalAppleContainerSupport --
+  first; macOS only).
 
-  On Docker-compatible backends (docker/orbstack/colima/podman), this is the
-  CLI equivalent of the VS Code "Dev Containers: Attach to Running Container..."
-  GUI command: it points your editor at the exact container `dce` manages.
-  See docs/reference/backends.md for why "attach" (not "reopen in container")
-  is the right path.
-
-  On apple/container, this uses VS Code Dev Containers' EXPERIMENTAL
-  apple-container attach path (the "Dev Containers: Attach to Running Apple
-  Container..." command). Enable "Dev Containers: Experimental: Apple Container
-  Support" (dev.containers.experimentalAppleContainerSupport) in VS Code first,
-  or the attach will not resolve. macOS only.
+  With PAT auth, `dce editor` also syncs VS Code's attached-container named
+  config so editor/terminal git uses the container's PAT-backed
+  ~/.git-credentials instead of VS Code's host-credential forwarding. This
+  is attach-mode state, separate from `dce config sync-vscode` (which
+  manages .devcontainer/devcontainer.json only).
 
 Editor selection (first match wins):
-  --editor <id>     Explicit one-shot override.
+  --editor <id>     Explicit one-shot override (also --editor=<id>).
   $DCE_EDITOR       Per-shell environment variable.
   DCE_EDITOR        Key in ~/.config/dce-enclave/config.
   $VISUAL           Standard full-screen-editor env var.
   $EDITOR           Standard line-editor env var (often terminal-only).
   (default)         vscode
 
-  Known editor ids: vscode, vscode-insiders.
-
-  Unknown --editor / $DCE_EDITOR / global DCE_EDITOR values are a hard error.
-  Unknown $VISUAL / $EDITOR values are warned about and skipped (those vars
-  are shared with many other tools and are often set to terminal editors).
+  Known ids: vscode, vscode-insiders (aliases: code, code-insiders).
+  Unknown --editor / $DCE_EDITOR / global DCE_EDITOR values are a hard
+  error; unknown $VISUAL / $EDITOR values are warned and skipped (those
+  vars are shared with many other tools).
 
 Editor binary discovery:
-  - DCE_EDITOR_BIN env var: if set, used verbatim (overrides all discovery).
+  - DCE_EDITOR_BIN: used verbatim, overriding all discovery.
   - Otherwise: PATH lookup, then macOS .app bundle fallback for VS Code.
-  - On WSL2, the Windows binary (code.exe) is preferred; `code` is fallback.
+  - On WSL2 the Windows binary (code.exe) is preferred; `code` is the
+    fallback.
 
 Arguments:
-  <name>     Project/container name. Must already exist.
+  <name>     Project name. Must already exist.
 
 Options:
   --editor <id>
              Override the resolved editor for this invocation only.
-             Known ids: vscode, vscode-insiders.
 
 Examples:
-  dce editor myapp                       Launch the default editor attached to myapp
+  dce editor myapp                       Default editor, attached to myapp
   dce editor --editor vscode-insiders myapp
-  DCE_EDITOR=vscode dce editor myapp     Use VS Code for this shell's invocations
+  DCE_EDITOR=vscode dce editor myapp     Use VS Code for this shell
 
 Notes:
-  - Works on every backend. docker/orbstack/colima/podman use the standard
-    Dev Containers attach; apple/container uses VS Code's EXPERIMENTAL
-    apple-container attach (enable dev.containers.experimentalAppleContainerSupport).
-  - VS Code's "Dev Containers" extension must be installed for the attach to
-    succeed; `scripts/setup.sh` warns if it is missing.
-  - If the host PAT has changed since the container last saw it, `dce editor`
-    preserves the existing container token (same forensics-safe policy as
-    `dce shell`/`dce start`) and warns. Push the current token explicitly with
-    `dce rotate-token <name>`.
-  - macOS: `code` is not on PATH by default. Run VS Code's
-    "Install 'code' command in PATH" once, or set DCE_EDITOR_BIN.
-  - WSL2: prefers Windows VS Code via `code.exe` (Docker Desktop setup).
+  - The VS Code "Dev Containers" extension must be installed for attach;
+    scripts/setup.sh warns if it is missing.
+  - If the host PAT changed since the container last saw it, the existing
+    container token is preserved (same policy as `dce shell`/`dce start`)
+    with a warning; push the current token with `dce rotate-token <name>`.
+  - macOS: `code` is not on PATH by default -- run VS Code's "Install
+    'code' command in PATH" once, or set DCE_EDITOR_BIN.
+  - Why attach (not "Reopen in Container") is the right path:
+    docs/reference/backends.md.
 EOF
 }
 
@@ -433,56 +428,56 @@ Usage: dce extensions <list|host|available|show|diff|capture> [<project>] [ids..
                [--scope <scope>] [--user|--team] [--all]
 
 Description:
-  Inspects, compares, and captures editor extensions for a project against
-  per-scope manifests. Extensions are declared in plain-text manifests under:
+  Inspects, compares, and captures editor extensions against per-scope
+  manifests. Extensions are declared one ID per line ('#' comments and
+  blank lines allowed) under:
 
     $DC_TEAM_DIR/extensions/<editor>/<scope>.txt   (layered first per scope)
     $DC_USER_DIR/extensions/<editor>/<scope>.txt   (layered second per scope)
 
-  One ID per line; '#' comments and blank lines are allowed. Layering mirrors
-  the overlay scope model: "all" is auto-prepended when present, then each
-  effective scope team-then-user (first occurrence wins on duplicates).
+  Layering mirrors the overlay scope model: "all" is auto-prepended when
+  present, then each effective scope, team-then-user, first occurrence
+  wins on duplicates.
 
-  `dce new` seeds these into .devcontainer/devcontainer.json
-  (customizations.<editor>.extensions) and `dce config sync-vscode` re-syncs
-  them, so VS Code installs the declared set on container open. This command is
-  the operational surface for bootstrapping manifests and inspecting runtime vs
-  declared state.
+  `dce new` seeds the merged set into .devcontainer/devcontainer.json
+  (customizations.<editor>.extensions) and `dce config sync-vscode`
+  re-syncs it, so VS Code installs the declared set on open.
 
-  v1 supports the vscode editor only (namespace "vscode"). Container-derived
-  subcommands require a running container (they do NOT auto-start) and work on
-  every backend (docker exec / container exec); static subcommands are
-  backend-agnostic.
+  v1 supports the vscode editor only. Container-derived subcommands need a
+  RUNNING container (no auto-start) that VS Code has attached to at least
+  once (the `code` CLI must be present inside). list/available/capture
+  fail fast when it is not; `diff` instead prints a SKIP line and exits 0
+  WITHOUT showing a diff. Start the container (and attach VS Code once)
+  to get an actual comparison.
 
 Subcommands:
-  list <project>              Extensions installed in the project's container.
-  host                        Extensions installed on the host editor.
-  available <project>         Host minus container -- the extensions VS Code
-                              shows greyed-out with an "Install in Dev Container"
-                              button (computed by set difference; an
-                              over-approximation, since VS Code filters by
-                              extensionKind).
-  show <project>              Merged effective manifest set for the project's
-                              scopes (what sync will write).
-  diff <project>              Runtime drift in BOTH directions: installed but
-                              not declared (capture these before a rebuild), and
-                              declared but not installed (converges automatically
-                              on editor open: in the background on the first
-                              open, synchronously on later opens).
+  list <project>      Extensions installed in the project's container.
+  host                Extensions installed on the host editor.
+  available <project> Host minus container -- the greyed-out set VS Code
+                      shows with an "Install in Dev Container" button
+                      (approximate; VS Code filters by extensionKind).
+  show <project>      Merged effective manifest set for the project's
+                      scopes (what sync will write).
+  diff <project>      Runtime drift in both directions:
+                      installed-but-undeclared (capture these before a
+                      rebuild) and declared-but-uninstalled (converges
+                      automatically on editor open).
   capture <project> --scope <scope> (--all | <id>...) [--user|--team]
-                              Merge extension IDs into a manifest. Selective by
-                              default (explicit IDs); --all snapshots the
-                              container's full installed set (the migration
-                              helper). Never bulk-dumps host extensions -- the
-                              manifest is curated, not a host mirror.
+                      Merge extension IDs into a manifest. Selective by
+                      default (explicit IDs); --all snapshots the
+                      container's full installed set (the migration
+                      helper). Never bulk-dumps host extensions -- the
+                      manifest is curated, not a host mirror.
 
 Options:
-  --editor <id>               Editor id (default: vscode). v1 supports vscode.
+  --editor <id>               Editor id (default: vscode; alias: code).
   --format ids|json|manifest  Output format for list/host/available/show
                               (default: ids). diff is always human-readable.
   --scope <scope>             Target scope for capture (validated name).
-  --user | --team             Manifest root for capture (default: --user).
-  --all                       capture: snapshot the full container install set.
+  --user | --team             Manifest root for capture (default: --user;
+                              mutually exclusive).
+  --all                       capture: snapshot the full container install
+                              set (mutually exclusive with explicit ids).
 
 Examples:
   dce extensions show myapp
@@ -497,14 +492,17 @@ Migration recipe (adopt manifests without losing current extensions):
   dce config sync-vscode myapp
 
 Notes:
-  - Declared extensions survive `dce rebuild-container` via devcontainer.json
-    (VS Code reinstalls them when the rebuilt container is opened); UNDECLARED
-    extensions are lost on rebuild -- `dce extensions diff` shows them, and
-    `dce rebuild-container` warns before destroying them.
-  - `dce config sync-vscode` fully-manages the array once any manifest exists;
-    before adoption it leaves a hand-curated array untouched (migration guard).
-  - Drift surfaces in `dce doctor <project>` and `dce extensions diff`, and as a
-    pre-destroy warning from `dce rebuild-container`.
+  - Declared extensions survive `dce rebuild-container` (reinstalled when
+    the rebuilt container is opened); UNDECLARED extensions are lost on
+    rebuild -- `dce extensions diff` shows them, and rebuild-container
+    warns before destroying them.
+  - `dce config sync-vscode` fully-manages the extensions array once any
+    manifest exists; before adoption it leaves a hand-curated array
+    untouched (migration guard).
+  - Drift surfaces in `dce doctor <project>` and `dce extensions diff`,
+    and as a pre-destroy warning from `dce rebuild-container`.
+  - `diff` exits 0 on SKIP, so a script cannot tell "no drift" from "not
+    checked" by exit code alone -- inspect the output.
 EOF
 }
 
@@ -513,36 +511,35 @@ _show_help_logs() {
 Usage: dce logs <name> [-f|--follow] [--tail N]
 
 Description:
-  Fetches a container's stdout/stderr log stream from the backend's log
-  driver. This is the container process output (entrypoint, startup banners,
-  the Node overlay's npm-install sentinel, credential-injection messages from
-  `dce start`, and crash output) - none of which is visible from an interactive
-  shell or a VS Code terminal attached to the container.
+  Fetches a container's stdout/stderr log stream: entrypoint output,
+  startup banners, the Node overlay's npm-install sentinel,
+  credential-injection messages from `dce start`, and crash output --
+  none of which is visible from an interactive shell or an attached
+  editor terminal.
 
-  Works on stopped containers, so a container that failed to start (or exited
-  shortly after) can be diagnosed: run `dce logs <name>` after `dce start`
-  reports the container is no longer running.
+  Works on stopped containers, so a container that failed to start can be
+  diagnosed after the fact.
 
 Arguments:
-  <name>     Project/container name. Must already exist.
+  <name>     Project name. Must already exist.
 
 Options:
   -f, --follow
-             Follow log output (block, streaming new lines until interrupted).
+             Follow the output (stream new lines until interrupted).
 
-  --tail N   Show only the last N lines. N must be a non-negative integer.
-             May also be given as --tail=N.
+  --tail N   Show only the last N lines (non-negative integer). Also
+             accepted as --tail=N.
 
 Examples:
-  dce logs myapp                       Dump the full log stream once
+  dce logs myapp                       Full log stream, once
   dce logs myapp --tail 100            Last 100 lines
   dce logs myapp -f                    Follow live output
   dce logs myapp --follow --tail 50    Last 50 lines, then follow
 
 Notes:
-  - Both -f/--follow and --tail are supported on every backend (apple/container
-    maps --tail to its native -n flag).
-  - To see container state rather than logs, use `dce status` or `dce list`.
+  - Both flags work on every backend (apple/container maps --tail to its
+    native -n).
+  - For container state rather than logs: `dce status` / `dce list`.
 EOF
 }
 
@@ -551,31 +548,27 @@ _show_help_exec() {
 Usage: dce exec [--root] <name> <command...>
 
 Description:
-  Runs a single command in a running container, docker-exec style: the command
-  executes directly as the dev user with no git-token seeding, no shell
-  prompt prefix, and no zsh -ic wrapping.
+  Runs a single command in a running container, docker-exec style: args
+  are passed through verbatim, executed as the dev user, with no
+  git-token seeding and no zsh wrapping.
 
-  A TTY is allocated automatically only when both stdin and stdout are
-  interactive, so piped commands are not corrupted:
+  A TTY is allocated only when both stdin and stdout are interactive, so
+  piped output is never corrupted:
 
       dce exec myapp cat /etc/os-release | grep PRETTY
       dce exec myapp top            # interactive -> gets a TTY
 
-  This is distinct from `dce shell <name> "command"`, which wraps the command
-  in zsh -ic (loading aliases/interactive config) and seeds the git token. Use
-  `dce shell` for token-dependent or alias-dependent one-shots; use `dce exec`
-  for raw, scriptable commands.
-
 Arguments:
-  <name>        Project/container name. Must already be running.
+  <name>        Project name. Must already be running (`dce start` first).
 
-  <command...>  The command and its arguments, passed through verbatim
-                (so args beginning with '-' reach the command untouched).
+  <command...>  Command and args, verbatim (args beginning with '-'
+                arrive untouched).
 
 Options:
-  --root        Run as uid 0 (root), non-interactively. Useful for permission
-                debugging (chown, package installs to system paths). Maps to
-                the same root-exec path rebuild-container uses.
+  --root        Run as uid 0, non-interactively, without a TTY -- for
+                permission debugging (chown, system package installs).
+                Maps to the same root-exec path rebuild-container uses.
+                Must come before the project name.
 
 Examples:
   dce exec myapp whoami
@@ -584,10 +577,10 @@ Examples:
   dce exec --root myapp chown -R dev:dev /workspace/build
 
 Notes:
-  - The container must be running. Start it first with `dce start <name>`.
-  - --root never allocates a TTY; for a root interactive session, use
-    `dce shell <name>` and then `sudo`.
-  - For an interactive dev shell, use `dce shell <name>`.
+  - No auto-start: the container must be running.
+  - `--` is not a separator here (unlike `dce shell`).
+  - For token-seeded or alias-dependent one-shots, use `dce shell`.
+  - For a root interactive session, use `dce shell` and then `sudo`.
 EOF
 }
 
@@ -596,13 +589,13 @@ _show_help_restart() {
 Usage: dce restart [name ...]
 
 Description:
-  Restarts one or more dev containers. If no project name is given, all
-  configured containers are restarted.
+  Restarts one or more dev containers: stop, then start. With no name,
+  restarts every configured project.
 
-  Implemented as stop -> start, so it reuses the proven per-project flows:
-  backend bring-up, hidden-volume re-verification (important on backends like
-  OrbStack), and SSH-key re-injection all apply. Functionally equivalent to
-  `dce stop <name> && dce start <name>`.
+  Because it reuses the proven per-project flows, a restart also
+  re-verifies hidden-volume mounts (important on backends like OrbStack)
+  and re-injects the SSH key if missing -- the same repairs `dce start`
+  performs.
 
 Arguments:
   [name ...]  One or more project names to restart. If omitted, all
@@ -614,9 +607,8 @@ Examples:
   dce restart web api db   Restart multiple containers
 
 Notes:
-  - A stopped container is started; a running container is stopped and started.
-  - Restarting preserves the container filesystem (no rebuild). Use
-    `dce rebuild-container` to recreate from the image.
+  - Preserves the container filesystem (no rebuild). To recreate from the
+    image, use `dce rebuild-container`.
 EOF
 }
 
@@ -625,48 +617,48 @@ _show_help_rm() {
 Usage: dce rm <name> [--yes|-y] [--keep-config] [--keep-volumes]
 
 Description:
-  Removes a dev container project. By default this performs a full teardown:
+  Removes a dev container project. Default is a full teardown, in order:
 
-    1. stops the container if it is running, then deletes it
-    2. removes every managed hidden volume (dce-hide-<project>-<hash>)
-    3. removes the per-project config + secrets directory
-       (~/.config/dce-enclave/<name>), including the SSH key, GitHub token,
-       and .npmrc
+    1. stop the container if running, then delete it
+    2. remove every managed hidden volume (dce-hide-*)
+    3. remove snapshot artifacts (dce-snap-* images, dce-snapvol-*
+       volumes, manifests) -- these follow --keep-volumes
+    4. remove the per-project config + secrets directory
+       (~/.config/dce-enclave/<name>): SSH key, git token, .npmrc
 
   Your host code directory ($REPOS_DIR) is NEVER touched by this command.
 
-  This is destructive and prompts for confirmation (type 'yes') unless --yes
-  is given.
+  Destructive: prompts for confirmation (type 'yes') unless --yes is
+  given. If the backend is unreachable, container/volume/snapshot removal
+  is skipped with a warning but config removal still proceeds (unless
+  --keep-config).
 
 Options:
-  --yes, -y          Skip the confirmation prompt.
+  --yes, -y       Skip the confirmation prompt.
 
-  --keep-config      Preserve the config + secrets directory. Only the
-                     container and hidden volumes are removed.
+  --keep-config   Preserve the config + secrets directory. Only the
+                  container and hidden volumes are removed.
 
-  --keep-volumes     Preserve managed hidden volumes. Only the container and
-                     config + secrets are removed.
+  --keep-volumes  Preserve managed hidden volumes AND snapshots. Only the
+                  container and config + secrets are removed.
 
 Arguments:
-  <name>     Project/container name.
+  <name>     Project name.
 
 Examples:
   dce rm myapp                       Remove everything (prompts to confirm)
   dce rm myapp --yes                 Remove everything without prompting
-  dce rm myapp --keep-config         Remove container + volumes, keep config/secrets
-  dce rm myapp --keep-volumes        Remove container + config/secrets, keep volumes
+  dce rm myapp --keep-config         Keep config/secrets
+  dce rm myapp --keep-volumes        Keep hidden volumes + snapshots
 
 Notes:
-  - Host code at $REPOS_DIR is preserved. Remove it manually if no longer
+  - Host code at $REPOS_DIR is preserved; remove it manually if no longer
     needed:  rm -rf "${DC_REPOS_DIR:-$HOME/repos}/<name>"
-  - The generated .devcontainer/devcontainer.json lives under $REPOS_DIR and is
-    likewise preserved.
-  - Snapshot artifacts (dce-snap-* images, dce-snapvol-* volumes, and snapshot
-    manifests) are reclaimed too -- they follow --keep-volumes: preserved with
-    the flag, removed without it (the same lifecycle as hidden volumes).
-  - To recreate a removed project, run `dce new <name> [scope] ...` again.
-  - To wipe only the container filesystem while keeping config and code, use
-    `dce rebuild-container <name>` instead.
+  - The generated .devcontainer/devcontainer.json lives under $REPOS_DIR
+    and is likewise preserved.
+  - To recreate a removed project: `dce new <name> [scope] ...`.
+  - To wipe only the container filesystem while keeping config and code:
+    `dce rebuild-container <name>`.
 EOF
 }
 
@@ -676,103 +668,93 @@ Usage: dce rebuild-container <name> [--rotate-keys] [--inject-creds]
               [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]
 
 Description:
-  Destroys a container and recreates it from its selected image.
-  The host workspace (repos directory) is preserved - only the container
-  filesystem is wiped.
+  Destroys a container and recreates it from its image. The host workspace
+  (repos directory) is preserved -- only the container filesystem is
+  wiped.
 
-  By default, hidden volumes (e.g. node_modules, build caches) are also
-  removed so the rebuilt container starts clean. Use --keep-hidden-volumes
-  to preserve dependency caches across rebuilds.
+  Safety checks run BEFORE destruction: the required image must exist
+  (else the command fails and points you at `dce rebuild-image all`),
+  network membership is validated, and a warning lists any
+  installed-but-undeclared editor extensions that will be lost.
 
-  This command does not rebuild images. It re-derives the image from current
-  overlay state and project scopes, updates config if needed, and then recreates
-  the container from that image.
+  This command does not build images. It re-derives the image from current
+  overlay state and project scopes, updates config if needed, then
+  recreates the container from that image. Afterwards hidden mounts are
+  re-verified and credentials re-injected (the same wiring as `dce new`).
 
-  If the required image is missing, the command fails before destruction and
-  instructs you to run:
-    dce rebuild-image all
+  Hidden volumes (node_modules, caches) are removed by default for a
+  clean slate; --keep-hidden-volumes preserves them across rebuilds.
 
   --from-snap <label> switches the image source to a saved snapshot
-  (dce-snap-<project>-<label>:latest, created by `dce snapshot`). In that mode
-  scope derivation and the CONTAINER_IMAGE config rewrite are skipped: the
-  snapshot is a one-off restore source, never the project's configured image.
-  Hidden volumes are ALWAYS isolated on restore: each is mounted from its
-  snapshot volume (populated where captured, empty otherwise), and the live
-  originals are left untouched, so --keep-hidden-volumes has no effect here.
-  After a restore the container reads "stale" in `dce list`/`dce status` until
-  the next normal rebuild -- this is correct (it genuinely diverges from its
-  configured image), not an error.
+  (dce-snap-<slug>-<label>:latest, created by `dce snapshot`; slug =
+  lowercased project name, non-alphanumerics collapsed to '-', truncated
+  to 24 chars). Scope derivation and the CONTAINER_IMAGE
+  config rewrite are skipped: the snapshot is a one-off restore source,
+  never the project's configured image. Hidden volumes are ALWAYS isolated
+  on restore: each is mounted from its snapshot volume (populated where
+  captured, empty otherwise) while the live originals stay untouched --
+  --keep-hidden-volumes has no effect here. After a restore the container
+  reads "stale" in `dce list`/`dce status` until the next normal rebuild;
+  that is correct (it genuinely diverges from its configured image).
 
-  A restore does NOT inject credentials by default: the rebuilt container keeps
-  exactly what the snapshot image baked (nothing, for a scrubbed snapshot). Pass
-  --inject-creds to inject the current SSH deploy key and git token (overwriting
-  any credentials already present), or --rotate-keys to regenerate the SSH key
-  as part of incident response. Inspect a suspect snapshot WITHOUT these flags
-  so its credential state is preserved.
+  A bare restore does NOT inject credentials: the rebuilt container keeps
+  exactly what the snapshot baked (nothing, for a scrubbed snapshot). Pass
+  --inject-creds to force the current SSH deploy key and git token in, or
+  --rotate-keys to regenerate the SSH key as incident response. Inspect a
+  suspect snapshot WITHOUT these flags so its credential state survives.
 
 Arguments:
-  <name>     Project/container name. Must already exist.
+  <name>     Project name. Must already exist.
 
 Options:
   --rotate-keys
-              Regenerate the SSH deploy key before recreating the container.
-              The old key is backed up, and the new public key is printed for
-              you to add to GitHub. The command pauses for you to update
-              GitHub before continuing.
-   --inject-creds
-               Inject the current SSH deploy key and git token into the rebuilt
-               container, overwriting any credentials already present. Always in
-               effect for a normal rebuild and for --rotate-keys; it matters with
-               --from-snap, where a bare restore injects nothing so a (possibly
-               suspect) snapshot's credential state is preserved for inspection.
-               The token is rewritten only when it differs (idempotent).
+              Regenerate the SSH deploy key before recreating. The old key
+              is backed up, the new public key is printed for you to add
+              to the git host, and the command pauses (Enter) while you
+              do. NOTE: --yes does not skip this pause.
 
-   --keep-hidden-volumes
-                Preserve existing hidden volumes instead of removing them.
-                By default, hidden volumes are removed during rebuild for a
-                clean slate (dependency re-install, no stale caches).
-                WARNING: when the project has hidden paths configured,
-                combining this with --rotate-keys produces a loud warning,
-                since key rotation implies incident response where
-                preserving volumes may be unsafe.
+  --inject-creds
+              Inject the current SSH deploy key and git token,
+              overwriting anything already present. Always in effect for
+              a normal rebuild and for --rotate-keys; it matters only
+              with --from-snap, where a bare restore injects nothing. The
+              token write is idempotent (rewritten only when it differs).
 
-   --from-snap <label>
-                Recreate from the snapshot `dce-snap-<name>-<label>:latest`
-                instead of the scope-derived image. Bypasses scope derivation
-                and does NOT rewrite CONTAINER_IMAGE. The snapshot must exist
-                (run `dce snapshots list <name>`). Hidden volumes are ALWAYS
-                isolated from the live originals: each comes back populated (if
-                the snapshot captured it) or EMPTY with a warning (if the
-                snapshot used --exclude-volumes, a copy failed, or the path was
-                added after the snapshot). Restore reports each volume
-                populated/empty and never reuses the live volumes.
+  --keep-hidden-volumes
+              Preserve existing hidden volumes instead of removing them.
+              WARNING: combined with --rotate-keys this produces a loud
+              warning -- key rotation implies incident response, where
+              preserving volumes may be unsafe.
 
-   --yes, -y    Skip the confirmation prompt. Use this for scripted
-                incident-response flows. The destruction/recreation still
-                proceeds exactly as in the interactive path.
+  --from-snap <label>
+              Recreate from the snapshot dce-snap-<slug>-<label>:latest
+              instead of the scope-derived image. The snapshot must exist
+              (`dce snapshots list <name>`). See Description for volume
+              isolation and credential semantics.
+
+  --yes, -y   Skip the confirmation prompt. The destruction/recreation
+              proceeds exactly as in the interactive path.
 
 Examples:
   dce rebuild-container myapp
-  dce rebuild-container myapp --rotate-keys
   dce rebuild-container myapp --keep-hidden-volumes
-  dce rebuild-container myapp --rotate-keys --keep-hidden-volumes
+  dce rebuild-container myapp --rotate-keys
   dce rebuild-container myapp --from-snap 20250101-120000
-  dce rebuild-container myapp --yes
+  dce rebuild-container myapp --from-snap suspect --yes
+  dce rebuild-container myapp --from-snap suspect --inject-creds
 
 Notes:
-  - This is DESTRUCTIVE to the container filesystem. Uncommitted work inside
-    the container will be lost. Commit or push from the host repos dir first.
-  - Your code on the host ($REPOS_DIR) is safe - it is a bind mount.
-  - Hidden volumes are removed by default unless --keep-hidden-volumes is set.
-  - Re-apply dotfiles after rebuild with 'dce install <name> <path>'.
-  - Existing .devcontainer/devcontainer.json is preserved. Rebuild prints a
-    non-fatal drift notice when its managed fields diverge from config; run
-    `dce config sync-vscode <name>` to reconcile on demand.
+  - DESTRUCTIVE to the container filesystem: uncommitted work inside the
+    container is lost. Commit or push from the host repos dir first.
   - You will be prompted to type 'yes' to confirm before destruction
     (use --yes/-y to skip, e.g. for automation).
-  - Snapshots capture the image plus the container's writable layer, and by
-    default also clone each hidden volume (run `dce snapshot <name> [<label>]`
-    with --exclude-volumes for a filesystem-only snapshot).
+  - Re-apply dotfiles after rebuild with `dce install <name> <path>`.
+  - Existing .devcontainer/devcontainer.json is preserved; a non-fatal
+    drift notice prints when managed fields diverge -- reconcile with
+    `dce config sync-vscode <name>`.
+  - Snapshots capture the image plus the container's writable layer and,
+    by default, clone each hidden volume (`dce snapshot <name> [<label>]`,
+    --exclude-volumes for a filesystem-only snapshot).
 EOF
 }
 
@@ -781,13 +763,15 @@ _show_help_rebuild_image() {
 Usage: dce rebuild-image [all|base]
 
 Description:
-  Rebuilds managed images for the active backend.
+  Rebuilds managed images on the active backend (starting the backend if
+  it is down):
+
+    all   dce-base:latest plus every derived image currently selected by
+          configured projects (scans project configs, dedupes). Default.
+    base  dce-base:latest only.
 
 Arguments:
-  [all|base]
-    all  Rebuild dce-base:latest and all configured derived images
-         (default)
-    base Rebuild dce-base:latest only
+  [all|base]  Scope of the rebuild (default: all).
 
 Examples:
   dce rebuild-image
@@ -795,11 +779,11 @@ Examples:
   dce rebuild-image base
 
 Notes:
-  - Requires a reachable container backend.
-  - 'all' scans all project configs and rebuilds every derived image currently
-    selected by configured scope sets.
-  - After rebuilding images, run 'dce rebuild-container <name>' for containers
-    you want to recreate.
+  - Derived-image builds require buildx.
+  - Builds are logged to each affected project's provenance log
+    (`dce provenance <name>`).
+  - After rebuilding images, run `dce rebuild-container <name>` for each
+    container you want recreated.
 EOF
 }
 
@@ -808,49 +792,50 @@ _show_help_provenance() {
 Usage: dce provenance <project> [--history|--all]
 
 Description:
-  Shows the provenance of a project's current image: the team and user overlay
-  state that produced it. For each overlay source (team/, user/) it reports the
-  git HEAD commit (when that directory is a git checkout) and a content
-  fingerprint of the layered files (always available), plus the base image id,
-  scope list, DC Enclave version, and build time.
+  Shows the provenance of a project's current image: the team and user
+  overlay state that produced it. For each overlay side (team/, user/) it
+  reports the git HEAD commit (when that directory is a git checkout) and
+  a content fingerprint of the layered files (always available), plus the
+  base image id, scope list, DC Enclave version, and build time.
 
-  This lets you answer "what state were my overlay repos in when this image was
-  built?" without archaeology: read the team/user commit, check it out in the
-  overlay repo, and rebuild to reproduce a build for debugging.
+  This answers "what state were my overlay repos in when this image was
+  built?" without archaeology: check out the reported commit in the
+  overlay repo and rebuild to reproduce the build.
 
   The same data is stamped on the image as OCI labels
-  (dce.team.git_commit, dce.content.hash, ...), so it is
-  also available via `docker image inspect` / `podman image inspect`.
+  (dce.team.git_commit, dce.content.hash, ...), so it is also available
+  via `docker image inspect` / `podman image inspect`.
 
 Source:
-  The per-project append-only log ~/.config/dce-enclave/<project>/provenance.jsonl,
-  written by `dce new` and `dce rebuild-image` whenever a derived image is built.
-  (dce rebuild-container does not build images and so does not log.)
+  The append-only log ~/.config/dce-enclave/<project>/provenance.jsonl.
+  Events are appended by `dce new` and `dce rebuild-image` (image builds),
+  `dce snapshot` (snapshot events), and `dce rebuild-container
+  --from-snap` (restore events). Identical rebuilds are deduped, so the
+  history is not a literal build count.
 
 Arguments:
-  <project>   Project/container name. Must already exist.
+  <project>  Project name. Must already exist.
 
 Options:
   --history, --all
-              Print every recorded build as a table (oldest first) instead of
-              just the current one. Useful to see how the overlay state moved
-              over time.
+              Print every recorded event as a table (oldest first)
+              instead of just the current one.
 
 Output:
-  Pretty-printed when jq is installed; otherwise the raw JSONL line(s) are
-  printed so the command never hard-requires jq.
+  Pretty-printed when jq is installed; otherwise the raw JSONL line(s)
+  print, so jq is never a hard requirement.
 
 Examples:
-  dce provenance myapp                 Show the current image's provenance
-  dce provenance myapp --history       Show the full build timeline
+  dce provenance myapp                 Current image's provenance
+  dce provenance myapp --history       Full event timeline
 
 Notes:
-  - A project created before provenance logging existed has no log; the command
-    says so and tells you which command records one.
+  - Projects created before provenance logging existed have no log; the
+    command says so and names the commands that record one.
   - git_dirty: true means the image includes uncommitted overlay edits.
-  - A side whose directory is not a git repo shows only its content fingerprint
-    (content:<hash>); there is no commit to check out, but the fingerprint still
-    tells you whether your current files match that build.
+  - A side whose directory is not a git repo shows only its content
+    fingerprint (content:<hash>) -- no commit to check out, but the
+    fingerprint still tells you whether current files match that build.
 EOF
 }
 
@@ -863,36 +848,38 @@ Usage: dce clean [--dry-run]
        dce clean [--dry-run] [--snapshots [name]]
 
 Description:
-  Reclaims backend storage. Default mode removes old/orphan managed image tags
-  and managed image repos. Two opt-in modes target other object kinds.
+  Reclaims backend storage. The default mode targets managed image tags;
+  two opt-in modes target other object kinds. Starts the backend if it is
+  down.
 
-  Image-tag mode (default):
-  - Expected managed repos (dce-base + currently configured derived repos):
-    keep latest, remove non-latest tags.
-  - Orphan managed repos (no longer expected): remove all tags, including latest.
+  Image tags (default):
+  - Expected managed repos (dce-base + currently configured derived
+    repos): keep latest, remove other tags.
+  - Orphan managed repos (no longer expected): remove all tags, including
+    latest.
 
-  Hidden-volume mode (--hidden-volumes):
-  - Removes orphan managed hidden volumes (dce-hide-* no longer referenced by an
-    active project config). Optional [name] scopes to one project.
+  Hidden volumes (--hidden-volumes):
+  - Remove orphan managed hidden volumes (dce-hide-* no longer referenced
+    by an active project config). Optional [name] scopes to one project.
 
-  Snapshot mode (--snapshots):
-  - Removes dce-snap-* snapshot images AND their dce-snapvol-* snapshot volumes
+  Snapshots (--snapshots):
+  - Remove dce-snap-* snapshot images AND their dce-snapvol-* volumes
     (created by `dce snapshot`). Optional [name] scopes to one project's
-    snapshots.
-  - Default `dce clean` NEVER touches snapshots; they are only reclaimed with
-    this flag. --dry-run previews the sizes that would be freed.
+    snapshots. Default `dce clean` NEVER touches snapshots -- only this
+    flag reclaims them.
 
 Options:
-  --dry-run   Show what would be removed (and how much space) without deleting.
+  --dry-run   Show what would be removed without deleting. Image sizes
+              are previewed; snapshot volumes are listed without sizes.
 
   --hidden-volumes
-              Operate on orphan hidden volumes instead of managed image tags.
-              Optional trailing project name narrows cleanup to one project.
+              Operate on orphan hidden volumes instead of managed image
+              tags. Optional trailing project name narrows to one project.
 
   --snapshots
-              Operate on snapshot images + snapshot volumes instead of managed
-              image tags. Optional trailing project name narrows cleanup to one
-              project.
+              Operate on snapshot images + snapshot volumes instead of
+              managed image tags. Optional trailing project name narrows
+              to one project.
 
   --hidden-volumes and --snapshots are mutually exclusive.
 
@@ -905,12 +892,9 @@ Examples:
   dce clean --snapshots myproject
 
 Notes:
-  - Managed repos are dce-base and dce-img-<16hex>.
-  - Images currently in use may fail to remove; those failures are reported.
-  - Hidden volume cleanup removes only orphan managed hidden volumes.
-  - Snapshot cleanup removes dce-snap-* images and their dce-snapvol-* volumes
-    (the default sweep ignores both).
-  - Requires a reachable container backend.
+  - Managed image repos are dce-base and dce-img-<16-hex>.
+  - Images currently in use may fail to remove; those failures are
+    reported.
 EOF
 }
 
@@ -926,41 +910,50 @@ Usage: dce config <subcommand> [args]
        dce config ls
 
 Description:
-  Inspect and edit a project's config file
-  (~/.config/dce-enclave/<name>/config) without leaving the CLI. The file stays
-  the source of truth; this is a thin, validating wrapper. show/get/set/ls need
-  NO container backend, so they work even when no runtime is running.
+  Inspects and edits a project's config file
+  (~/.config/dce-enclave/<name>/config) without leaving the CLI. The file
+  stays the source of truth; this is a thin, validating wrapper.
+  show/get/set/ls need NO container backend, so they work even when no
+  runtime is running.
 
-  `sync-vscode` is the one carved-out subcommand: it rewrites the MANAGED fields
-  in the project's `.devcontainer/devcontainer.json` (outside the config file),
-  preserving user edits. It still makes NO backend call, but requires jq and
-  loads global config to re-derive the managed dockerfile path. It does NOT
-  manage VS Code's attached-container named config; `dce editor` syncs that
-  attach-mode state automatically on launch.
+  `sync-vscode` is the one carved-out subcommand: it rewrites the MANAGED
+  fields in the project's .devcontainer/devcontainer.json (outside the
+  config file), preserving user edits. It makes no backend call either,
+  but requires jq and loads global config to re-derive the managed
+  dockerfile path. It does NOT manage VS Code's attached-container named
+  config; `dce editor` syncs that attach-mode state automatically on
+  launch.
 
   Only user-input keys are writable. Identity/derived/path keys (project,
-  backend, image, repos) are read-only: `set` rejects them so this surface can
-  never desync the container from its managed state. Change those by recreating
-  or rebuilding the project.
+  backend, image, repos) are read-only: `set` rejects them so this
+  surface can never desync the container from its managed state. Change
+  those by recreating or rebuilding the project.
 
   Every value is validated with the same validators `dce new` and
-  `dce rebuild-container` use; every write goes through the hardened config
-  helpers and is then reloaded to prove the file still loads before success is
-  reported.
+  `dce rebuild-container` use; every write goes through the hardened
+  config helpers and is then reloaded to prove the file still loads
+  before success is reported.
 
 Subcommands:
-  show <name>               Print a grouped, human-readable view of the config.
-  get  <name> <key>         Print one value. Scalars print the value (empty =
-                            unset); arrays print one element per line. Exit 0
-                            even when unset, so it is scriptable.
-  set  <name> <key>=<value> Validate, atomically write, then reload to prove the
-                             file still loads. Arrays take a comma-separated
-                             value. Both `key=value` and `key value` forms work.
-  sync-vscode <name>         Rewrite MANAGED devcontainer fields (build,
-                             mounts/runArgs/forwardPorts, TZ) to match current
-                             config, preserving user keys. `--dry-run` previews
-                             drift without writing.
-  ls                        List projects that have a config (no backend needed).
+  show <name>               Print a grouped, human-readable view of the
+                            config.
+  get  <name> <key>         Print one value. Scalars print the value
+                            (empty = unset); arrays print one element per
+                            line. Exit 0 even when unset, so it is
+                            scriptable.
+  set  <name> <key>=<value> Validate, atomically write, then reload to
+                            prove the file still loads. Arrays take a
+                            comma-separated value. Both `key=value` and
+                            `key value` forms work.
+  sync-vscode <name>         Rewrite MANAGED devcontainer fields
+                            (build, mounts/runArgs/forwardPorts, TZ) to
+                            match current config, preserving user keys.
+                            Also re-syncs the extensions array once
+                            extension manifests exist (see
+                            `dce help extensions`). `--dry-run` previews
+                            drift without writing.
+  ls                        List projects that have a config (no backend
+                            needed).
 
 Keys:
   Writable (set/get):
@@ -985,66 +978,83 @@ Examples:
   dce config ls
 
 Notes:
-  - Changes to cpus, memory, scopes, ports, hide, or networks take effect only
-    after `dce rebuild-container <name>` (resource limits and mounts are applied
-    at container creation time). A successful `set` prints a reminder.
+  - Changes to cpus, memory, scopes, ports, hide, or networks take effect
+    only after `dce rebuild-container <name>` (resource limits and mounts
+    are applied at container creation time). A successful `set` prints a
+    reminder.
   - `dce new` / `dce rebuild-container` never overwrite an existing
-    `.devcontainer/devcontainer.json`; they print a drift notice when its managed
-    fields (scopes/hide/networks/ports) diverge from current config. Use
+    .devcontainer/devcontainer.json; they print a drift notice when its
+    managed fields diverge from current config. Use
     `dce config sync-vscode <name>` to reconcile on demand.
-  - To create or remove a project (rather than edit its config), use `dce new`
-    or `dce rm`. To change the image or backend, recreate the project.
-  - The config file permissions (mode 600) are preserved across every edit.
+  - To create or remove a project (rather than edit its config), use
+    `dce new` or `dce rm`. To change the image or backend, recreate the
+    project.
+  - Config file permissions (mode 600) are preserved across every edit.
 EOF
 }
 
 _show_help_network() {
   cat <<'EOF'
-Usage: dce network <create|ls|members|rm|add|remove> ...
+Usage: dce network <create|ls|list|members|rm|add|remove> ...
 
 Description:
-  Manages private networks that let dce containers talk to each other without
-  publishing any port to the host. Linking is explicit: containers are isolated
-  by default and only reach peers when placed on the same network on purpose.
+  Manages private networks that let dce containers talk to each other
+  without publishing any port to the host. Linking is explicit:
+  containers are isolated by default and reach peers only when placed on
+  the same network on purpose.
 
   Create a network, then attach containers to it:
     dce network create myapp
     dce new myapp-db --network myapp
     dce new myapp-web --network myapp
-    # now myapp-web can reach myapp-db by name (no port published)
+    # myapp-web now reaches myapp-db by name (no port published)
 
 Addressing:
   Containers on the same network resolve each other by project name.
     - docker / orbstack / colima / podman: bare name (e.g. myapp-db)
-    - apple/container: <name>.test (e.g. myapp-db.test); macOS 26+ required.
-  Static IPs are opt-in (--ip) and supported on Docker-compatible backends only.
+    - apple/container: <name>.test (e.g. myapp-db.test); macOS 26+
+  Static IPs are opt-in and supported on Docker-compatible backends only.
 
 Subcommands:
   create <name> [--subnet <cidr>] [--subnet-v6 <cidr>]
-                              Create a private network. The subnet is
-                              auto-allocated unless --subnet is given.
+                              Create a private network (idempotent: an
+                              existing network is kept). Subnets are
+                              auto-allocated unless given.
 
   ls | list                   List networks and their dce members.
 
   members <name>              Show which projects are on a network.
 
-  rm <name> [--force]         Remove a network. Refuses while dce projects still
-                              reference it; --force disconnects them first
-                              (Docker-compatible backends only) and warns that
+  rm <name> [--force]         Remove a network. Refuses while any project
+                              config still references it; --force
+                              disconnects member containers first
+                              (Docker-compatible only) and warns that
                               their configs still reference the network.
 
   add <name> <project> [--ip <addr>]
-                              Attach an existing container to a network and
-                              record it in the project config (so rebuilds
-                              re-attach). Docker-compatible backends only.
+                              Attach an existing container to a network
+                              and record it in the project config (so
+                              rebuilds re-attach). Idempotent; a repeated
+                              add updates the pinned IP.
+                              Docker-compatible backends only.
 
-  remove <name> <project>     Detach a container from a network and drop it from
-                              the project config. Docker-compatible backends only.
+  remove <name> <project>     Detach a container from a network and drop
+                              it from the project config. A non-member is
+                              a no-op. Docker-compatible backends only.
+
+Examples:
+  dce network create myapp
+  dce network ls
+  dce network members myapp
+  dce network add myapp api --ip 10.0.0.5
+  dce network remove myapp api
+  dce network rm myapp
 
 Notes:
-  - Networks are daemon objects; use `dce network ls` to see them.
-  - On apple/container, use --network at `dce new` time (live add/remove and
-    static IPs are not supported); a single network per container.
+  - Networks are backend (daemon) objects; `dce network ls` lists them.
+  - apple/container: attach with --network at `dce new` time only -- live
+    add/remove and static IPs are unsupported, and a container may join a
+    single network.
   - Containers with no --network are not linked to any dce peer.
 EOF
 }
@@ -1054,19 +1064,18 @@ _show_help_install() {
 Usage: dce install <name> <path>
 
 Description:
-  Copies a dotfiles directory into a running container and executes its
-  install.sh script. This is how you apply personal shell, editor, and tool
-  configuration inside a container.
-
-  The dotfiles are copied to a temporary directory inside the container,
-  install.sh is run, and the temporary directory is cleaned up afterwards.
+  Applies personal config inside a container: copies a dotfiles directory
+  into the container, runs its install.sh as the dev user, then removes
+  the temporary copy. Afterwards git credentials are re-wired and the
+  hosts fragment reconciled.
 
 Arguments:
-  <name>   Project/container name. Must already exist and be running.
+  <name>   Project name. Must already exist and be running
+           (`dce start <name>` first).
 
-  <path>   Path to your dotfiles directory on the host. The directory must
-           contain an executable install.sh script. Relative paths and ~ are
-           resolved automatically.
+  <path>   Path to your dotfiles directory on the host. It must contain
+           an install.sh script (it is made executable inside the
+           container). Relative paths and ~ are resolved automatically.
 
 Examples:
   dce install myapp ~/dotfiles
@@ -1074,10 +1083,9 @@ Examples:
   dce install myapp ../my-dotfiles-repo
 
 Notes:
-  - The container must be running. Start it first with 'dce start <name>'.
-  - The dotfiles directory must contain an install.sh file.
   - Re-run after any rebuild to reapply your personal config.
-  - install.sh runs as the 'dev' user inside the container.
+  - If install.sh fails, the temporary copy inside the container is not
+    cleaned up (it lives under /tmp).
 EOF
 }
 
@@ -1086,31 +1094,31 @@ _show_help_rotate_token() {
 Usage: dce rotate-token <name>
 
 Description:
-  Push the project's current host git token (PAT) into its container, refreshing
-  ~/.git-credentials without a rebuild. Run this right after editing the host
-  token file (~/.config/dce-enclave/<name>/<host>-token) so the container's git
-  auth picks up the new value.
+  Pushes the project's current host git token (PAT) into its container,
+  refreshing ~/.git-credentials without a rebuild. Run it right after
+  editing the host token file
+  (~/.config/dce-enclave/<name>/<host>-token).
 
-  It is state-preserving: packages, caches, and running processes are left
-  untouched (unlike `dce rebuild-container`, which destroys and recreates the
-  container). The token is force-written -- a stale or compromised value is
-  overwritten -- but only when it differs from the current host token, so
-  re-running it is a no-op when nothing changed. The token never appears in host
-  argv; it crosses via a stdin pipe.
+  State-preserving: packages, caches, and running processes are untouched
+  (unlike `dce rebuild-container`, which destroys and recreates). The
+  write is forceful -- a stale or compromised value is overwritten -- but
+  happens only when the value differs, so re-running with no change is a
+  no-op. The token never appears in host argv; it crosses via a stdin
+  pipe.
 
-  Under ssh or none auth there is no PAT to push, so the command reports that and
-  exits 0.
+  Under ssh or none auth there is no PAT to push: the command says so and
+  exits 0 without touching the container.
 
 Arguments:
-  <name>     Project/container name. Must already exist. Started automatically if
-             it is stopped (the token can only be written into a running
-             container).
+  <name>     Project name. Must already exist. A stopped container is
+             started automatically (the token can only be written into a
+             running container).
 
 Related:
   - SSH deploy-key rotation is a different operation:
       dce rebuild-container <name> --rotate-keys
     (regenerates the keypair; rebuild-bound, for incident response).
-  - Force-injecting current credentials into a restored snapshot:
+  - Force-inject current credentials into a restored snapshot:
       dce rebuild-container <name> --from-snap <label> --inject-creds
   - Check for token drift without changing anything:
       dce doctor <name>
@@ -1125,47 +1133,45 @@ _show_help_doctor() {
 Usage: dce doctor [backend|project]
 
 Description:
-  Runs read-only preflight checks and prints pass/fail per subsystem, so you get
-  a single diagnosis instead of assembling one from `dce status` plus tribal
-  knowledge. It catches the common drift classes: wrong bash version, missing or
-  broken global config / overlay root, a missing backend CLI, an unreachable
-  runtime, a stale or missing dce-base image, Colima context drift, a non-docker
-  Colima runtime, and (for a project) a broken config, missing image, or missing
-  secrets.
+  Read-only preflight checks with pass/fail per subsystem: one diagnosis
+  instead of assembling one from `dce status` plus tribal knowledge.
 
-  doctor NEVER starts or mutates anything (unlike setup.sh, it will not run
-  `colima start`, `podman machine start`, etc.); it only inspects and reports
-  the exact command to run for each failure.
+  doctor NEVER starts or mutates anything (unlike setup.sh it will not
+  run `colima start`, `podman machine start`, etc.); it inspects and
+  prints the exact command to run for each failure.
 
-  The exit code is nonzero if any check fails, so doctor is CI- and
-  preflight-friendly: `dce doctor && dce start` only proceeds when healthy.
+  Host checks (bash version, global config, overlay roots, buildx) run in
+  every scope. The exit code is nonzero if any check fails, so doctor is
+  CI- and preflight-friendly: `dce doctor && dce start` only proceeds
+  when healthy.
 
 Scope:
-  (none)        Every detected backend CLI, plus host checks (bash, global
-                config, overlays). Each backend gets its own section with
-                CLI / runtime / Colima-specific / dce-base checks.
+  (none)        Every detected backend CLI, plus host checks. Each backend
+                gets its own section (CLI / runtime / Colima-specific /
+                dce-base checks).
   <backend>     One of: apple, docker, orbstack, colima, podman.
-  <project>     A configured project name: checks that project's backend plus
-                project-specific state (config loads, image present, secrets
-                set, container state).
+  <project>     A configured project name: that project's backend plus
+                project state -- config loads, image present, secrets
+                set, git-token drift, devcontainer.json drift, extension
+                drift, and container state (informational: a stopped
+                project is normal and never a failure).
 
 Arguments:
   [backend|project]
-                Optional scope. A known backend name selects that backend; any
-                other name is treated as a project (it must have a config under
-                ~/.config/dce-enclave/<name>/config). An unknown name errors.
+                A known backend name selects that backend; any other name
+                is treated as a project (it must have a config under
+                ~/.config/dce-enclave/<name>/config). Unknown names error.
 
 Examples:
-  dce doctor              check all detected backends + host environment
-  dce doctor colima       check only the Colima backend
-  dce doctor myapp        check the myapp project and its backend
+  dce doctor              All detected backends + host environment
+  dce doctor colima       Only the Colima backend
+  dce doctor myapp        The myapp project and its backend
 
 Notes:
-  - Read-only: no daemon/machine is started and nothing is written.
-  - Per-backend image stores are independent; a missing dce-base is reported per
-    backend (run CONTAINER_BACKEND=<b> scripts/setup.sh to build it there).
-  - Container state for a project is informational only (a stopped project is
-    normal) and does not count as a failure.
+  - Read-only: no daemon/machine is started, nothing is written.
+  - Per-backend image stores are independent; a missing dce-base is
+    reported per backend (run CONTAINER_BACKEND=<b> scripts/setup.sh to
+    build it there).
 EOF
 }
 
@@ -1173,71 +1179,76 @@ _show_help_snapshot() {
   cat <<'EOF'
 Usage: dce snapshot <project> [<label>]
 
+       dce snapshot <project> <label> --exclude-volumes
+       dce snapshot <project> <label> --exclude-volume <path[,path...]>
        dce snapshot rm <project> <label>
-
        dce snapshots list [<project>]
 
+       Options: [--yes|-y]
+
 Description:
-  A snapshot commits a project container's filesystem to a tagged image, saving
-  a state you can return to later. It is an independent operation you can run at
-  any time -- before a risky change, before a rebuild, or simply to preserve a
-  state. Restoring one is opt-in via `dce rebuild-container --from-snap`.
+  A snapshot commits a project container's filesystem to a tagged image
+  (dce-snap-<slug>-<label>:latest; slug = project name lowercased,
+  non-alphanumerics collapsed to '-', truncated to 24 chars). It is an
+  independent operation you can run at any time -- before a risky change,
+  before a rebuild, or to preserve a state. Restoring is opt-in via
+  `dce rebuild-container --from-snap`.
 
-  Snapshot semantics: the image plus the container's writable layer is always
-  captured, and by default each hidden volume (e.g. node_modules, caches) is
-  cloned into a snapshot-specific volume (the source is mounted READ-ONLY during
-  the copy, so the live volume can never be corrupted). The bind-mounted repo is
-  never captured. Use --exclude-volumes for a filesystem-only snapshot. On
-  restore, hidden volumes are ALWAYS isolated: each comes back populated (if
-  captured) or EMPTY (if excluded / copy failed / added after the snapshot), and
-  the live originals are never reused or touched.
+  Before committing, credentials are SCRUBBED from the writable layer
+  (~/.ssh/id_ed25519, ~/.git-credentials); a scrub failure warns that the
+  image may still contain credentials. A stopped container is started
+  just long enough to scrub, then left stopped; a running container is
+  restarted (also after a failed commit).
 
-  Two distinct workflows share one mechanism:
-  - Restore a known-good state: snapshot before you experiment; if it breaks,
-    rebuild clean and restore with `dce rebuild-container --from-snap`.
-  - Preserve a suspect state for forensics: snapshot the suspect container,
-    then rebuild clean and inspect the snapshot image later.
+  By default each hidden volume (node_modules, caches) is also cloned
+  into a snapshot-specific volume; the source is mounted READ-ONLY during
+  the copy, so the live volume can never be corrupted. The bind-mounted
+  repo is never captured. On restore, hidden volumes are ALWAYS isolated:
+  each comes back populated (if captured) or EMPTY (if excluded / the
+  copy failed / the path was added after the snapshot); the live
+  originals are never reused or touched.
 
-Subcommands:
-  snapshot <project> [<label>]
-              Stop -> commit -> restart the project container, producing
-              dce-snap-<project>-<label>:latest, AND clone each hidden volume
-              (node_modules, caches) into dce-snapvol-<project>-<label>-<hash>.
-              The source volume is mounted READ-ONLY during the copy, so the
-              live volume can never be corrupted. <label> defaults to a sortable
-              timestamp (YYYYmmdd-HHMMSS). Refuses to overwrite an existing
-              label. Label charset: [A-Za-z0-9_.-]. A failed volume copy does
-              NOT abort the snapshot: the path is restored empty with a WARNING.
-
-              Because copying volumes is slow / disk-heavy, the command lists
-              the volumes to copy and asks for confirmation first.
-
-  snapshot <project> <label> --exclude-volumes
-              Skip ALL volume capture (filesystem image only). Excluded volumes
-              come back EMPTY on restore -- never silently reused from the live
-              volumes. No confirmation prompt.
-
-  snapshot <project> <label> --exclude-volume <path[,path...]>
-              Exclude specific hidden volumes only (repeatable, comma-separated);
-              the rest are captured. Useful for "everything except the huge
-              node_modules". Unknown paths are warned and ignored.
-
-  --yes, -y   Skip the confirmation prompt (for scripting). The snapshot still
-              proceeds exactly as in the interactive path.
-
-  snapshot rm <project> <label>
-              Remove one snapshot image, its captured volumes, and its manifest.
-
-  snapshots list [<project>]
-              List snapshots newest-first with project, size, volumes captured,
-              UTC time, and the base image the container was running. Optional
-              <project> scopes to that project.
+  Two workflows share one mechanism:
+  - Restore a known-good state: snapshot before you experiment; if it
+    breaks, rebuild clean and restore with `dce rebuild-container
+    --from-snap`.
+  - Preserve a suspect state for forensics: snapshot the suspect
+    container, rebuild clean, and inspect the snapshot image later.
 
 Arguments:
-  <project>   Project/container name. Must already exist (and for `snapshot`,
-              its container must exist on the backend).
+  <project>   Project name. Must already exist; its container must exist
+              on the backend.
 
-  [<label>]   Optional snapshot label. Defaults to a sortable UTC timestamp.
+  [<label>]   Snapshot label. Defaults to a sortable UTC timestamp
+              (YYYYmmdd-HHMMSS). Charset: [A-Za-z0-9_.-]. Refuses to
+              overwrite an existing label.
+
+Options:
+  --exclude-volumes
+              Skip ALL volume capture (filesystem image only). Excluded
+              volumes come back EMPTY on restore -- never silently reused
+              from the live volumes. No confirmation prompt.
+
+  --exclude-volume <path[,path...]>
+              Exclude specific hidden volumes only (repeatable,
+              comma-separated); the rest are captured. Unknown paths are
+              warned and ignored. Useful for "everything except the huge
+              node_modules".
+
+  --yes, -y   Skip the volume-copy confirmation prompt (for scripting).
+              The snapshot proceeds exactly as in the interactive path.
+
+Subcommands:
+  snapshot rm <project> <label>
+              Remove one snapshot image, its captured volumes, and its
+              manifest.
+
+  snapshots list [<project>]
+              List snapshots sorted by label, descending (default
+              timestamp labels read newest-first), with project, size,
+              volumes captured, UTC time, and base image. Snapshots whose
+              project config is gone are marked (orphan). Optional
+              <project> scopes to that project.
 
 Examples:
   dce snapshot myapp                                    # prompt, then capture all
@@ -1251,17 +1262,15 @@ Examples:
   dce clean --snapshots myapp --dry-run
 
 Notes:
-  - A snapshot is stop -> commit -> start (a clean commit, and apple/container's
-    export, require a stopped container on every backend).
-  - Snapshots live in the active backend's local image store only; they are not
-    pushed to a registry.
+  - Because copying volumes is slow / disk-heavy, the command lists the
+    volumes to copy and asks for confirmation first (type 'yes').
+  - A failed volume copy does NOT abort the snapshot: that path is
+    restored empty with a WARNING.
+  - Snapshots live in the active backend's local image store only; they
+    are not pushed to a registry.
   - `--from-snap` is a one-off restore: it never rewrites CONTAINER_IMAGE.
-  - A restore ALWAYS isolates hidden volumes: each comes back populated (if
-    captured) or EMPTY with a warning (if excluded, a copy failed, or the path
-    was added after the snapshot). The live originals are never reused and never
-    touched. Restore reports each volume populated/empty.
-  - Reclaim disk with `dce clean --snapshots [<project>]` (default `dce clean`
-    ignores snapshots and snapshot volumes).
+  - Reclaim disk with `dce clean --snapshots [<project>]` (default
+    `dce clean` ignores snapshots and snapshot volumes).
 EOF
 }
 
@@ -1271,17 +1280,19 @@ Usage: dce help [command]
 
 Description:
   Displays help information. With no argument, shows a summary of all
-  available commands. With a command name, shows detailed usage information
-  for that specific command including arguments, options, examples, and notes.
+  available commands. With a command name, shows detailed usage
+  information for that command including arguments, options, examples,
+  and notes.
 
 Arguments:
-              [command]  Optional command name to show detailed help for. One of:
-              new, start, stop, status, list, shell, logs, editor, extensions, exec, restart, rm,
-              rebuild-container, rebuild-image, snapshot, provenance, clean, config, doctor, network, install, rotate-token, version, help
+  [command]   Optional command name to show detailed help for. One of:
+              new, start, stop, status, list, shell, logs, editor,
+              extensions, exec, restart, rm, rebuild-container,
+              rebuild-image, snapshot, provenance, clean, config,
+              doctor, network, install, rotate-token, version, help
 
-Aliases:
-  --help     Same as 'dce help'
-  -h         Same as 'dce help'
+              Aliases resolve too: s (status), ls (list), net (network),
+              snapshots (snapshot).
 
 Examples:
   dce help
@@ -1290,6 +1301,7 @@ Examples:
 
 Notes:
   - Running 'dce' with no arguments also shows the summary.
+  - An unknown command name is an error (exit 1).
 EOF
 }
 
