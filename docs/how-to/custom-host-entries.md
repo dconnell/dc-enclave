@@ -37,7 +37,7 @@ Every command that creates, starts, or attaches you to a container reconciles th
 
 `dce exec` does **not** reconcile: it is meant for scripted/agent one-shots where per-call latency matters, and the entries are already in place from the commands above.
 
-Reconciliation is best-effort by design: if it fails, dce prints a warning and the shell/editor/start proceeds anyway — a hosts hiccup never blocks container entry.
+Reconciliation is best-effort by design: if it fails, dce prints a warning and the shell/editor/start proceeds anyway. A failed reconcile never blocks container entry.
 
 ## Why reconcile, not append once
 
@@ -61,7 +61,7 @@ The managed block is appended **last**, and the resolver uses the **first** matc
 ## Workflow
 
 1. Edit `~/.config/dce-enclave/<project>/hosts` on the host.
-2. Land the edits: enter with `dce shell` / `dce editor` (both reconcile on entry), or run `dce restart`. Plain `dce start <project>` only reconciles when it actually starts the container; on an already-running one it no-ops.
+2. Land the edits: enter with `dce shell` / `dce editor` (both reconcile on entry), or run `dce restart`. (`dce start` no-ops on an already-running container — see above.)
 3. Verify inside the container:
 
 ```

@@ -82,7 +82,7 @@ shape with their own package manager (`go mod download`, `cargo fetch`,
 See `Containerfiles/example/README.md` for each overlay's `--hide` paths and
 install command.
 
-This means you get fast, correct dependency sync without any `node_modules` files touching your host.
+Dependencies sync quickly and correctly, and no `node_modules` files touch your host.
 
 > **Install-on-start can run code (security).** For `nodejs` and `python`, the
 > sync step can execute lifecycle/build scripts (`npm` hooks; uv/PEP 517 source

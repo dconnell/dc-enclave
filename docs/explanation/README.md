@@ -1,6 +1,6 @@
 # Explanation
 
-Background and design reasoning — read top to bottom to understand the why.
+Background and design reasoning. Read top to bottom.
 
 - [Why DC Enclave](why-dce.md) — the value of a hard container boundary, and how `dce` compares to raw Docker/Podman.
 - [Design principles](design-principles.md) — the principles the tool is built on.

@@ -1,6 +1,9 @@
 # Rebuild and recover
 
-> **Always rebuild with `dce`, never VS Code's *Rebuild Container*** (or *Reopen in Container*). `dce rebuild-container` / `dce rebuild-image` are the only rebuild paths that re-inject your per-project credentials — SSH deploy key, git-host token auth (`~/.git-credentials` + the `insteadOf` rewrite), and the read-only `.npmrc` bind — and re-establish hidden volumes. A VS Code-initiated rebuild creates a container `dce` does not manage and **skips all of it**: `git pull`, private-package installs, and SSH auth will silently fail inside that container. To edit in VS Code, attach to the running `dce` container instead — see [VS Code behavior](../reference/backends.md#vs-code-behavior-by-backend).
+> **Always rebuild with `dce`** — never VS Code's *Rebuild Container* (or *Reopen in Container*).
+> `dce rebuild-container` / `dce rebuild-image` are the only rebuild paths that re-inject your per-project credentials — the SSH deploy key, git-host token auth (`~/.git-credentials` + the `insteadOf` rewrite), and the read-only `.npmrc` bind — and re-establish hidden volumes.
+> A VS Code-initiated rebuild creates a container `dce` does not manage and skips all of that: `git pull`, private-package installs, and SSH auth silently fail inside it.
+> To edit in VS Code, attach to the running `dce` container instead — see [VS Code behavior](../reference/backends.md#vs-code-behavior-by-backend).
 
 ## Rebuild and incident recovery
 
@@ -28,7 +31,7 @@ Rebuild without prompting (scripted incident response / automation):
 dce rebuild-container myapp-monorepo --yes
 ```
 
-For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. When the project has hidden paths configured, combining `--rotate-keys` with `--keep-hidden-volumes` triggers a loud warning (key rotation implies incident response, where preserving volumes may be unsafe).
+For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. When the project has hidden paths configured, combining `--rotate-keys` with `--keep-hidden-volumes` triggers a warning (key rotation implies incident response, where preserving volumes may be unsafe).
 
 On Docker-compatible backends, rebuild preserves any existing
 `.devcontainer/devcontainer.json` (never overwritten). If managed fields in that
@@ -88,14 +91,7 @@ deploy-key rotation remains `--rotate-keys`.
 
 ## Rebuilding after Containerfile changes
 
-If you change `Containerfile.base`, rebuild managed images first, then recreate containers:
-
-```
-dce rebuild-image all
-dce rebuild-container myapp-monorepo
-```
-
-If you change overlay Containerfiles, rebuild managed images then recreate containers:
+Changing `Containerfile.base`, changing overlay Containerfiles, or changing multiple Containerfiles at once all call for the same two commands — rebuild managed images, then recreate containers:
 
 ```
 dce rebuild-image all
@@ -105,13 +101,6 @@ dce rebuild-container myapp-monorepo
 `dce rebuild-image all` rebuilds the shared base image and all derived images selected by configured project scopes.
 
 `dce rebuild-container` re-derives the image for that project and recreates only the container.
-
-If you changed multiple Containerfiles and want everything refreshed:
-
-```
-dce rebuild-image all
-dce rebuild-container myapp-monorepo
-```
 
 Notes:
 

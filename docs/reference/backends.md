@@ -43,7 +43,13 @@ For per-platform install commands (Docker Desktop, OrbStack, Colima on macOS/Lin
 
 docker/orbstack/colima/podman backends:
 
-> **Use "Attach to Running Container", not "Reopen in Container".** `dce new` creates and starts your container (`dce-<name>`); that is the container `dce shell` uses. **Dev Containers: Attach to Running Container...** attaches VS Code to that exact container. **Dev Containers: Reopen in Container** — and the popup shown when you open the folder — instead builds a *separate* editor container (`vsc-*`) that `dce` does not manage and that will not share runtime state with `dce shell`. A stray `vsc-*` container is the sign you took the Reopen path. Likewise, when you need a fresh filesystem, run **`dce rebuild-container`** — not VS Code's *Rebuild Container* — since only the dce path re-injects your SSH deploy key, GitHub PAT git auth, and `.npmrc` (see [rebuild and recover](../how-to/rebuild-and-recover.md)).
+> **Use "Attach to Running Container", not "Reopen in Container".**
+>
+> `dce new` creates and starts your container (`dce-<name>`); that is the container `dce shell` uses. **Dev Containers: Attach to Running Container...** attaches VS Code to that exact container.
+>
+> **Dev Containers: Reopen in Container** — and the popup shown when you open the folder — instead builds a *separate* editor container (`vsc-*`) that `dce` does not manage. It shares no runtime state with `dce shell`. A stray `vsc-*` container means you took the Reopen path.
+>
+> When you need a fresh filesystem, run **`dce rebuild-container`**, not VS Code's *Rebuild Container*: only the dce path re-injects your SSH deploy key, GitHub PAT git auth, and `.npmrc` (see [rebuild and recover](../how-to/rebuild-and-recover.md)).
 
 - `dce new` generates `${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json`
 - For multi-scope and/or overlay projects, it points to a generated composed Containerfile
@@ -61,7 +67,9 @@ docker/orbstack/colima/podman backends:
   omitted for ssh/none auth; run `dce config sync-vscode <name>` after filling
   in the token to update an existing file.
 - `dce new` and `dce rebuild-container` also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
-- `dce editor <name>` is the CLI shortcut for **Dev Containers: Attach to Running Container...**: it starts the container if needed, launches VS Code attached to `/workspace`, and syncs the attached-container named config's managed fields. Under PAT auth that named config carries a Git `remoteEnv` override (`credential.helper = ""`, then `store`) so attached terminals/UI use the container's PAT-backed `~/.git-credentials` instead of VS Code's host-credential forwarding helper. Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for full precedence and discovery rules.
+- `dce editor <name>` is the CLI shortcut for **Dev Containers: Attach to Running Container...**: it starts the container if needed, launches VS Code attached to `/workspace`, and syncs the attached-container named config's managed fields.
+- Under PAT auth that named config carries a Git `remoteEnv` override (`credential.helper = ""`, then `store`), so attached terminals/UI use the container's PAT-backed `~/.git-credentials` instead of VS Code's host-credential forwarding helper.
+- Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for full precedence and discovery rules.
 - Runtime extension drift is surfaced via `dce doctor <project>` (informational),
   `dce extensions diff <project>` (focused), and a pre-destroy warning from
   `dce rebuild-container` when undeclared installed extensions would be lost.
@@ -75,7 +83,9 @@ apple backend:
 
 > **Experimental VS Code Dev Containers support.** VS Code Dev Containers can attach to apple/container behind the `dev.containers.experimentalAppleContainerSupport` setting (macOS only; requires the `container` CLI). It is upstream-experimental and may be rougher than the Docker backends — dce wires it up but does not guarantee parity.
 
-> **Container DNS.** apple/container's auto-configured resolver (the vmnet gateway, e.g. `192.168.64.1`) does not forward external DNS, so by default a container can reach IPs but not resolve hostnames — which breaks extension install, `git clone` over https, `npm install`, etc. dce works around this by passing `--dns 1.1.1.1 --dns 8.8.8.8` at `container create` time for apple projects. Override with the `DCE_DNS` env var (comma-separated IPs; set it empty to opt out). This only takes effect on a fresh `dce new` / `dce rebuild-container` (DNS is set at create time).
+> **Container DNS.** apple/container's auto-configured resolver (the vmnet gateway, e.g. `192.168.64.1`) does not forward external DNS. By default a container can reach IPs but not resolve hostnames, which breaks extension install, `git clone` over https, `npm install`, etc.
+>
+> dce works around this by passing `--dns 1.1.1.1 --dns 8.8.8.8` at `container create` time for apple projects. Override with the `DCE_DNS` env var (comma-separated IPs; set it empty to opt out). This only takes effect on a fresh `dce new` / `dce rebuild-container` (DNS is set at create time).
 >
 > **VPN caveat.** When a host VPN is active, apple/container's vmnet NAT may not route through the VPN interface, leaving the container with no network at all (not just no DNS). This is an apple/container networking limitation; dce cannot reconfigure host routing. Disconnect the VPN, or investigate a user-defined network (`container create --network <name>[,mac=…][,mtu=…]`) that routes differently.
 

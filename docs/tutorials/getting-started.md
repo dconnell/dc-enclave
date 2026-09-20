@@ -132,10 +132,10 @@ Starter file note:
 
 After dce new:
 
-1. Edit ~/.config/dce-enclave/<name>/github-token (or gitlab-token if you ran
+1. Edit `~/.config/dce-enclave/<name>/github-token` (or gitlab-token if you ran
    `dce new ... --git-host gitlab`) and replace the placeholder with your token
-2. Add ~/.config/dce-enclave/<name>/ssh_key.pub as a deploy key on your git host
-3. Clone repo(s) into ${DC_REPOS_DIR:-$HOME/repos}/<name>
+2. Add `~/.config/dce-enclave/<name>/ssh_key.pub` as a deploy key on your git host
+3. Clone repo(s) into `${DC_REPOS_DIR:-$HOME/repos}/<name>`
 
 Port mapping notes:
 

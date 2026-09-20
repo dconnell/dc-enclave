@@ -5,9 +5,9 @@ Each container mirrors its developer's host timezone, so timestamps (`date`, log
 
 On `dce new` and `dce rebuild-container`, the host zone is detected and passed to the container as `--env TZ=<zone>`:
 
-1. If `$TZ` is set in your shell, that value is used (must be a clean IANA name like `America/New_York`).
+1. If `$TZ` is set in your shell, that value is used (must be a valid IANA name like `America/New_York`).
 2. Otherwise the zone is read from `/etc/localtime` (works on macOS and Linux hosts).
-3. If neither yields a clean value, `--env TZ` is omitted and the container keeps the image default (UTC).
+3. If neither yields a valid value, `--env TZ` is omitted and the container keeps the image default (UTC).
 
 Override the detected zone for a single command:
 

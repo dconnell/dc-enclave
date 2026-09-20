@@ -1,6 +1,8 @@
 # Troubleshooting
 
-Run `dce doctor` first. It runs read-only preflight checks across the host environment and every detected backend (or one backend / one project if given) and prints a pass/fail per subsystem — bash version, global config and overlay root, backend CLI presence, runtime reachability, Colima context/runtime drift, and a per-backend `dce-base:latest`. It never starts or mutates anything and exits nonzero if anything fails, so it pinpoints drift (Colima context drifted, Podman machine stopped, stale dce-base, wrong bash) in one shot.
+Run `dce doctor` first. It runs read-only preflight checks across the host environment and every detected backend (or one backend / one project if given) and prints a pass/fail per subsystem: bash version, global config and overlay root, backend CLI presence, runtime reachability, Colima context/runtime drift, and a per-backend `dce-base:latest`.
+
+It never starts or mutates anything. If any check fails, it exits nonzero and shows which one — a drifted Colima context, a stopped Podman machine, a stale dce-base, the wrong bash.
 
 ```
 dce doctor              # all detected backends + host checks
@@ -56,7 +58,7 @@ apple/container's auto-configured resolver (the vmnet gateway) does not forward 
 - override the servers: `DCE_DNS=9.9.9.9,149.112.112.112 dce rebuild-container <name>`
 - verify: `dce exec <name> getent hosts google.com`
 
-If the container has **no network at all** (can't even ping `8.8.8.8`), a host VPN is likely conflicting with apple/container's vmnet NAT. This is an apple/container networking limitation, not a dce bug — disconnect the VPN, or investigate a user-defined network (`container create --network <name>[,mac=…][,mtu=…]`).
+If the container has **no network at all** (can't even ping `8.8.8.8`), a host VPN is likely conflicting with apple/container's vmnet NAT. This is an apple/container networking limitation, not a dce bug. Disconnect the VPN, or investigate a user-defined network (`container create --network <name>[,mac=…][,mtu=…]`).
 
 ## Hostname doesn't resolve inside my container
 

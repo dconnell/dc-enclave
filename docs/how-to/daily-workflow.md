@@ -36,7 +36,7 @@ dce stop myapp-monorepo
 
 For docker/orbstack/colima/podman backends:
 
-> **Attach, don't reopen.** `dce new` created and started your container — that's the one `dce shell` and `dce editor` use. To edit inside it, run `dce editor <project>` (or **Dev Containers: Attach to Running Container...**). **Reopen in Container** (the popup shown when you open the folder) instead builds a *separate* editor container (`vsc-*`) that `dce` does not manage. See [VS Code behavior](../reference/backends.md#vs-code-behavior-by-backend) for the full picture.
+> **Attach, don't reopen.** `dce new` creates and starts the project container — the one `dce shell` and `dce editor` use. To edit inside it, run `dce editor <project>`, or use **Dev Containers: Attach to Running Container...** and pick the container. Do not use **Reopen in Container** (the popup shown when you open the folder): it builds a separate editor container (prefix `vsc-*`) that `dce` does not manage. See [VS Code behavior](../reference/backends.md#vs-code-behavior-by-backend) for details.
 
 1. Launch your editor attached to the running container:
 
@@ -44,7 +44,11 @@ For docker/orbstack/colima/podman backends:
    dce editor myapp-monorepo
    ```
 
-   `dce editor` is the CLI shortcut for *Dev Containers: Attach to Running Container...*. It starts the container if needed, then launches VS Code (by default) attached to `/workspace`. Under PAT auth it also syncs VS Code's attached-container named config so editor/terminal Git uses the container's PAT-backed `~/.git-credentials` rather than VS Code's host-credential forwarding helper. If you changed the token file on the host, run `dce rotate-token <project>` to push the new PAT into the running container. Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for the full precedence and discovery rules.
+   `dce editor` is the CLI shortcut for *Dev Containers: Attach to Running Container...*. It starts the container if needed, then launches VS Code (by default) attached to `/workspace`.
+
+   Under PAT auth, `dce editor` also syncs VS Code's attached-container named config so editor/terminal Git uses the container's PAT-backed `~/.git-credentials` rather than VS Code's host-credential forwarding helper. If you changed the token file on the host, run `dce rotate-token <project>` to push the new PAT into the running container.
+
+   Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for the full precedence and discovery rules.
 
    Manual fallback (same effect): Command Palette → **Dev Containers: Attach to Running Container...** → pick your project.
 

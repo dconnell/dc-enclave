@@ -8,7 +8,7 @@ Keep these sources separate:
 2. **team overlays source** (files synced into `$DC_TEAM_DIR/overlays`)
 3. **user overlays source** (files synced into `$DC_USER_DIR/overlays`)
 
-This separation avoids coupling team customization with personal customization and keeps layering deterministic.
+This separation keeps team and personal customization independent, and keeps layering deterministic.
 
 Recommended flow:
 

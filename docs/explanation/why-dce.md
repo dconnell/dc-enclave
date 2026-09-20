@@ -2,7 +2,7 @@
 
 ## Why a container boundary
 
-Every developer now runs tools that touch their whole repo — AI agents in VS Code extensions, TUI runners like Claude Code, OpenCode, or Pi launched from the terminal, build scripts, dependency installers. Left on the host, each one can read your global credentials, mutate files outside the project, and leave state that survives the session. DC Enclave puts a hard boundary around all of it: the container is the boundary, and anything you run inside it stays inside.
+Every developer now runs tools that touch their whole repo — AI agents in VS Code extensions, TUI runners like Claude Code, OpenCode, or Pi launched from the terminal, build scripts, dependency installers. Left on the host, each one can read your global credentials, mutate files outside the project, and leave state that survives the session. DC Enclave puts a hard boundary around all of it: the container. Anything you run inside it stays inside.
 
 - **Whatever runs in the container, stays in the container.** Launch a TUI agent from `dce shell`, or run a VS Code extension from the integrated terminal — both operate inside the same boundary. Your project repo is bind-mounted read-write at `/workspace` (so editors and builds can read and write it), but everything outside that mount — home directory, shell history, and global credentials — stays out of reach. One exception: when VS Code is *attached* to the container, a workspace extension inside it can open a terminal on your host and run commands — stock VS Code allows this, [VSCodium blocks it by default](https://github.com/VSCodium/vscodium/pull/2487) ([discussion](https://github.com/VSCodium/vscodium/issues/2480)). See [isolation and security](isolation-and-security.md#vs-code-remote-development-can-reach-your-host).
 - **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it. Link them only when you mean to.
@@ -10,12 +10,12 @@ Every developer now runs tools that touch their whole repo — AI agents in VS C
 - **Trust is pinned, not learned on first use.** GitHub's SSH host keys are baked into the base image and verified by a guard test, so a hijacked network can't silently redirect git traffic.
 - **Your checkout survives every rebuild.** Your repo lives on the host and bind-mounts in read-write; destroying the container leaves your checkout exactly where it was.
 
-The container is the undo button. Rebuild it and you're back to a known-good state in under a minute.
+A rebuild returns the container to a known-good state in under a minute.
 
 
 ## Versus raw Docker, Podman, or apple/container
 
-If you already know your way around Docker, Podman, or apple/container, `dce` still earns its keep. It orchestrates the repetitive setup and recovery steps you'd otherwise retype per project, and keeps them consistent across machines and backends.
+If you already work with Docker, Podman, or apple/container directly, `dce` orchestrates the repetitive setup and recovery steps you'd otherwise retype per project, and keeps them consistent across machines and backends.
 
 What `dce` adds beyond raw backend commands:
 
@@ -25,7 +25,7 @@ What `dce` adds beyond raw backend commands:
 - optional per-project credential layout for PAT/SSH key/.npmrc with repeatable rebuild flows
 - one-command rebuild and key-rotation workflows for incident response
 
-The table below intentionally focuses on the high-leverage commands where `dce` saves the most effort. It is not a complete mapping of every subcommand. Docker, OrbStack, and Colima are grouped because they share the Docker CLI.
+The table below focuses on the commands where `dce` replaces the most manual backend work; it is not a complete mapping of every subcommand. Docker, OrbStack, and Colima are grouped because they share the Docker CLI.
 
 | `dce` command | docker / orbstack / colima | podman | apple/container |
 |---|---|---|---|
@@ -36,5 +36,5 @@ The table below intentionally focuses on the high-leverage commands where `dce` 
 | `dce clean` | `docker image ls` + remove non-`latest` tags for managed repos | Same flow with `podman image ls/rm` | Same flow with `container image ls/rm` |
 | `dce install myapp ~/.dotfiles` | Stream dotfiles via `tar` + `docker exec`, run `install.sh`, then remove temp files | Same flow with `podman` | Same flow with `container exec` |
 
-`dce new`, `dce rebuild-image`, and `dce rebuild-container` are the biggest differentiators: repeatable orchestration for image lifecycle, container recovery, and security response without retyping fragile backend-specific command sequences. `dce clean` and `dce install` reduce ongoing maintenance overhead once projects are up and running.
+Of these, `dce new`, `dce rebuild-image`, and `dce rebuild-container` cover image lifecycle, container recovery, and security response as repeatable one-command workflows, without retyping backend-specific command sequences. `dce clean` and `dce install` reduce ongoing maintenance once projects are running.
 

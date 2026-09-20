@@ -14,7 +14,7 @@ dce provenance myapp --history       # full timeline as a table
 dce status                           # one-line provenance summary per project
 ```
 
-To reproduce a build for debugging: read the `team`/`user` commit from `dce provenance`, check it out in the corresponding root (`git -C "$DC_TEAM_DIR" checkout <sha>` or `git -C "$DC_USER_DIR" checkout <sha>`), then `dce rebuild-image all && dce rebuild-container <name>`. A side not under git shows only its content fingerprint — no commit to check out, but the fingerprint still tells you whether your current files match that build.
+To reproduce a build for debugging: read the `team`/`user` commit from `dce provenance`, check it out in the corresponding root (`git -C "$DC_TEAM_DIR" checkout <sha>` or `git -C "$DC_USER_DIR" checkout <sha>`), then `dce rebuild-image all && dce rebuild-container <name>`. An overlay source not under git shows only its content fingerprint — no commit to check out, but the fingerprint still tells you whether your current files match that build.
 
 `git_dirty: true` (label / log) means the image includes uncommitted overlay edits at build time.
 

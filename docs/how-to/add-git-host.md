@@ -49,11 +49,11 @@ switch hosts, re-run `dce new` under a new project name.
 
 ## Pinning a host's SSH keys (contributors)
 
-Every supported host gets its SSH host keys **pinned at image-build time** and
-verified against multiple independent channels before pinning — never learned at
-runtime via `ssh-keyscan`, never accepted via `StrictHostKeyChecking accept-new`.
-Both of those are unattended trust decisions that accept whatever key the
-network presents, i.e. exactly the TOFU behavior pinning exists to eliminate.
+Every supported host gets its SSH host keys **pinned at image-build time**,
+after verification against multiple independent channels. Keys are never learned
+at runtime via `ssh-keyscan`, and `StrictHostKeyChecking accept-new` is never
+used: both are unattended trust decisions that accept whatever key the network
+presents — the TOFU behavior pinning exists to eliminate.
 
 The regression guard `tests/lint/security-ssh-host-trust.sh` is **data-driven
 over the provider registry**: for each known host it asserts the pin exists,
@@ -63,7 +63,8 @@ no runtime `ssh-keyscan` or `accept-new` is present.
 ### The procedure (same for every host)
 
 1. **Gather the host's public SSH host keys from ≥3 independent channels** and
-   confirm they agree. Independence is what defeats a single-channel MITM:
+   confirm they agree. Independent channels are what rule out a single-channel
+   MITM:
    - **Channel A — live key over SSH:** `ssh-keyscan <host>` from a trusted
      network (gives the raw key bytes).
    - **Channel B — hoster's machine-readable source over HTTPS**
@@ -82,7 +83,7 @@ no runtime `ssh-keyscan` or `accept-new` is present.
 4. **Record the same fingerprints as constants** in
    `tests/lint/security-ssh-host-trust.sh` (e.g. `FP_<PROVIDER>_<KTYPE>`). The
    test computes each pinned key's fingerprint and asserts it matches; a
-   poisoned or stale pin fails closed. Updating the constants IS the rotation
+   poisoned or stale pin fails closed. Updating the constants is the rotation
    action.
 5. **Register the provider** in `lib/git-host.sh`:
    `dce_git_host_is_known`, `dce_git_host_known_providers`, and every
@@ -110,8 +111,7 @@ doc URLs differ.
 > practical 3-channel set for GitLab is therefore: **(A)** live `ssh-keyscan`,
 > **(C1)** the fingerprints page on `docs.gitlab.com`, and **(C2)** a *second*
 > GitLab doc page on a different path. Record the exact channels used in the
-> pin-file header. This asymmetry vs GitHub is why the procedure is written down
-> rather than assumed.
+> pin-file header.
 
 ### Rotating a pinned key
 

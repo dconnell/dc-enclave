@@ -61,9 +61,9 @@ dce-enclave/
 │   ├── network.sh                      # `dce network` (create/connect private networks)
 │   ├── rebuild-container.sh            # `dce rebuild-container` (recreate container, keep image)
 │   ├── rebuild-image.sh                # `dce rebuild-image` (rebuild the composed image)
-│   ├── install-dotfiles.sh             # `dce install-dotfiles` (seed dotfiles into a container)
+│   ├── install-dotfiles.sh             # `dce install` (seed dotfiles into a container)
 │   ├── rotate-token.sh                 # `dce rotate-token` (refresh PAT / regenerate SSH deploy key)
-│   ├── snapshot.sh                     # `dce snapshot` / `dce restore` (image + volume snapshots)
+│   ├── snapshot.sh                     # `dce snapshot` (image + volume snapshots; restore via `dce rebuild-container --from-snap`)
 │   └── provenance.sh                   # `dce provenance` (read a project's provenance log)
 ├── templates/
 │   └── dotfiles/                       # starter dotfiles repo (fork for personal config)

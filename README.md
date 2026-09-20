@@ -1,6 +1,6 @@
 # DC Enclave
 
-A thin wrapper of readable Bash 4+ scripts that turns any container runtime into a one-command isolated dev environment. Spin one up, shell in from the terminal or open it in VS Code, and run your code and AI agents inside a sandbox you can wipe and rebuild in seconds.
+A thin wrapper of Bash 4+ scripts that turns any container runtime into a one-command isolated dev environment. Spin one up, shell in from the terminal or open it in VS Code, and run your code and AI agents inside a sandbox you can wipe and rebuild in seconds.
 
 You bring the runtime — apple/container, Docker Desktop, OrbStack, Colima, or Podman, on macOS, Linux\*, and WSL2\*. DC Enclave handles bootstrap, per-project credentials, rebuilds, and recovery with the same `dce` commands everywhere.
 
@@ -8,7 +8,7 @@ You bring the runtime — apple/container, Docker Desktop, OrbStack, Colima, or 
 
 ## Why
 
-Every developer now runs tools that execute code on their machine — AI agents in VS Code extensions, TUI runners like Claude Code, OpenCode, or Pi launched from the terminal, build scripts, and dependency installers whose post-install hooks can run more or less anything. On the host, that code runs with your user privileges: it can read your global credentials, write outside the project, and leave state that survives the session. The container is the boundary; DC Enclave is the one-command, backend-agnostic way to spin it up — and to throw it away and rebuild safely when something goes wrong.
+Every developer now runs tools that execute code on their machine — AI agents in VS Code extensions, TUI runners like Claude Code, OpenCode, or Pi launched from the terminal, build scripts, and dependency installers whose post-install hooks can run more or less anything. On the host, that code runs with your user privileges: it can read your global credentials, write outside the project, and leave state that survives the session. The container is the boundary; DC Enclave is the backend-agnostic way to spin it up — and to throw it away and rebuild safely when something goes wrong.
 
 - **Whatever runs in the container, stays in the container.** Processes and state you create inside run only there. Your project repo is bind-mounted read-write at `/workspace` (so your editor and builds can read and write it), but everything outside that mount — your home directory, shell history, and global credentials — stays out of reach.
 - **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it.

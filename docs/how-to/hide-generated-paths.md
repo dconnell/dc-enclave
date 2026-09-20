@@ -1,12 +1,14 @@
 # Hide generated paths from the host
 
-By default, the entire workspace is a bind mount: everything under `/workspace` inside the container is a live view of the host repos directory. This is great for source code but problematic for generated paths like `node_modules`, build caches, or compiled output. Those directories can contain thousands of files, platform-specific binaries, and large caches that are meaningless—or even harmful—on the host filesystem.
+By default, the entire workspace is a bind mount: everything under `/workspace` inside the container is a live view of the host repos directory. That works well for source code, but generated paths such as `node_modules`, build caches, and compiled output don't belong on the host. They can contain thousands of files, platform-specific binaries, and large caches that are meaningless or even harmful on the host filesystem.
 
 The `--hide` flag solves this by mounting a named container volume over a `/workspace`-relative path so its contents live inside the container's volume store instead of on the host.
 
 ### Why use `--hide`
 
-- **Bind-mount performance** — On macOS (Docker Desktop, OrbStack, Colima) and WSL2, bind mounts crossing the VM boundary are slow for heavy file I/O. A directory like `node_modules` with tens of thousands of tiny files can make `npm install`, `git status`, and file watchers painfully slow. Moving it to a named volume restores native filesystem speed. On a native Linux host running Podman or Docker with no VM, bind mounts are already native-speed, so performance is not a reason to use `--hide` there — but platform correctness and host cleanliness still apply.
+- **Bind-mount performance** — On macOS (Docker Desktop, OrbStack, Colima) and WSL2, bind mounts crossing the VM boundary are slow for heavy file I/O. A directory like `node_modules` with tens of thousands of tiny files can make `npm install`, `git status`, and file watchers slow. Moving it to a named volume restores native filesystem speed.
+
+  On a native Linux host running Podman or Docker with no VM, bind mounts are already native-speed, so performance is not a reason to use `--hide` there — but platform correctness and host cleanliness still apply.
 - **Platform correctness** — Native dependencies (e.g. `node-gyp` binaries, Go build artifacts) compiled inside the Linux container are not compatible with a macOS or Windows host. Keeping them in a container-only volume avoids platform mismatch errors.
 - **Host cleanliness** — Generated output, caches, and lock-file side effects won't clutter your host checkout, won't confuse `git status`, and won't risk accidental commits.
 
@@ -29,7 +31,7 @@ dce new monorepo nodejs,golang \
 - After container start, dce ensures the hidden mount points are writable by the `dev` user (root `mkdir`/`chown` fallback applied across all backends).
 - Hidden paths are persisted in the project config (`CONTAINER_HIDDEN_PATHS`) and automatically remounted on `dce rebuild-container`.
 - **`dce rebuild-container` removes hidden volumes by default** for a clean slate (fresh dependency install, no stale caches). Use `--keep-hidden-volumes` to preserve them.
-- For Docker-compatible backends, hidden mounts are also added to the generated `devcontainer.json` so VS Code Dev Containers uses the same layout. Existing files are preserved; if managed fields drift, `dce new` / `dce rebuild-container` print a notice and you can reconcile with `dce config sync-vscode <name>` (`--dry-run` previews only).
+- For Docker-compatible backends, hidden paths are also added as mounts to the generated `devcontainer.json` so VS Code Dev Containers uses the same layout. Existing files are preserved; if managed fields drift, `dce new` / `dce rebuild-container` print a notice and you can reconcile with `dce config sync-vscode <name>` (`--dry-run` previews only).
 
 ### Cleaning up hidden volumes
 

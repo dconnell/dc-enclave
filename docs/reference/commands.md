@@ -9,7 +9,7 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce status` (`dce s`) | Show overall status and per-project details |
 | `dce start [name ...]` | Start one or more projects, or all configured projects if none given |
 | `dce stop [name ...]` | Stop one or more projects, or all configured projects if none given |
-| `dce list` (`dce ls`) | List DC Enclave and their running/stopped state |
+| `dce list` (`dce ls`) | List DC Enclave projects and their running/stopped state |
 | `dce shell <name> [command]` | Open a shell or run one command inside a project container; injects the project's git token as the provider env var (`GITHUB_TOKEN` / `GITLAB_TOKEN`) and wraps the command in `zsh -ic` |
 | `dce logs <name> [-f\|--follow] [--tail N]` | Fetch a container's stdout/stderr log stream (works on stopped containers) |
 | `dce editor [--editor <id>] <name>` | Launch your editor attached to the running container at `/workspace` (VS Code by default; Docker-compatible backends only). Under PAT auth, also sync VS Code's attached-container config so editor/terminal Git uses the container credential store instead of VS Code's host-forwarding helper. |
@@ -66,7 +66,7 @@ DC Enclave supports five container runtimes (see [backends](backends.md)): the D
 
 ### Command matrix
 
-Command-level support. ✅ fully supported · 🟡 works, but some flags/subcommands are unsupported (see [Backend-limited features](#backend-limited-features)) · ⚠️ experimental · ❌ unsupported. Most commands run on every backend; others showing 🟡 still work, just with caveats on specific options.
+Command-level support. ✅ fully supported · 🟡 works, but some flags/subcommands are unsupported (see [Backend-limited features](#backend-limited-features)) · ⚠️ experimental · ❌ unsupported.
 
 | Command | Docker / OrbStack / Colima | apple / container | Podman |
 |---|---|---|---|

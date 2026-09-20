@@ -1,8 +1,8 @@
 # Manage editor extensions
 
-Declare editor extensions in manifests so every rebuild/open converges to the
-same set for a project scope, instead of relying on ad-hoc installs in a running
-container.
+Declare editor extensions in manifests so every rebuild/open ends up with the
+declared set for a project scope, instead of relying on ad-hoc installs in a
+running container.
 
 ## Manifest layout
 
@@ -62,7 +62,7 @@ dce extensions diff myapp
 - declared but currently not installed (`declared \ container`)
 
 When runtime prerequisites are missing (container stopped, or `code` CLI absent
-in-container before the first VS Code attach), `diff` prints a clean `SKIP`
+in-container before the first VS Code attach), `diff` prints a `SKIP`
 message. Works on every backend, including apple/container (via `container exec`).
 
 ## Capture extensions into manifests
@@ -109,29 +109,29 @@ Policy:
 VS Code's attached-container open (the `vscode-remote://attached-container+…`
 URI `dce editor` uses) does **not** reliably process
 `customizations.vscode.extensions` — unlike "Reopen in Container", it skips the
-customizations install step. So `dce editor` enforces convergence itself:
-before launch it resolves the declared set, lists what is installed in the
-container, and runs `code-server --install-extension` for each
+customizations install step. So `dce editor` installs the missing extensions
+itself: before launch it resolves the declared set, lists what is installed in
+the container, and runs `code-server --install-extension` for each
 declared-but-missing id.
 
 This is idempotent and advisory:
 
 - pre-adoption (no manifests) and first-ever opens (VS Code Server not yet
   injected → no in-container `code-server`) are skipped; re-run `dce editor`
-  after the first open and convergence runs.
+  after the first open and the missing extensions are installed.
 - per-id install failures are reported but never block the launch; the next
   `dce editor` retries.
 
-You do not call anything extra — just `dce editor <project>` after the manifests
+Run `dce editor <project>` after the manifests
 are synced.
 
 ## Rebuild behavior and migration recipe
 
 Rebuild wipes container filesystem state (`~/.vscode-server` included):
 
-- declared extensions survive via devcontainer declaration + `dce editor`
-  attach-mode enforcement (and native customizations handling on "Reopen in
-  Container")
+- declared extensions survive via the devcontainer declaration + the `dce
+  editor` install-on-attach step (and native customizations handling on "Reopen
+  in Container")
 - undeclared runtime installs are lost by design
 
 Before first adoption/sync on an existing project:

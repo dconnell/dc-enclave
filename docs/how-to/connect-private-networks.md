@@ -4,7 +4,7 @@
 
 By default dce containers are isolated: they cannot reach each other. To let two
 containers talk (e.g. an app and its database) **without publishing any port to
-the host**, create a private network and attach both containers to it on purpose:
+the host**, create a private network and attach both containers to it explicitly:
 
 ```
 dce network create myapp
