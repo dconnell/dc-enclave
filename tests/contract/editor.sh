@@ -1110,10 +1110,20 @@ pass "Section 16c: watcher times out with the retry hint; no installs attempted"
 # ---------------------------------------------------------------------------
 # (16d) Single-flight: two concurrent watchers for the same project must not
 # double-install. The first invocation is launched in the background; the
-# second runs in the foreground right after and must observe the fresh lock,
-# log "already active", and exit 0 while the first converges (APPEAR_AFTER=1:
-# the server appears on the 2nd probe). Each declared-but-missing id must be
-# installed exactly once across both invocations.
+# second runs in the foreground and must observe the fresh lock, log "already
+# active", and exit 0 while the first converges. Each declared-but-missing id
+# must be installed exactly once across both invocations.
+#
+# Determinism contract: each watcher gets its OWN probe counter with its OWN
+# schedule. Watcher A's server appears only on the 26th probe
+# (APPEAR_AFTER=25), so at interval 0.2 it polls ~5s before converging and
+# holds a FRESH lock for several seconds -- enough that even a CI runner
+# whose latecomer takes ~0.5s+ to reach its lock check still overlaps (A's
+# ~5-7s convergence stays far below its 15s timeout). B's server appears on
+# its very first probe (APPEAR_AFTER=0): in the correct path B never probes
+# at all (it exits at the lock check), but if single-flight were broken and B
+# took over, it would converge immediately and re-install -- failing the
+# exactly-once assertions loudly instead of hanging on a timeout.
 # ---------------------------------------------------------------------------
 make_project "upsilon" running
 printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/upsilon/config"
@@ -1124,34 +1134,37 @@ printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
 # implementation lands.
 [[ -x "$WATCH_SCRIPT" ]] \
   || fail "upsilon: scripts/_editor-ext-watch.sh does not exist yet (expected pre-implementation failure)"
-rm -f "$WORK/upsilon-count" # probe counter; the stub initializes it from 0
+# Probe counters, one per watcher: the stub advances each FILE independently,
+# so A and B never see each other's probes.
+rm -f "$WORK/upsilon-bg-count" "$WORK/upsilon-fg-count"
 TMPDIR="$WORK/tmp16d"
 export TMPDIR
 mkdir -p "$TMPDIR"
 ups_watch_log="${TMPDIR%/}/dce-ext-watch.upsilon.log"
-# The test synchronizes on the first watcher's lock dir existing (0.1s poll,
-# bounded at 10s) instead of a fixed sleep stagger: a fixed sleep races the
-# first watcher's ~50-200ms nohup/bash startup, whereas waiting for the lock
-# guarantees the second launch is a true latecomer that must observe the fresh
-# lock (the watchers still overlap, since the first polls for up to 10s).
+# The test synchronizes on the first watcher's lock being FRESH -- its
+# deadline file existing -- instead of the lock dir alone (0.1s poll, bounded
+# at 10s): the mkdir -> deadline-write window inside the watcher would
+# otherwise let B observe a half-taken lock and read it as stale. Waiting for
+# the deadline then launching B immediately guarantees a true latecomer that
+# must observe the fresh lock and log "already active"; A still holds the
+# lock for ~5s, so the overlap survives even slow CI startup.
 ups_lock="${TMPDIR%/}/dce-ext-watch.upsilon.lock"
 ups_fg_rc=0
 ups_bg_rc=0
 DC_STUB_EXT_SERVER_ABSENT=0 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
   DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
-  DC_STUB_EXT_SERVER_APPEAR_AFTER=1 DC_STUB_EXT_PROBE_COUNT="$WORK/upsilon-count" \
-  run_watcher upsilon vscode 0.2 10 >>"$ups_watch_log" 2>&1 &
+  DC_STUB_EXT_SERVER_APPEAR_AFTER=25 DC_STUB_EXT_PROBE_COUNT="$WORK/upsilon-bg-count" \
+  run_watcher upsilon vscode 0.2 15 >>"$ups_watch_log" 2>&1 &
 ups_bg=$!
 ups_lock_deadline=$(( SECONDS + 10 ))
-while (( SECONDS < ups_lock_deadline )) && [[ ! -d "$ups_lock" ]]; do
+while (( SECONDS < ups_lock_deadline )) && [[ ! -f "$ups_lock/deadline" ]]; do
   sleep 0.1
 done
-[[ -d "$ups_lock" ]] \
-  || fail "upsilon: first watcher never took its lock ($ups_lock absent after 10s)"
-sleep 0.1 # tiny margin once the lock exists, so the two processes overlap
+[[ -f "$ups_lock/deadline" ]] \
+  || fail "upsilon: first watcher never took its lock ($ups_lock/deadline absent after 10s)"
 DC_STUB_EXT_SERVER_ABSENT=0 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
   DC_STUB_INSTALL_LOG="$INSTALL_LOG" \
-  DC_STUB_EXT_SERVER_APPEAR_AFTER=1 DC_STUB_EXT_PROBE_COUNT="$WORK/upsilon-count" \
+  DC_STUB_EXT_SERVER_APPEAR_AFTER=0 DC_STUB_EXT_PROBE_COUNT="$WORK/upsilon-fg-count" \
   run_watcher upsilon vscode 0.2 10 >>"$ups_watch_log" 2>&1 || ups_fg_rc=$?
 wait "$ups_bg" || ups_bg_rc=$?
 # Defensive: POSIX-mode bash would persist env-prefix assignments on function
