@@ -17,6 +17,7 @@ The manual for DC Enclave, organized by what you're trying to do.
 | Manage VS Code extensions declaratively | [manage editor extensions](how-to/manage-editor-extensions.md) |
 | Connect two containers privately | [private networks](how-to/connect-private-networks.md) |
 | Reach my host Postgres | [connect to host PostgreSQL](how-to/connect-host-postgres.md) |
+| Map custom hostnames inside a container | [custom host entries](how-to/custom-host-entries.md) |
 | Rebuild / recover from a bad state | [rebuild and recover](how-to/rebuild-and-recover.md) |
 | Save a container state and roll back | [snapshot and rollback](how-to/snapshot-and-rollback.md) |
 | Add tools to the image | [overlays](reference/overlays.md) |

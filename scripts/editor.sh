@@ -134,6 +134,11 @@ fi
 # scripts/shell.sh:71 and scripts/start.sh:96.
 dce_ensure_git_credentials "$PROJECT"
 
+# Reconcile the project's hosts fragment into /etc/hosts so the attached editor
+# gets the same name resolution as a `dce shell` entry (idempotent; no-op
+# without a fragment).
+dce_ensure_container_hosts "$PROJECT"
+
 # dce editor preserves the same forensics-safe default as dce shell/start: if a
 # PAT-backed ~/.git-credentials file already exists in the container, it is not
 # silently overwritten on launch. That means a host-side token rotation can leave

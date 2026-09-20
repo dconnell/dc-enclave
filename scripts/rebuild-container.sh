@@ -8,7 +8,8 @@
 # the image from current overlay state (it never builds images; run
 # `dce rebuild-image all` first if the image is missing), then:
 #   stop -> delete -> handle hidden volumes -> (optionally rotate SSH key) ->
-#   recreate -> start -> re-inject credentials -> reseed VS Code config.
+#   recreate -> start -> re-inject credentials (and reconcile hosts) -> reseed
+#   VS Code config.
 #
 # Safety semantics:
 #   - Hidden volumes are REMOVED by default for a clean slate; --keep-hidden-
@@ -489,6 +490,10 @@ if [[ -z "$FROM_SNAP" ]] || $INJECT_CREDS || $ROTATE_KEYS; then
   echo "  ✓ SSH key injected"
   dce_ensure_git_credentials "$PROJECT" force
   echo "  ✓ git configured (credential-aware insteadOf)"
+  # The container was freshly recreated, so the runtime regenerated /etc/hosts;
+  # re-apply the project's hosts fragment alongside the credential re-injection
+  # (idempotent; no-op without a fragment).
+  dce_ensure_container_hosts "$PROJECT"
 else
   echo "  ✓ Credentials NOT injected — snapshot state preserved"
   echo "    To use this snapshot with current credentials, re-run with --inject-creds:"

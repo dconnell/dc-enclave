@@ -74,5 +74,10 @@ backend_exec "$PROJECT" rm -rf "$REMOTE_DIR"
 # post-rebuild `dce install` restores working `git pull` alongside dotfiles.
 dce_ensure_git_credentials "$PROJECT"
 
+# Reconcile the project's hosts fragment into /etc/hosts so a fresh fragment
+# edit lands without needing a shell/start round-trip (idempotent; no-op
+# without a fragment).
+dce_ensure_container_hosts "$PROJECT"
+
 echo "  ✓ Dotfiles installed"
 echo "  ✓ Git credentials installed"

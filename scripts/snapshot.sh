@@ -24,9 +24,9 @@
 #   dce snapshot  rm <project> <label>        remove one snapshot image
 #   dce snapshots list [<project>]            list snapshots (with sizes)
 #
-# A snapshot is scrub -> stop -> commit -> start -> re-inject: injected
-# credentials are removed from the writable layer while the container is still
-# running (every backend's exec needs a live target), then re-seeded after the
+# A snapshot is scrub -> stop -> commit -> start -> re-inject + hosts
+# reconcile: injected credentials are removed from the writable layer while
+# the container is still running (every backend's exec needs a live target), then re-seeded after the
 # restart so the live container keeps working git/ssh (export / a clean commit
 # require a stopped container on every backend); volume copies run in the same
 # stop window. Restore is via `dce rebuild-container <project> --from-snap <label>`,
@@ -443,6 +443,9 @@ do_create() {
     # next `dce start`.
     dce_inject_ssh_deploy_key "$project"
     dce_ensure_git_credentials "$project"
+    # The restart regenerated /etc/hosts, so reconcile the project's hosts
+    # fragment too (idempotent; no-op without a fragment).
+    dce_ensure_container_hosts "$project"
   fi
 
   # Record a provenance event so the project log stays honest about where this

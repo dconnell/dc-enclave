@@ -9,7 +9,8 @@
 #      reuse it if present (dce-base:latest when no scopes).
 #   3. Fail fast if the base image, project config, or container already exists.
 #   4. Create the per-project secret dir: SSH deploy key, GitHub token
-#      placeholder, .npmrc template (all tight permissions).
+#      placeholder, .npmrc template (all tight permissions), and a
+#      comment-only hosts template (644 -- scaffold, not a secret).
 #   5. Write the project config and create+start the container with mounts,
 #      ports, resource limits, and hidden volumes.
 #   6. Verify hidden mounts, fix their ownership, inject SSH key + git config.
@@ -661,6 +662,26 @@ EOF
 fi
 echo "✓ .npmrc template: $NPMRC"
 
+# Hosts fragment scaffold: reconciled into the container's /etc/hosts at
+# start/shell/editor (see lib/common/container-hosts.sh). Never overwritten on
+# re-create -- user entries are precious. 644, unlike the secrets above: it is
+# a scaffold, not a secret.
+HOSTS_FILE="$SECRET_DIR/hosts"
+if [[ ! -f "$HOSTS_FILE" ]]; then
+  cat > "$HOSTS_FILE" <<'EOF'
+# hosts fragment for this project -- reconciled into the container's
+# /etc/hosts at dce start/shell/editor. hosts(5) format, one entry per line:
+#   IP hostname [aliases...]
+# Comments and blank lines are ignored. Runtime-managed entries (e.g.
+# localhost) always win over anything listed here. This file is per-project:
+# it only affects this project's containers.
+# Example:
+#   10.0.0.5 internal.corp registry.internal
+EOF
+  chmod 644 "$HOSTS_FILE"
+fi
+echo "✓ hosts template: $HOSTS_FILE"
+
 # Serialize every scalar value through the shared escaper so the persisted config
 # is inert data: any $/backtick/quote/backslash is escaped and round-trips safely
 # through dce_load_project_config without executing command substitution.
@@ -800,6 +821,10 @@ dce_inject_ssh_deploy_key "$PROJECT"
 echo "==> Configuring git in container..."
 dce_ensure_git_credentials "$PROJECT"
 
+# First boot: apply any hosts fragment the user seeded before creation (the
+# runtime regenerated /etc/hosts at start). No-op without a fragment.
+dce_ensure_container_hosts "$PROJECT"
+
 # Seed .devcontainer/devcontainer.json + the VS Code named-attach config for
 # every backend. apple/container now uses VS Code Dev Containers' EXPERIMENTAL
 # apple-container attach path (dev.containers.experimentalAppleContainerSupport),
@@ -924,6 +949,7 @@ echo ""
 echo "Config: ~/.config/dce-enclave/$PROJECT/"
 echo "  [ ] ${GIT_HOST_TOKEN_FILENAME}   Replace ${GIT_HOST_SENTINEL} with your ${GIT_HOST_DISPLAY} token"
 echo "  [ ] ssh_key.pub    Add as ${GIT_HOST_DISPLAY} Deploy Key for your repos"
+echo "  [ ] (Optional) hosts       Add host entries if the container needs them (~/.config/dce-enclave/$PROJECT/hosts)"
 echo ""
 if $DOCKER_COMPATIBLE; then
   echo "  [ ] (Optional) Open $REPOS_DIR in VS Code Dev Containers"

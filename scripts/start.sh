@@ -3,8 +3,9 @@
 # scripts/start.sh - `dce start`: start one or all dev containers.
 #
 # Starts named projects, or all configured projects when none are given. Brings
-# up the runtime if needed, verifies hidden-volume mounts, and re-injects the
-# SSH deploy key if it's missing from the container filesystem.
+# up the runtime if needed, verifies hidden-volume mounts, re-injects the SSH
+# deploy key if it's missing from the container filesystem, and reconciles the
+# project's hosts fragment into /etc/hosts.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -89,6 +90,11 @@ _start_container() {
   # (Re)wire git auth for the configured credential: HTTPS+PAT or SSH deploy key.
   # Idempotent, so this also repairs containers created before this wiring existed.
   dce_ensure_git_credentials "$project"
+
+  # Reconcile the project's hosts fragment into /etc/hosts. Runtimes regenerate
+  # /etc/hosts at every container start, so this must run post-start (and
+  # post-hosts-edits) rather than once at create time. No-op without a fragment.
+  dce_ensure_container_hosts "$project"
 
   echo "  ✓ $project - started"
 }

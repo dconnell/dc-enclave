@@ -71,6 +71,7 @@ The full manual lives in [`docs/`](docs/README.md). Common destinations:
 | See the day-to-day command loop | [daily workflow](docs/how-to/daily-workflow.md) |
 | See every command and flag | [command reference](docs/reference/commands.md) · [flags](docs/reference/flags.md) |
 | Change CPU / memory or timezone | [manage resources](docs/how-to/manage-resources.md) · [timezone](docs/how-to/set-timezone.md) |
+| Map custom hostnames inside a container | [custom host entries](docs/how-to/custom-host-entries.md) |
 | Rebuild / recover from a bad state | [rebuild and recover](docs/how-to/rebuild-and-recover.md) |
 | Save a container state and roll back | [snapshot and rollback](docs/how-to/snapshot-and-rollback.md) |
 | Understand the security model | [isolation and security](docs/explanation/isolation-and-security.md) |

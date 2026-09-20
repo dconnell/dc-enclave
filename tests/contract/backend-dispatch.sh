@@ -4,7 +4,8 @@
 #
 # Every backend_* function is a `case` over {apple, docker, orbstack, colima,
 # podman}. The per-backend argv divergences (apple `container exec --uid 0` vs
-# docker `<cli> exec -u 0`; apple `container delete` vs docker `<cli> rm -f`;
+# docker `<cli> exec -u 0`; root+stdin exec `-i --uid 0` vs `-i -u 0`; apple
+# `container delete` vs docker `<cli> rm -f`;
 # apple `container volume delete` vs `<cli> volume rm`; podman's extra
 # `--add-host host.docker.internal=host-gateway`) are exactly where silent
 # regressions hide. This pins each function's argv per backend.
@@ -133,6 +134,10 @@ dispatch_expected() {
     exec_as_root)
       [[ "$backend" == apple ]] && s="container exec --uid 0 myproj whoami" || s="$bin exec -u 0 myproj whoami" ;;
     exec_stdin)       s="$bin exec -i myproj whoami" ;;
+    exec_stdin_as_root)
+      # Root + stdin: hosts-fragment staging runs as uid 0 over a pipe. apple
+      # takes -i --uid 0; docker-family takes -i -u 0.
+      [[ "$backend" == apple ]] && s="container exec -i --uid 0 myproj whoami" || s="$bin exec -i -u 0 myproj whoami" ;;
     exec_interactive) s="$bin exec -it --env K=V myproj whoami" ;;
     volume_copy)
       # Source mounted read-only; helper is dce-base:latest run as uid 0; the
@@ -169,6 +174,7 @@ call_func() {
     exec)             backend_exec myproj whoami ;;
     exec_as_root)     backend_exec_as_root myproj whoami ;;
     exec_stdin)       backend_exec_stdin myproj whoami ;;
+    exec_stdin_as_root) backend_exec_stdin_as_root myproj whoami ;;
     exec_interactive) backend_exec_interactive myproj --env K=V -- whoami ;;
     volume_copy)      backend_volume_copy volsrc voldst ;;
     *) fail "call_func: unknown func $1" ;;
@@ -177,7 +183,7 @@ call_func() {
 
 FUNCS=(build_image image_exists image_id list_images remove_image list_volumes remove_volume \
        list_running list_all exists is_running create start stop logs delete \
-       exec exec_as_root exec_stdin exec_interactive volume_copy)
+       exec exec_as_root exec_stdin exec_stdin_as_root exec_interactive volume_copy)
 
 # ---------------------------------------------------------------------------
 # Matrix: every backend x every dispatch function.

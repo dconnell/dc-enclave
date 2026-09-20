@@ -1443,6 +1443,24 @@ backend_exec_stdin() {
   esac
 }
 
+# Run a command in a container as root (uid 0) with stdin attached (no TTY).
+# Used to stream data into the container with root permissions, e.g. staging a
+# hosts fragment at /tmp before an /etc/hosts reconcile -- system files the dev
+# user cannot write directly.
+backend_exec_stdin_as_root() {
+  local name="$1"
+  shift
+
+  case "$(backend_name)" in
+    apple)
+      container exec -i --uid 0 "$name" "$@"
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" exec -i -u 0 "$name" "$@"
+      ;;
+  esac
+}
+
 # Open an interactive (TTY) session in a container as dev.
 #
 # Args before a literal "--" are passed as exec options (e.g. --env KEY=VAL);

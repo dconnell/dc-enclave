@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
 # scripts/shell.sh - `dce shell`: open an interactive shell (or run one command)
-# in a dev container. Starts the container if it isn't running, and injects the
+# in a dev container. Starts the container if it isn't running, injects the
 # project's git token into the shell environment as the provider's env var
-# (GITHUB_TOKEN / GITLAB_TOKEN) when set.
+# (GITHUB_TOKEN / GITLAB_TOKEN) when set, and reconciles the project's hosts
+# fragment into /etc/hosts.
 # =============================================================================
 set -euo pipefail
 
@@ -73,6 +74,11 @@ echo ""
 # `dce shell` into an already-running container also repairs auth -- not just
 # `dce start`. Idempotent; the PAT, if any, crosses via stdin inside the helper.
 dce_ensure_git_credentials "$PROJECT"
+
+# Reconcile the project's hosts fragment into /etc/hosts so entering an
+# already-running container also picks up host-side fragment edits (idempotent;
+# no-op without a fragment).
+dce_ensure_container_hosts "$PROJECT"
 
 # Seed the token into a short-lived file inside the container over stdin, so the
 # token value never appears in host process argv (readable via ps / /proc).

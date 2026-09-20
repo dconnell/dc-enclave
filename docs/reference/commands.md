@@ -33,6 +33,8 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce version` (`dce --version`, `dce -v`) | Print the DC Enclave version |
 | `dce help [command]` (`dce --help`, `dce -h`) | Show usage summary or detailed help for a specific command |
 
+> **Custom host entries:** the commands that create, start, or attach you to a container (`new`, `start`, `shell`, `editor`, plus `install`, `rebuild-container`, and `snapshot`) reconcile the project's hosts fragment (`~/.config/dce-enclave/<project>/hosts`) into the container's `/etc/hosts` first; `dce exec` does not. (`rebuild-container` reconciles alongside credential injection, so a bare `--from-snap` restore skips it.) See [custom host entries](../how-to/custom-host-entries.md).
+
 > **`shell` vs `exec`:** `dce shell` is for working *inside* the container — it auto-starts the container, injects the project's git token (as the provider env var `GITHUB_TOKEN` / `GITLAB_TOKEN`), and runs commands through `zsh -ic` (so aliases and interactive config load). `dce exec` is a raw, docker-exec-style escape hatch for host-driven one-shots: no token, no zsh wrapping, args passed verbatim, and the container must already be running. The common pitfall is reaching for `exec` when a command needs the token, or `shell` when you want raw/piped output — see `dce help shell` and `dce help exec`.
 
 `<scope>` values in `dce new` are overlay scopes that match `Containerfile.<scope>` files in your overlay directories. Scope is optional — `dce new <name>` creates a base-only project. The `all` scope is always auto-layered when `Containerfile.all` exists.

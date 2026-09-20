@@ -20,6 +20,7 @@ dce doctor myapp        # one project + its backend
 | `devcontainer.json` not updated after a `dce new`/`rebuild` | [`devcontainer.json` or `settings.json` not overwritten](#devcontainerjson-or-settingsjson-not-overwritten) |
 | Port or memory change didn't take effect | [Changed ports or resource limits](#changed-ports-or-resource-limits) |
 | `git pull` / SSH fails inside the container | [SSH auth issues](#ssh-auth-issues) |
+| A name resolves on the host but not inside the container | [Hostname doesn't resolve inside my container](#hostname-doesnt-resolve-inside-my-container) |
 | Podman won't start on macOS | [Podman on macOS not starting](#podman-on-macos-not-starting) |
 
 ## Bash version too old
@@ -56,6 +57,22 @@ apple/container's auto-configured resolver (the vmnet gateway) does not forward 
 - verify: `dce exec <name> getent hosts google.com`
 
 If the container has **no network at all** (can't even ping `8.8.8.8`), a host VPN is likely conflicting with apple/container's vmnet NAT. This is an apple/container networking limitation, not a dce bug — disconnect the VPN, or investigate a user-defined network (`container create --network <name>[,mac=…][,mtu=…]`).
+
+## Hostname doesn't resolve inside my container
+
+You aliased a name in your **host** `/etc/hosts` (a corporate registry, an internal service) and it works on the host, but `getent hosts` / `curl` inside the container cannot see it.
+
+**Cause:** `/etc/hosts` is per-machine. Container runtimes regenerate the container's `/etc/hosts` at every start from their own state, so host-only aliases are not part of it. (OrbStack follows the macOS resolver and usually picks host aliases up; the other backends don't.)
+
+**Fix:** put the entry in the project's hosts fragment, `~/.config/dce-enclave/<name>/hosts` (`dce new` scaffolds a template). dce reconciles it into the container at the next entry point — `dce start`, `dce shell`, `dce editor`, … — and leaves the rest of `/etc/hosts` alone. See [custom host entries](how-to/custom-host-entries.md), then verify:
+
+```
+dce exec <name> getent hosts internal.corp
+```
+
+If the name resolves but many internal hostnames are missing, per-host entries stop scaling — point the container at your corporate resolvers instead with `DCE_DNS` (create time only): `DCE_DNS=<ip1,ip2> dce rebuild-container <name>`.
+
+External names (`google.com`) failing on apple/container is a different problem — see [apple/container: no DNS](#applecontainer-no-dns--no-network-inside-the-container) above.
 
 ## Forcing a specific backend
 
