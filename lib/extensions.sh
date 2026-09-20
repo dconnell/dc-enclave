@@ -302,6 +302,63 @@ dce_ext_minus() {
 }
 
 # -----------------------------------------------------------------------------
+# First-open watcher helpers (plans/extensions-first-open-convergence.md).
+# Host-pure path/lock helpers shared by scripts/editor.sh (spawn site) and
+# scripts/_editor-ext-watch.sh, so the two can never drift on paths or on the
+# stale-lock semantics that make the mkdir single-flight safe.
+# -----------------------------------------------------------------------------
+
+# Log file for a project's detached extension watcher. Under ${TMPDIR:-/tmp}:
+# watch logs are transient diagnostics (truncated per run, never tokens/PII),
+# so they deliberately stay out of the persistent ~/.config/dce-enclave tree
+# and vanish with the platform's temp cleaning. Fails closed (return 1, no
+# output) when the project name contains '/' -- the only real path-escape
+# character -- so a name can never point the log outside TMPDIR (names are
+# otherwise charset-constrained by dce's config-existence gate).
+_dce_ext_watch_log_path() {
+  local project="$1"
+  [[ "$project" != */* ]] || return 1
+  printf '%s/dce-ext-watch.%s.log\n' "${TMPDIR:-/tmp}" "$project"
+}
+
+# Single-flight lock directory for a project's detached extension watcher. A
+# directory (not a file) is the atomic primitive: concurrent mkdir is resolved
+# by the kernel, so exactly one watcher wins a race -- and flock(1) cannot
+# provide that guarantee portably (absent on macOS). Fails closed (return 1,
+# no output) on a '/'-bearing project name, mirroring the log-path helper.
+_dce_ext_watch_lock_dir() {
+  local project="$1"
+  [[ "$project" != */* ]] || return 1
+  printf '%s/dce-ext-watch.%s.lock\n' "${TMPDIR:-/tmp}" "$project"
+}
+
+# Freshness predicate for a watcher lock dir: return 0 (STALE -- takeover is
+# safe) when the dir is missing, its deadline file is missing/unreadable/
+# non-numeric, or the deadline has passed; return 1 (FRESH -- assume an active
+# watcher holds it) only while the deadline is in the future. Deadline-based
+# rather than PID-based because a SIGKILLed watcher (or a host crash) never
+# runs its cleanup trap; the deadline (spawn time + timeout + 2*interval)
+# bounds how long such an orphan can block a replacement.
+_dce_ext_watch_lock_stale() {
+  local lockdir="$1"
+  [[ -d "$lockdir" ]] || return 0
+  local deadline=""
+  deadline="$(cat "$lockdir/deadline" 2>/dev/null)" || return 0
+  # Only a plain decimal integer epoch is meaningful; anything else is treated
+  # as corrupt -> stale -> takeover (fail open, matching the watcher's
+  # best-effort posture -- a garbage lock must never wedge convergence).
+  case "$deadline" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  local now=""
+  now="$(date +%s)"
+  if (( deadline > now )); then
+    return 1
+  fi
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Dispatch helpers (require a backend). The caller (a scripts/*.sh) must source
 # lib/container-backend.sh before invoking these. v1 implements vscode only.
 # -----------------------------------------------------------------------------
@@ -530,11 +587,14 @@ dce_ext_enforce_declared() {
 
   # First-ever open guard: code-server is injected by VS Code on attach, so it is
   # absent until the container has been opened once. Without it, install cannot
-  # run; skip and let the next `dce editor` enforce after the server lands.
+  # run. Unreachable from `dce editor` (it now gates on the server probe itself
+  # and hands first-open convergence to the detached watcher); kept as a safety
+  # net for other callers, pointing at that background convergence instead of
+  # the old manual re-open/re-run advice.
   local bin=""
   if ! bin="$(_dce_ext_vscode_container_bin "$project" 2>/dev/null)"; then
     echo "  editor extensions: skipped in-container install (VS Code Server not yet injected;"
-    echo "                     re-open once in VS Code, then re-run 'dce editor $project')."
+    echo "                     convergence runs in the background once the server is injected)."
     return 0
   fi
   [[ -z "$bin" ]] && return 0
