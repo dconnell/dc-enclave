@@ -19,7 +19,9 @@ declare -gr _DC_COMMON_HIDDEN_VOLUMES_SH_LOADED=1
 # Validate one hidden path. Hidden paths are mounted as named volumes under
 # /workspace and embedded in backend mount flags, so they must be relative,
 # traversal-free, contain no whitespace or ':' (which would break flag parsing),
-# and use only filename-safe characters.
+# and use only filename-safe characters. The dce-managed cache path (.cache and
+# anything under it) is RESERVED: /workspace/.cache is always a managed volume,
+# so a user hidden path there would double-mount the same target.
 dce_validate_hidden_path() {
   local path="$1"
 
@@ -36,6 +38,8 @@ dce_validate_hidden_path() {
   if [[ "$path" =~ (^|/)\.\.?($|/) ]]; then
     return 1
   fi
+
+  [[ "$path" == ".cache" || "$path" == ".cache/"* ]] && return 1
 
   [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]]
 }
@@ -79,6 +83,10 @@ dce_normalize_hidden_paths_csv() {
     done
 
     if ! dce_validate_hidden_path "$path"; then
+      if [[ "$path" == ".cache" || "$path" == ".cache/"* ]]; then
+        printf 'ERROR: Hidden path %s is reserved: /workspace/.cache is a dce-managed volume.\n' "$path" >&2
+        return 1
+      fi
       printf 'ERROR: Invalid hidden path: %s\n' "$path" >&2
       printf '  Rules: relative path under /workspace; no whitespace, no :, no traversal (., ..)\n' >&2
       return 1

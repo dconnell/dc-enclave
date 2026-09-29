@@ -94,6 +94,9 @@ case "$SUBCOMMAND" in
   network|net)
     exec "$SCRIPT_DIR/network.sh" "$@"
     ;;
+  repo)
+    exec "$SCRIPT_DIR/repo.sh" "$@"
+    ;;
   install)
     exec "$SCRIPT_DIR/install-dotfiles.sh" "$@"
     ;;

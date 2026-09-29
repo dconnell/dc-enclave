@@ -22,5 +22,4 @@ dce rebuild-image base
 dce rebuild-container <name>
 ```
 
-On Docker-compatible backends, `dce new` also writes the detected `TZ` into the generated `.devcontainer/devcontainer.json` (`containerEnv`), so if a spec-compliant client rebuilds from that file it lands on the same timezone as the `dce`-created container.
-
+On Docker-compatible backends, `dce new` also writes the detected `TZ` into the managed `~/.config/dce-enclave/<project>/devcontainer.json` (`containerEnv`), so if a spec-compliant client rebuilds from that file it lands on the same timezone as the `dce`-created container.

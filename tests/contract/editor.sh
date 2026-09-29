@@ -349,9 +349,11 @@ make_project() {
   chmod 700 "$cfg_dir"
   cat > "$cfg_dir/config" <<CFG
 CONTAINER_PROJECT="$project"
+CONFIG_SCHEMA_VERSION="2"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-base:latest"
-REPOS_DIR="$repos"
+REPO_NAMES=("$project")
+REPO_PATHS=("$repos")
 SECRET_DIR="$cfg_dir"
 PORTS=()
 CONTAINER_HIDDEN_PATHS=()
@@ -389,10 +391,12 @@ make_project_token() {
   chmod 700 "$cfg_dir"
   cat > "$cfg_dir/config" <<CFG
 CONTAINER_PROJECT="$project"
+CONFIG_SCHEMA_VERSION="2"
 CONTAINER_BACKEND="docker"
 CONTAINER_GIT_HOST="$provider"
 CONTAINER_IMAGE="dce-base:latest"
-REPOS_DIR="$repos"
+REPO_NAMES=("$project")
+REPO_PATHS=("$repos")
 SECRET_DIR="$cfg_dir"
 SSH_KEY_PATH="$cfg_dir/ssh_key"
 TOKEN_FILE="$token_file"

@@ -419,16 +419,18 @@ make_project() {  # <name> <backend> <image> [token-content]
   local cfg="$pdir/config"
   cat > "$cfg" <<EOF
 CONTAINER_PROJECT="$name"
+CONFIG_SCHEMA_VERSION="2"
 CONTAINER_OVERLAY_SCOPES=""
 CONTAINER_IMAGE="$image"
 CONTAINER_BACKEND="$backend"
 CONTAINER_CPUS=""
 CONTAINER_MEMORY=""
-REPOS_DIR="$WORK/repos/$name"
 SECRET_DIR="$pdir"
 SSH_KEY_PATH="$pdir/ssh_key"
 TOKEN_FILE="$pdir/github-token"
 NPMRC_PATH="$pdir/.npmrc"
+REPO_NAMES=($name)
+REPO_PATHS=("$WORK/repos/$name")
 PORTS=()
 CONTAINER_HIDDEN_PATHS=()
 CONTAINER_NETWORKS=()
@@ -497,12 +499,13 @@ DC_TEAM_DIR="$TEAM_DIR"
 DC_USER_DIR="$USER_DIR"
 allo_img="$(dce_image_ref_from_scopes "$TEAM_DIR/overlays" "$USER_DIR/overlays" "")"
 make_project alloverlay docker "$allo_img" "ghp_realtoken"
-allo_repos="$WORK/repos/alloverlay"
-mkdir -p "$allo_repos/.devcontainer"
+allo_dc="$DC_ROOT/alloverlay/devcontainer.json"
+mkdir -p "$DC_ROOT/alloverlay"
 allo_bf="$(dce_devcontainer_build_file "$ROOT_DIR" \
   "$(dce_effective_scopes_csv "$TEAM_DIR/overlays" "$USER_DIR/overlays" "")")"
 dce_devcontainer_render "alloverlay" "$allo_bf" "$ROOT_DIR" "$DC_ROOT/alloverlay" \
-  "" "" "" "" "ssh" > "$allo_repos/.devcontainer/devcontainer.json"
+  "" "" "" "" "ssh" "" "" "$(printf 'alloverlay\t%s' "$WORK/repos/alloverlay")" \
+  > "$allo_dc"
 DC_STUB_CONTAINERS="" run_doctor alloverlay; out="$RUN_OUT"
 [[ "$out" != *"managed fields drifted"* ]] \
   || fail "all-overlay project falsely reported devcontainer drift:
@@ -566,21 +569,33 @@ pass "doctor: ssh/none auth -> drift check skipped"
 # ---------------------------------------------------------------------------
 # Declaration drift = manifest set vs recorded customizations.vscode.extensions
 # (FAIL -> sync-vscode). Runtime drift = installed vs declared (informational).
-# Both need a devcontainer.json + adopted manifests; otherwise skipped.
+# Both need the managed devcontainer.json + adopted manifests; otherwise skipped.
 make_project extdoc docker dce-base:latest "ghp_realtoken"
-# Adopt: a user all.txt manifest exists. Seed a devcontainer.json IN SYNC.
+# Adopt: a user all.txt manifest exists. Seed a MANAGED devcontainer.json IN
+# SYNC (repo bind + managed /workspace/.cache volume; no localWorkspaceFolder
+# mount -- the v2 mount shape doctor's drift comparator expects).
 mkdir -p "$USER_DIR/extensions/vscode"
 printf 'a.b\n' > "$USER_DIR/extensions/vscode/all.txt"
-mkdir -p "$WORK/repos/extdoc/.devcontainer"
-cat > "$WORK/repos/extdoc/.devcontainer/devcontainer.json" <<EOF
+EXTDOC_DC="$DC_ROOT/extdoc/devcontainer.json"
+mkdir -p "$DC_ROOT/extdoc"
+write_extdoc_dc() {  # <extensions-json-array>
+  local extarr="$1"
+  cat > "$EXTDOC_DC" <<EOF
 {
   "build": { "dockerfile": "$ROOT_DIR/Containerfiles/Containerfile.base" },
   "workspaceFolder": "/workspace",
   "remoteUser": "dev",
   "postCreateCommand": "true",
-  "customizations": { "vscode": { "extensions": ["a.b"] } }
+  "mounts": [
+    "source=$WORK/repos/extdoc,target=/workspace/extdoc,type=bind",
+    "source=$(dce_cache_volume_name extdoc),target=/workspace/.cache,type=volume"
+  ],
+  "customizations": { "vscode": { "extensions": $extarr } }
 }
 EOF
+}
+write_extdoc_dc '["a.b"]'
+rm -rf "$WORK/repos/extdoc/.devcontainer"
 # Runtime match: container installs exactly a.b.
 DC_STUB_CONTAINERS="extdoc" DC_STUB_CONTAINER_EXT=$'a.b\n' run_doctor extdoc; out="$RUN_OUT"
 printf '%s' "$out" | grep -Fq "devcontainer.json in sync" \
@@ -594,15 +609,7 @@ $out"
 pass "doctor: extensions in sync -> ok (declaration + runtime)"
 
 # Declaration drift: recorded array differs from the manifest set.
-cat > "$WORK/repos/extdoc/.devcontainer/devcontainer.json" <<EOF
-{
-  "build": { "dockerfile": "$ROOT_DIR/Containerfiles/Containerfile.base" },
-  "workspaceFolder": "/workspace",
-  "remoteUser": "dev",
-  "postCreateCommand": "true",
-  "customizations": { "vscode": { "extensions": ["stale.id"] } }
-}
-EOF
+write_extdoc_dc '["stale.id"]' 
 DC_STUB_CONTAINERS="extdoc" DC_STUB_CONTAINER_EXT=$'a.b\n' run_doctor extdoc; out="$RUN_OUT"
 printf '%s' "$out" | grep -Fq "devcontainer.json in sync" \
   || fail "ext decl-drift: missing check line
@@ -615,15 +622,7 @@ pass "doctor: extension declaration drift -> fail + sync-vscode fix"
 
 # Declaration drift must still be checked when the container is STOPPED: this is
 # static config drift (manifest vs devcontainer.json), not runtime state.
-cat > "$WORK/repos/extdoc/.devcontainer/devcontainer.json" <<EOF
-{
-  "build": { "dockerfile": "$ROOT_DIR/Containerfiles/Containerfile.base" },
-  "workspaceFolder": "/workspace",
-  "remoteUser": "dev",
-  "postCreateCommand": "true",
-  "customizations": { "vscode": { "extensions": ["stale.stopped"] } }
-}
-EOF
+write_extdoc_dc '["stale.stopped"]' 
 DC_STUB_CONTAINERS="" run_doctor extdoc; out="$RUN_OUT"
 printf '%s' "$out" | grep -Fq "sync-vscode extdoc" \
   || fail "ext decl-drift stopped: missing sync-vscode fix\n$out"
@@ -635,15 +634,7 @@ pass "doctor: declaration drift still fails when container is stopped"
 # and thus never reached the stub subprocess; shellcheck flagged it as unused).
 
 # Runtime drift: installed set has an undeclared extension (informational, not fail).
-cat > "$WORK/repos/extdoc/.devcontainer/devcontainer.json" <<EOF
-{
-  "build": { "dockerfile": "$ROOT_DIR/Containerfiles/Containerfile.base" },
-  "workspaceFolder": "/workspace",
-  "remoteUser": "dev",
-  "postCreateCommand": "true",
-  "customizations": { "vscode": { "extensions": ["a.b"] } }
-}
-EOF
+write_extdoc_dc '["a.b"]'
 DC_STUB_CONTAINERS="extdoc" DC_STUB_CONTAINER_EXT=$'a.b\nextra.installed\n' run_doctor extdoc; out="$RUN_OUT"
 printf '%s' "$out" | grep -Fqi 'runtime drift' \
   || fail "ext runtime-drift: missing info line

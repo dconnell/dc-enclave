@@ -99,6 +99,7 @@ run_check "dce help clean" "$DC_BIN" help clean
 run_check "dce help config" "$DC_BIN" help config
 run_check "dce help doctor" "$DC_BIN" help doctor
 run_check "dce help network" "$DC_BIN" help network
+run_check "dce help repo" "$DC_BIN" help repo
 run_check "dce help install" "$DC_BIN" help install
 run_check "dce help help" "$DC_BIN" help help
 

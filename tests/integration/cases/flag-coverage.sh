@@ -42,6 +42,7 @@ declare -A allow=(
   [--save-user]="deferred to phase 2 (DCE_CONFIG_ROOT isolation)"
   [--editor]="covered in tests/contract/editor.sh (contract tier)"
   [--inject-creds]="covered in tests/contract/ rebuild cases (contract tier)"
+  [--dns]="documented only as the DCE_DNS environment variable, not a dce CLI flag"
 )
 
 # Every long-flag token referenced by the matrix OR a case file (code+comments).

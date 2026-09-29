@@ -5,12 +5,13 @@
 # Default (full teardown) removes, for the named project:
 #   - the container (stopped first if running)
 #   - every managed hidden volume (dce-hide-<project>-<hash>)
+#   - the managed persistent cache volume (/workspace/.cache)
 #   - the per-project config + secrets dir (~/.config/dce-enclave/<name>)
 # Escape hatches: --keep-config preserves config+secrets; --keep-volumes
-# preserves hidden volumes. --yes/-y skips the confirmation prompt.
+# preserves hidden volumes + the cache volume. --yes/-y skips confirmation.
 #
 # Safety:
-#   - The host code directory ($REPOS_DIR) is NEVER touched by this command.
+#   - The host repo directories (REPO_PATHS) are NEVER touched by this command.
 #   - The project name is validated and the secrets dir's real path is checked
 #     to be under the DC Enclave config root before any rm -rf, so a
 #     symlinked project dir cannot redirect deletion elsewhere.
@@ -87,7 +88,7 @@ SECRET_DIR="$HOME/.config/dce-enclave/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 HIDDEN_PATHS=()
-REPOS_DIR_VAL=""
+REPO_PATH_LIST=()
 BACKEND_OK=false
 ACTIVE_BACKEND=""
 
@@ -97,7 +98,10 @@ if [[ -f "$CONFIG" ]]; then
     CONTAINER_HIDDEN_PATHS=()
   fi
   HIDDEN_PATHS=("${CONTAINER_HIDDEN_PATHS[@]}")
-  REPOS_DIR_VAL="${REPOS_DIR:-}"
+  while IFS= read -r _rm_repo_line; do
+    [[ -z "$_rm_repo_line" ]] && continue
+    REPO_PATH_LIST+=("${_rm_repo_line#*$'\t'}")
+  done < <(dce_repo_entries_lines)
   if backend_use "${CONTAINER_BACKEND:-}" >/dev/null 2>&1; then
     BACKEND_OK=true
     ACTIVE_BACKEND="$(backend_name)"
@@ -147,8 +151,20 @@ if [[ ${#HIDDEN_PATHS[@]} -gt 0 ]]; then
     echo "                 -> volumes REMOVED"
   fi
 fi
+if ! $KEEP_VOLUMES; then
+  echo "  Cache volume:   /workspace/.cache -> REMOVED"
+else
+  echo "  Cache volume:   /workspace/.cache -> PRESERVED (--keep-volumes)"
+fi
 echo "  Snapshots:      $SNAP_DISP"
-echo "  Host code dir:  ${REPOS_DIR_VAL:-(unknown)}  (NEVER touched by dce rm)"
+if [[ ${#REPO_PATH_LIST[@]} -gt 0 ]]; then
+  echo "  Host repos:     (NEVER touched by dce rm)"
+  for _rp in "${REPO_PATH_LIST[@]}"; do
+    echo "    $_rp"
+  done
+else
+  echo "  Host repos:     (unknown; NEVER touched by dce rm)"
+fi
 echo ""
 echo "This will remove the container, hidden volumes, snapshot artifacts, and config+secrets for '$PROJECT'"
 echo "(each step honors its --keep-* flag as shown above)."
@@ -180,15 +196,17 @@ if $BACKEND_OK; then
     echo "==> Container already absent"
   fi
 
-  if [[ ${#HIDDEN_PATHS[@]} -gt 0 ]] && ! $KEEP_VOLUMES; then
-    echo "==> Removing hidden volumes..."
-    for hidden_path in "${HIDDEN_PATHS[@]}"; do
-      [[ -z "$hidden_path" ]] && continue
-      hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
+  if ! $KEEP_VOLUMES; then
+    # Remove user hidden volumes AND the managed /workspace/.cache volume.
+    echo "==> Removing managed volumes..."
+    mapfile -t rm_volume_paths < <(dce_managed_volume_paths "${HIDDEN_PATHS[@]}")
+    for volume_path in "${rm_volume_paths[@]}"; do
+      [[ -z "$volume_path" ]] && continue
+      hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$volume_path")"
       if backend_remove_volume "$hidden_volume" 2>/dev/null; then
-        echo "  ✓ Removed: $hidden_volume ($hidden_path)"
+        echo "  ✓ Removed: $hidden_volume ($volume_path)"
       else
-        echo "  - Already gone or in use: $hidden_volume ($hidden_path)"
+        echo "  - Already gone or in use: $hidden_volume ($volume_path)"
       fi
     done
   fi
@@ -249,7 +267,10 @@ echo ""
 echo "======================================================================"
 echo "Removal complete: $PROJECT"
 echo "======================================================================"
-if [[ -n "$REPOS_DIR_VAL" ]]; then
-  echo "Host code preserved at: $REPOS_DIR_VAL"
-  echo "Remove it manually if no longer needed:  rm -rf \"$REPOS_DIR_VAL\""
+if [[ ${#REPO_PATH_LIST[@]} -gt 0 ]]; then
+  echo "Host repos preserved (never touched):"
+  for _rp in "${REPO_PATH_LIST[@]}"; do
+    echo "  $_rp"
+  done
+  echo "Remove them manually only if no longer needed."
 fi

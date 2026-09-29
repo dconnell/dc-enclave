@@ -51,7 +51,7 @@ docker/orbstack/colima/podman backends:
 >
 > When you need a fresh filesystem, run **`dce rebuild-container`**, not VS Code's *Rebuild Container*: only the dce path re-injects your SSH deploy key, GitHub PAT git auth, and `.npmrc` (see [rebuild and recover](../how-to/rebuild-and-recover.md)).
 
-- `dce new` generates `${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json`
+- `dce new` generates `~/.config/dce-enclave/<project>/devcontainer.json`
 - For multi-scope and/or overlay projects, it points to a generated composed Containerfile
 - Existing `devcontainer.json` is not overwritten
 - `dce new` / `dce rebuild-container` detect drift in managed fields
@@ -89,8 +89,7 @@ apple backend:
 >
 > **VPN caveat.** When a host VPN is active, apple/container's vmnet NAT may not route through the VPN interface, leaving the container with no network at all (not just no DNS). This is an apple/container networking limitation; dce cannot reconfigure host routing. Disconnect the VPN, or investigate a user-defined network (`container create --network <name>[,mac=…][,mtu=…]`) that routes differently.
 
-- `dce new` generates `${DC_REPOS_DIR:-$HOME/repos}/<project>/.devcontainer/devcontainer.json` (the same Dev Containers config as the Docker backends) plus the VS Code attached-container **named** config (`workspaceFolder=/workspace`)
-- `dce new` also seeds a `.vscode/settings.json` terminal profile that routes VS Code terminals through `dce shell` (an alternative workflow for when you open the host folder instead of attaching)
+- `dce new` generates `~/.config/dce-enclave/<project>/devcontainer.json` (the same Dev Containers config as the Docker backends) plus the VS Code attached-container **named** config (`workspaceFolder=/workspace`)
 - `dce editor <name>` launches VS Code attached to the apple container at `/workspace` via the experimental `apple-container` URI; enable `dev.containers.experimentalAppleContainerSupport` in VS Code first or the attach will not resolve
 - Existing files are not overwritten; `dce config sync-vscode <name>` rewrites managed fields on demand
 

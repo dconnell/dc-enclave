@@ -33,8 +33,8 @@ dce rebuild-container myapp-monorepo --yes
 
 For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. When the project has hidden paths configured, combining `--rotate-keys` with `--keep-hidden-volumes` triggers a warning (key rotation implies incident response, where preserving volumes may be unsafe).
 
-On Docker-compatible backends, rebuild preserves any existing
-`.devcontainer/devcontainer.json` (never overwritten). If managed fields in that
+On Docker-compatible backends, rebuild preserves any existing managed
+`~/.config/dce-enclave/<name>/devcontainer.json` (never overwritten). If managed fields in that
 file drift from current config (scopes/hide/networks/ports), rebuild prints a
 non-fatal notice; reconcile on demand with:
 
@@ -150,9 +150,10 @@ dce rm myapp --keep-volumes        # remove container + config/secrets, keep vol
 
 Safety notes:
 
-- **Your host code is never touched.** The repo directory at `${DC_REPOS_DIR:-$HOME/repos}/<name>` (including the generated `.devcontainer/devcontainer.json`) is preserved. Remove it manually if it is no longer needed:
+- **Your host code is never touched.** The repo directories listed in the project's `REPO_PATHS` are preserved. Remove them manually if they are no longer needed.
   ```
-  rm -rf "${DC_REPOS_DIR:-$HOME/repos}/myapp"
+  dce repo list myapp     # see the host paths dce manages for the project
+  rm -rf ~/repos/myapp    # single-repo example; multi-repo projects may list paths elsewhere
   ```
 - `dce rm` is destructive and prompts for confirmation (type `yes`) unless `--yes`/`-y` is given.
 - The project name is validated and the secrets directory's real path is checked to reside under the DC Enclave config root, so a symlinked project directory cannot redirect deletion elsewhere.

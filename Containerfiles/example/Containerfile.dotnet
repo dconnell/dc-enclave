@@ -23,12 +23,11 @@ ENV DOTNET_GENERATE_ASPNET_CERTIFICATE=0
 # dotnet global tools live here.
 ENV PATH="/home/dev/.dotnet/tools:$PATH"
 
-# Redirect the NuGet global packages cache under /workspace so `dce --hide` (which
-# is /workspace-relative) can cover it. This is the node_modules-equivalent for
-# .NET: large, shareable, and worth keeping off the host bind mount. Operators
-# then hide:
-#   dce new <project> dotnet --hide .nuget [ports...]
-ENV NUGET_PACKAGES="/workspace/.nuget/packages"
+# Redirect the NuGet global packages cache into the managed project cache volume
+# under /workspace/.cache so it persists across rebuilds without touching host
+# repos. This is the node_modules-equivalent for .NET: large, shareable, and
+# worth keeping off the host bind mounts.
+ENV NUGET_PACKAGES="/workspace/.cache/nuget/packages"
 
 # Verify
 RUN dotnet --version
@@ -39,7 +38,7 @@ WORKDIR /workspace
 # dependency-sync hook (chained by the composed image's single ENTRYPOINT; see
 # scripts/compose-containerfile.sh). To use it:
 #
-#   dce new <project> dotnet --hide .nuget [ports...]
+#   dce new <project> dotnet [ports...]
 #
 # The sync hook:
 # - skips install when no project/solution file is found,
@@ -57,9 +56,8 @@ RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dce-dotnet-entry
 #!/bin/sh
 set -eu
 
-APP_DIR="${APP_DIR:-/workspace}"
 STRICT="${DC_DOTNET_INSTALL_STRICT:-0}"
-NUGET_CACHE="${NUGET_PACKAGES:-/workspace/.nuget/packages}"
+NUGET_CACHE="${NUGET_PACKAGES:-/workspace/.cache/nuget/packages}"
 HASH_FILE="$NUGET_CACHE/.dce-install-hash"
 
 log() { printf '%s\n' "[dotnet-hide] $*"; }
@@ -68,9 +66,10 @@ log() { printf '%s\n' "[dotnet-hide] $*"; }
 # regardless of WHY it is empty (hidden volume or a fresh volume).
 _dir_empty() { [ -z "$(ls -A "$1" 2>/dev/null)" ]; }
 
-# Any .NET project/solution manifest within a shallow tree.
+# Any .NET project/solution manifest within a shallow tree of a root
+# (defaults: the resolved APP_DIR at the hook's usual depth).
 has_project() {
-  find "$APP_DIR" -maxdepth 3 \( \
+  find "${1:-$APP_DIR}" -maxdepth "${2:-3}" \( \
       -name '*.sln' -o -name '*.csproj' -o -name '*.fsproj' \
       -o -name '*.vbproj' -o -name 'packages.config' \) -print 2>/dev/null \
     | grep -q .
@@ -91,6 +90,26 @@ compute_hash() {
       -exec sha256sum {} + 2>/dev/null | sort
   } | sha256sum | cut -d' ' -f1
 }
+
+# Resolve APP_DIR: explicit APP_DIR env wins; else /workspace when a
+# project/solution sits directly there (custom layouts); else the first
+# /workspace/<repo> whose tree has one (repos bind at /workspace/<repo-name>,
+# never /workspace).
+APP_DIR="${APP_DIR:-}"
+if [ -z "$APP_DIR" ]; then
+  if has_project /workspace 1; then
+    APP_DIR="/workspace"
+  else
+    for d in /workspace/*/; do
+      if has_project "$d" 3; then
+        APP_DIR="${d%/}"
+        break
+      fi
+    done
+  fi
+fi
+: "${APP_DIR:=/workspace}"
+log "app dir: $APP_DIR"
 
 if ! has_project; then
   log "no .NET project/solution at $APP_DIR; skipping dependency sync"

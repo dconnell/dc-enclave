@@ -45,7 +45,8 @@ mode_is() {
   [[ -n "$(find "$file" -maxdepth 0 -perm "$want" -print 2>/dev/null)" ]]
 }
 
-# Write a loadable project config at the canonical path (mode 600 / dir 700).
+# Write a loadable schema-v2 project config at the canonical path
+# (mode 600 / dir 700).
 write_project_config() {
   local project="$1"
   local dir="$FAKE_HOME/.config/dce-enclave/$project"
@@ -59,6 +60,9 @@ write_project_config() {
     echo 'CONTAINER_CPUS=""'
     echo 'CONTAINER_MEMORY=""'
     echo 'CONTAINER_OVERLAY_SCOPES=""'
+    echo 'CONFIG_SCHEMA_VERSION="2"'
+    echo "REPO_NAMES=(\"$project\")"
+    echo "REPO_PATHS=(\"$FAKE_HOME/repos/$project\")"
     echo 'PORTS=()'
     echo 'CONTAINER_HIDDEN_PATHS=()'
     echo 'CONTAINER_NETWORKS=()'
@@ -176,10 +180,16 @@ pass "set/get ports array + validation + clear"
 # set: array hide + networks (name and name:ip)
 # ============================================================================
 write_project_config netproj
-dce_config set netproj 'hide=node_modules,.cache' >/dev/null || fail "set hide exited non-zero"
+# Single-repo shorthand: unprefixed hide paths are persisted repo-prefixed, and
+# the managed .cache path is rejected (it is a dce-owned volume target).
+dce_config set netproj 'hide=node_modules,apps/web/dist' >/dev/null || fail "set hide exited non-zero"
 mapfile -t got < <(dce_config get netproj hide)
-[[ "${got[0]:-}" == "node_modules" && "${got[1]:-}" == ".cache" ]] \
+[[ "${got[0]:-}" == "netproj/node_modules" && "${got[1]:-}" == "netproj/apps/web/dist" ]] \
   || fail "hide array wrong (got ${got[*]:-})"
+
+if dce_config set netproj 'hide=.cache' >/dev/null 2>&1; then
+  fail "hide=.cache must be rejected (managed volume path)"
+fi
 
 dce_config set netproj 'networks=appnet,dbnet:10.0.0.5' >/dev/null \
   || fail "set networks exited non-zero"

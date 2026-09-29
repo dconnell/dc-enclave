@@ -91,6 +91,9 @@ CONTAINER_PROJECT="fresh"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-img-fresh:latest"
 CONTAINER_OVERLAY_SCOPES="nodejs"
+CONFIG_SCHEMA_VERSION="2"
+REPO_NAMES=(fresh)
+REPO_PATHS=("/tmp/repos/fresh")
 CFG
 chmod 700 "$DC_ROOT/fresh"
 chmod 600 "$DC_ROOT/fresh/config"
@@ -106,6 +109,9 @@ CONTAINER_PROJECT="stale"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-img-stale:latest"
 CONTAINER_OVERLAY_SCOPES="nodejs"
+CONFIG_SCHEMA_VERSION="2"
+REPO_NAMES=(stale)
+REPO_PATHS=("/tmp/repos/stale")
 CFG
 chmod 700 "$DC_ROOT/stale"
 chmod 600 "$DC_ROOT/stale/config"
@@ -120,6 +126,9 @@ CONTAINER_PROJECT="missing"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-img-miss:latest"
 CONTAINER_OVERLAY_SCOPES="nodejs"
+CONFIG_SCHEMA_VERSION="2"
+REPO_NAMES=(missing)
+REPO_PATHS=("/tmp/repos/missing")
 CFG
 chmod 700 "$DC_ROOT/missing"
 chmod 600 "$DC_ROOT/missing/config"
@@ -132,6 +141,9 @@ CONTAINER_PROJECT="unknown"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-img-unk:latest"
 CONTAINER_OVERLAY_SCOPES="nodejs"
+CONFIG_SCHEMA_VERSION="2"
+REPO_NAMES=(unknown)
+REPO_PATHS=("/tmp/repos/unknown")
 CFG
 chmod 700 "$DC_ROOT/unknown"
 chmod 600 "$DC_ROOT/unknown/config"

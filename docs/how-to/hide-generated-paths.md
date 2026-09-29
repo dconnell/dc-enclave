@@ -1,6 +1,6 @@
 # Hide generated paths from the host
 
-By default, the entire workspace is a bind mount: everything under `/workspace` inside the container is a live view of the host repos directory. That works well for source code, but generated paths such as `node_modules`, build caches, and compiled output don't belong on the host. They can contain thousands of files, platform-specific binaries, and large caches that are meaningless or even harmful on the host filesystem.
+By default, `/workspace` is the project root assembled from one read-write bind mount per repo at `/workspace/<repo-name>` plus the managed `/workspace/.cache` cache volume — each repo inside the container is a live view of its host repo directory. That works well for source code, but generated paths such as `node_modules`, build caches, and compiled output don't belong on the host. They can contain thousands of files, platform-specific binaries, and large caches that are meaningless or even harmful on the host filesystem.
 
 The `--hide` flag solves this by mounting a named container volume over a `/workspace`-relative path so its contents live inside the container's volume store instead of on the host.
 
@@ -19,11 +19,19 @@ The `--hide` flag solves this by mounting a named container volume over a `/work
 ```
 dce new myapp nodejs --hide node_modules 3000:3000
 dce new monorepo nodejs,golang \
-  --hide node_modules \
-  --hide apps/web/node_modules,apps/api/node_modules \
-  --hide .cache/go/mod,.cache/go/build \
+  --repo ~/repos/monorepo/web \
+  --repo api=~/repos/monorepo/api \
+  --hide web/node_modules,api/node_modules \
   3000:3000 8080:8080
 ```
+
+### Repo-prefixed paths
+
+Hidden paths are `/workspace`-relative and persisted repo-prefixed, because each repo binds at `/workspace/<repo-name>`:
+
+- **Single-repo projects** — an unprefixed path is auto-prefixed with the repo name: `--hide node_modules` persists as `<repo>/node_modules`.
+- **Multi-repo projects** — values must name the repo (`web/node_modules`); an ambiguous unprefixed path is rejected.
+- **`.cache` is reserved** — `/workspace/.cache` is the dce-managed persistent cache volume, so `.cache` (and anything under `.cache/`) is rejected as a hidden path.
 
 ### How it works
 
@@ -31,7 +39,7 @@ dce new monorepo nodejs,golang \
 - After container start, dce ensures the hidden mount points are writable by the `dev` user (root `mkdir`/`chown` fallback applied across all backends).
 - Hidden paths are persisted in the project config (`CONTAINER_HIDDEN_PATHS`) and automatically remounted on `dce rebuild-container`.
 - **`dce rebuild-container` removes hidden volumes by default** for a clean slate (fresh dependency install, no stale caches). Use `--keep-hidden-volumes` to preserve them.
-- For Docker-compatible backends, hidden paths are also added as mounts to the generated `devcontainer.json` so VS Code Dev Containers uses the same layout. Existing files are preserved; if managed fields drift, `dce new` / `dce rebuild-container` print a notice and you can reconcile with `dce config sync-vscode <name>` (`--dry-run` previews only).
+- For Docker-compatible backends, hidden paths are also added as mounts to the managed `devcontainer.json` (`~/.config/dce-enclave/<project>/devcontainer.json`) so VS Code Dev Containers uses the same layout. Existing files are preserved; if managed fields drift, `dce new` / `dce rebuild-container` print a notice and you can reconcile with `dce config sync-vscode <name>` (`--dry-run` previews only).
 
 ### Cleaning up hidden volumes
 

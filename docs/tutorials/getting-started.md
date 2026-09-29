@@ -93,7 +93,7 @@ Single-scope examples (scope names match `Containerfile.<scope>` in your overlay
 ```
 dce new myapp-frontend nodejs 3000:3000 5173:5173
 dce new myapp-backend golang 8080:8080 9000:9000
-dce new work-api golang --repo-path ~/code/company/api 8080:8080
+dce new work-api golang --repo ~/code/company/api 8080:8080
 ```
 
 Monorepo with multiple overlay scopes and multiple ports:
@@ -135,11 +135,10 @@ After dce new:
 1. Edit `~/.config/dce-enclave/<name>/github-token` (or gitlab-token if you ran
    `dce new ... --git-host gitlab`) and replace the placeholder with your token
 2. Add `~/.config/dce-enclave/<name>/ssh_key.pub` as a deploy key on your git host
-3. Clone repo(s) into `${DC_REPOS_DIR:-$HOME/repos}/<name>`
+3. Clone repo(s) into the host paths listed by `dce config get <name> repos`
 
 Port mapping notes:
 
 - Format is host-port:container-port
 - Multiple mappings are supported in one dce new command
 - Example: 3000:3000 5173:5173 8080:8080
-

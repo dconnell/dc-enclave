@@ -10,11 +10,11 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce start [name ...]` | Start one or more projects, or all configured projects if none given |
 | `dce stop [name ...]` | Stop one or more projects, or all configured projects if none given |
 | `dce list` (`dce ls`) | List DC Enclave projects and their running/stopped state |
-| `dce shell <name> [command]` | Open a shell or run one command inside a project container; injects the project's git token as the provider env var (`GITHUB_TOKEN` / `GITLAB_TOKEN`) and wraps the command in `zsh -ic` |
+| `dce shell [--repo <name>] <project> [command]` | Open a shell or run one command inside a project container; injects the project's git token as the provider env var (`GITHUB_TOKEN` / `GITLAB_TOKEN`) and wraps the command in `zsh -ic` |
 | `dce logs <name> [-f\|--follow] [--tail N]` | Fetch a container's stdout/stderr log stream (works on stopped containers) |
 | `dce editor [--editor <id>] <name>` | Launch your editor attached to the running container at `/workspace` (VS Code by default; Docker-compatible backends only). Under PAT auth, also sync VS Code's attached-container config so editor/terminal Git uses the container credential store instead of VS Code's host-forwarding helper. |
 | `dce extensions <list\|host\|available\|show\|diff\|capture> ...` | Inspect declared/runtime editor extension sets, compare drift, and capture curated manifests under `extensions/<editor>/<scope>.txt`. |
-| `dce exec [--root] <name> <command...>` | Run a single command in a running container, docker-exec style: no token, no zsh wrapping, auto-TTY |
+| `dce exec [--repo <name>] [--root] <name> <command...>` | Run a single command in a running container, docker-exec style: no token, no zsh wrapping, auto-TTY |
 | `dce restart [name ...]` | Restart one or more projects, or all configured projects |
 | `dce rm <name> [--yes] [--keep-config] [--keep-volumes]` | Remove a project: container, hidden volumes, snapshot artifacts, and config+secrets (host code preserved). Snapshot artifacts follow `--keep-volumes` (preserved with the flag, removed without it) |
 | `dce rebuild-container <name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes]` | Destroy and recreate container from selected image |
@@ -25,9 +25,10 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce snapshots list [<name>]` | List snapshots newest-first (project, size, volumes captured, time, base image); optional project scope |
 | `dce provenance <name> [--history\|--all]` | Show image provenance: team/user overlay commits + content fingerprints + base id + build time for the project's image |
 | `dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]` | Reclaim old/orphan image tags, orphan hidden volumes, or snapshots |
-| `dce config <show\|get\|set\|sync-vscode\|ls> ...` | Inspect/edit a project's config (validating wrapper over the config file). `sync-vscode` reconciles MANAGED `.devcontainer/devcontainer.json` fields on demand (`--dry-run` available), including `customizations.vscode.extensions` once manifests are adopted; attach-mode named config used by `dce editor` is managed automatically at editor launch. |
+| `dce config <show\|get\|set\|sync-vscode\|ls> ...` | Inspect/edit a project's config (validating wrapper over the config file). `sync-vscode` reconciles MANAGED `~/.config/dce-enclave/<name>/devcontainer.json` fields on demand (`--dry-run` available), including `customizations.vscode.extensions` once manifests are adopted; attach-mode named config used by `dce editor` is managed automatically at editor launch. |
 | `dce doctor [backend\|project]` | Run read-only preflight checks and report pass/fail per subsystem (nonzero if any fail) |
 | `dce network <create\|ls\|members\|rm\|add\|remove> ...` | Manage private networks between containers (no host port publishing); see [private networks](../how-to/connect-private-networks.md) |
+| `dce repo <list\|add\|remove> ...` | List and mutate a project's repo set in config only; rebuild required after changes. `repo add` accepts `--yes` to skip the outside-root confirmation gate, but never overrides the hard rejection for the repos root or one of its parents. |
 | `dce install <name> <path-to-dotfiles>` | Install or update dotfiles in a running container |
 | `dce rotate-token <name>` | Push the project's current git token (PAT) into its container without a rebuild — state-preserving, idempotent, force-overwrites a stale value (no-op under ssh/none). See [rebuild & recover](../how-to/rebuild-and-recover.md). |
 | `dce version` (`dce --version`, `dce -v`) | Print the DC Enclave version |
@@ -58,7 +59,7 @@ Several commands have short aliases:
 | Form | Description |
 |---|---|
 | `dce new <name> [scope[,scope...]] [host:container ...]` | Basic form with port mappings |
-| `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--git-host <provider>] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--network <name[,name...]>] [--ip <addr>] [host:container ...]` | With recipe defaults, optional recipe save, git-host selection, resource limits, hidden paths, and networks (see [Hiding generated paths](../how-to/hide-generated-paths.md)) |
+| `dce new <name> [scope[,scope...]] [--config <path>] [--save-team] [--save-user] [--git-host <provider>] [--repo <path\|name=path>] ... [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--network <name[,name...]>] [--ip <addr>] [host:container ...]` | With recipe defaults, optional recipe save, git-host selection, repo set selection, resource limits, hidden paths, and networks (see [Hiding generated paths](../how-to/hide-generated-paths.md)) |
 
 ## Command support by backend
 
@@ -105,7 +106,7 @@ These flags/subcommands run on only a subset of backends. Each fails fast with a
 |---|---|---|---|---|
 | `dce editor` | ✅ | ⚠️ experimental | ✅ | apple/container uses VS Code Dev Containers' experimental apple-container attach (`dev.containers.experimentalAppleContainerSupport`); macOS only |
 | `dce new --ip` (static IPv4) | ✅ | ❌ | ✅ | apple/container allows a single network with no static IP |
-| `dce config sync-vscode` | ✅ | ✅ | ✅ | rewrites `.devcontainer/devcontainer.json` (also requires `jq`) |
+| `dce config sync-vscode` | ✅ | ✅ | ✅ | rewrites the managed `~/.config/dce-enclave/<name>/devcontainer.json` (also requires `jq`) |
 | `dce network add`, `dce network remove` | ✅ | ❌ | ✅ | apple/container sets networks only at container create time (no live attach/detach) |
 | `dce network rm --force` | ✅ | ❌ | ✅ | force-removing a network with live members requires live-detach, which apple can't do |
 | `dce extensions list`, `available`, `diff`, `capture --all` | ✅ | ✅ | ✅ | read the in-container VS Code Server store over the backend exec API (`docker exec` / `container exec`); need a running container. `show`, `host`, and `capture <id>...` are static |

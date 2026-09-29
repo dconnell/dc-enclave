@@ -48,6 +48,7 @@ dce_complete_subcommands() {
     "config" \
     "network" \
     "net" \
+    "repo" \
     "doctor" \
     "install" \
     "rotate-token" \
@@ -57,6 +58,15 @@ dce_complete_subcommands() {
     "help" \
     "--help" \
     "-h"
+}
+
+# Print the subactions of `dce repo` (list/add/remove). Mirrors the dispatch
+# table in scripts/repo.sh.
+dce_complete_repo_subactions() {
+  printf '%s\n' \
+    "list" \
+    "add" \
+    "remove"
 }
 
 # Read DC_TEAM_DIR / DC_USER_DIR from the global config WITHOUT sourcing or

@@ -19,7 +19,7 @@ dce doctor myapp        # one project + its backend
 | "No backend detected" | [No backend detected](#no-backend-detected) |
 | Need to force a specific backend | [Forcing a specific backend](#forcing-a-specific-backend) |
 | Colima context or runtime errors | [Colima backend issues](#colima-backend-issues) |
-| `devcontainer.json` not updated after a `dce new`/`rebuild` | [`devcontainer.json` or `settings.json` not overwritten](#devcontainerjson-or-settingsjson-not-overwritten) |
+| managed `devcontainer.json` not updated after a `dce new`/`rebuild` | [Managed `devcontainer.json` not overwritten](#managed-devcontainerjson-not-overwritten) |
 | Port or memory change didn't take effect | [Changed ports or resource limits](#changed-ports-or-resource-limits) |
 | `git pull` / SSH fails inside the container | [SSH auth issues](#ssh-auth-issues) |
 | A name resolves on the host but not inside the container | [Hostname doesn't resolve inside my container](#hostname-doesnt-resolve-inside-my-container) |
@@ -97,11 +97,13 @@ docker context use colima
 colima status
 ```
 
-## `devcontainer.json` or `settings.json` not overwritten
+## Managed `devcontainer.json` not overwritten
 
-- expected behavior to avoid clobbering local config
-- on Docker-compatible projects, `dce new` / `dce rebuild-container` print a
-  drift notice when managed fields diverge from config (scopes/hide/networks/ports)
+- expected behavior to avoid clobbering local config: the managed file lives
+  at `~/.config/dce-enclave/<project>/devcontainer.json` (repo-local
+  `.vscode/settings.json` is never written)
+- `dce new` / `dce rebuild-container` print a drift notice when managed fields
+  diverge from config (scopes/hide/networks/ports)
 - reconcile on demand with:
 
 ```

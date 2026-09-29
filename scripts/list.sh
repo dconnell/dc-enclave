@@ -38,7 +38,13 @@ fi
 printf "%-24s %-12s %-10s %-24s %s\n" "NAME" "STATUS" "BACKEND" "SCOPES" "WARN"
 
 for config_file in "${PROJECTS[@]}"; do
-  dce_load_project_config "$config_file"
+  # Skip (don't abort) projects whose config is rejected by the loader (e.g. a
+  # legacy single-repo config): one bad project must not hide the others.
+  if ! dce_load_project_config "$config_file"; then
+    printf "%-24s %-12s %-10s %-24s %s\n" \
+      "$(basename "$(dirname "$config_file")")" "-" "-" "-" "BAD CONFIG"
+    continue
+  fi
   project="${CONTAINER_PROJECT:-$(basename "$(dirname "$config_file")")}"
   project_backend="${CONTAINER_BACKEND:-$DEFAULT_BACKEND}"
 

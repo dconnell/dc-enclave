@@ -218,21 +218,21 @@ _write_recipes_readme() {
 
 Optional ${who}-wide container recipes. A recipe is a key=value file named after
 a container name (e.g. \`api\`) that pre-fills the inputs to \`dce new <name>\`
-(scopes, cpus, memory, hide, network, ip, repo-path, port). \`dce new <name>\`
+(scopes, cpus, memory, hide, network, ip, repo, port). \`dce new <name>\`
 auto-loads \$DC_$(echo "$who" | tr '[:lower:]' '[:upper:]')_DIR/container-recipes/<name>
 when it exists; user recipes override team recipes per key, and CLI flags
 override both. The filename IS the container name.
 
-repo-path is gated: an auto-loaded recipe cannot silently widen the host bind
-mount. A recipe-sourced repo-path that resolves OUTSIDE the default repos dir
-(\$DC_REPOS_DIR or ~/repos) asks for confirmation (--yes/-y honors it); values
-that resolve to /, your home, the repos root, or a parent of it are rejected.
-CLI --repo-path is never gated.
+repo entries are repeatable (\`repo=<path>\` or \`repo=<name>=<path>\`). A recipe-
+sourced repo path that resolves OUTSIDE the default repos dir (\$DC_REPOS_DIR or
+~/repos) asks for confirmation (--yes/-y honors it); values that resolve to /,
+your home, the repos root, or a parent of it are rejected.
 
 Example:
   scopes=nodejs,postgres
   cpus=2
   memory=4g
+  repo=api=~/code/company-api
   hide=node_modules
   port=3000:3000
 EOF
@@ -253,7 +253,8 @@ These files are layered by dce new and dce config sync-vscode using the same
 model as overlays: an all.txt (if present) is prepended, then each effective
 project scope; the team file is read before the user file per scope, and first
 occurrence wins (de-duplicated, order-preserving). The merged set seeds and
-syncs customizations.vscode.extensions in .devcontainer/devcontainer.json.
+syncs customizations.vscode.extensions in the managed devcontainer.json
+(~/.config/dce-enclave/<project>/devcontainer.json).
 
 Inspect the resolved set, check runtime drift, and curate ids back into a
 manifest here:

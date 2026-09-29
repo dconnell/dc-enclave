@@ -164,9 +164,11 @@ make_project() {  # <project> [running]
   chmod 700 "$cfg_dir"
   cat > "$cfg_dir/config" <<CFG
 CONTAINER_PROJECT="$project"
+CONFIG_SCHEMA_VERSION="2"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-base:latest"
-REPOS_DIR="$repos"
+REPO_NAMES=("$project")
+REPO_PATHS=("$repos")
 SECRET_DIR="$cfg_dir"
 PORTS=()
 CONTAINER_HIDDEN_PATHS=()
@@ -274,7 +276,7 @@ if ! run_script "$ROOT_DIR/scripts/shell.sh" "nofragsh" "echo hi" \
   fail "shell (no fragment) exited non-zero
 -- stderr:$(cat "$WORK/s2b.err")"
 fi
-grep -Fq 'zsh -ic echo hi' "$LOG" \
+grep -Fq 'zsh -ic cd /workspace/nofragsh 2>/dev/null || true; echo hi' "$LOG" \
   || fail "no-op/shell: command never reached the container
 $(grep '^CALL' "$LOG")"
 assert_no_hosts_traffic "no-op/shell"

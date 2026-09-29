@@ -43,6 +43,14 @@ expect_invalid ".."
 expect_invalid "node:modules"
 expect_invalid "node modules"
 
+# .cache is a dce-managed system path (the persistent cache volume at
+# /workspace/.cache); users cannot claim it or anything under it via --hide.
+expect_invalid ".cache"
+expect_invalid ".cache/npm"
+expect_invalid ".cache/sub/dir"
+# A .cache SEGMENT below a repo prefix is still a normal user path.
+expect_valid "apps/web/.cache" "apps/web/.cache"
+
 combined="$(dce_normalize_hidden_paths_values "node_modules" "apps/web/node_modules,node_modules" "./apps/api/node_modules/")"
 [[ "$combined" == "node_modules,apps/web/node_modules,apps/api/node_modules" ]] || fail "combined hidden paths mismatch: $combined"
 

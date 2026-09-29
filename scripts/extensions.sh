@@ -6,7 +6,8 @@
 # Extensions are declared in manifests under
 #   $DC_TEAM_DIR/extensions/<editor>/<scope>.txt  (layered first per scope)
 #   $DC_USER_DIR/extensions/<editor>/<scope>.txt  (layered second per scope)
-# and seeded/synced into .devcontainer/devcontainer.json by `dce new` /
+# and seeded/synced into the managed devcontainer.json at
+# ~/.config/dce-enclave/<project>/devcontainer.json by `dce new` /
 # `dce config sync-vscode`. This command is the operational surface for
 # bootstrapping those manifests and inspecting runtime vs declared state.
 #

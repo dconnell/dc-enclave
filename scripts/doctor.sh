@@ -378,12 +378,13 @@ _dce_doctor_effective_scopes() {
 _doctor_extension_drift() {
   local name="$1" runtime_ready="${2:-false}"
 
-  # Declaration drift needs a devcontainer.json (docker-compatible only) and the
-  # overlay roots (global config) to re-derive the build file + resolve manifests.
+  # Declaration drift needs the managed devcontainer.json (project config
+  # dir) and the overlay roots (global config) to re-derive the build file +
+  # resolve manifests.
   local dc_file=""
-  [[ -n "${REPOS_DIR:-}" ]] && dc_file="$REPOS_DIR/.devcontainer/devcontainer.json"
-  if [[ -z "$dc_file" || ! -f "$dc_file" ]]; then
-    _skip "devcontainer.json in sync" "no devcontainer.json (not yet created)"
+  dc_file="$(dce_managed_devcontainer_file "$name")"
+  if [[ ! -f "$dc_file" ]]; then
+    _skip "devcontainer.json in sync" "no managed devcontainer.json (not yet created)"
   else
     local global_loaded=false
     local global_cfg
@@ -420,7 +421,7 @@ _doctor_extension_drift() {
          "$(_dce_dc_csv_from_array CONTAINER_HIDDEN_PATHS)" \
          "$(_dce_dc_csv_from_array CONTAINER_NETWORKS)" \
          "$(_dce_dc_csv_from_array PORTS)" \
-         "vscode" "$ext_csv" "$ext_adopted" >/dev/null 2>&1; then
+         "vscode" "$ext_csv" "$ext_adopted" "$(dce_repo_entries_lines)" >/dev/null 2>&1; then
       _ok "devcontainer.json in sync"
     else
       _bad "devcontainer.json in sync" \

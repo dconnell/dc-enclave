@@ -23,6 +23,7 @@ clean		0	reclaim space
 config		1	inspect/edit config
 doctor		0	preflight diagnostics
 network	net	0	private networks
+repo		1	manage project repos
 install		1	install dotfiles
 version		0	version (also --version, -v)
 help		0	help (also --help, -h)

@@ -24,6 +24,7 @@ dce-enclave/
 │   │   ├── global-config.sh            #   team/user root paths + global config load
 │   │   ├── scopes.sh                   #   overlay scope validation + image-ref derivation
 │   │   ├── hidden-volumes.sh           #   hidden-path normalization + volume lifecycle
+│   │   ├── workspace.sh                #   schema-v2 repo layout + shared mount planning (new/rebuild)
 │   │   ├── git-credentials.sh          #   token/PAT/SSH insteadOf wiring + VS Code machine setting
 │   │   ├── snapshots.sh                #   snapshot image/volume naming + manifests
 │   │   ├── image-provenance.sh         #   provenance hashing, JSON escaping, JSONL logging
@@ -31,7 +32,7 @@ dce-enclave/
 │   ├── platform.sh                     # OS/shell detection, profile helpers
 │   ├── complete-data.sh                # shared completion discovery (bash + zsh)
 │   ├── container-backend.sh            # backend abstraction (apple/docker/orbstack/colima/podman)
-│   ├── devcontainer.sh                 # managed .devcontainer/devcontainer.json helpers
+│   ├── devcontainer.sh                 # managed devcontainer.json helpers
 │   ├── editor.sh                       # editor registry + cross-platform launcher
 │   ├── extensions.sh                   # editor extension manifest registry + resolution
 │   ├── git-host.sh                     # git host provider registry (github/gitlab)
@@ -55,6 +56,7 @@ dce-enclave/
 │   ├── rm.sh                           # `dce rm` (remove a project + its volumes/images)
 │   ├── clean.sh                        # `dce clean` (sweep stale images/volumes across projects)
 │   ├── config.sh                       # `dce config` (read/edit project config)
+│   ├── repo.sh                         # manage a project's repo set (list/add/remove; config only)
 │   ├── doctor.sh                       # `dce doctor` (environment + drift diagnostics)
 │   ├── editor.sh                       # `dce editor` (launch a configured editor attached to the container)
 │   ├── extensions.sh                   # `dce extensions` (sync declared VS Code extensions)
@@ -78,10 +80,10 @@ dce-enclave/
 
 Host-side paths:
 
-- code: ${DC_REPOS_DIR:-$HOME/repos}/<project>
+- code: one or more repos, defaulting to `${DC_REPOS_DIR:-$HOME/repos}/<project>` for the single-repo case
 - secrets: ~/.config/dce-enclave/<project>
 - per-project config: ~/.config/dce-enclave/<project>/config (backend, image, ports, resource limits, secrets paths)
+- managed devcontainer: ~/.config/dce-enclave/<project>/devcontainer.json
 - global config: ~/.config/dce-enclave/config
 - team root: `DC_TEAM_DIR` (typically `~/.config/dce-enclave/team`) — holds `overlays/` and `container-recipes/`
 - user root: `DC_USER_DIR` (typically `~/.config/dce-enclave/user`) — holds `overlays/` and `container-recipes/`
-

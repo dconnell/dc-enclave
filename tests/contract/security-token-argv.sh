@@ -144,10 +144,12 @@ run_provider() {
   chmod 700 "$cfg_dir"
   cat > "$cfg_dir/config" <<CFG
 CONTAINER_PROJECT="$PROJECT"
+CONFIG_SCHEMA_VERSION="2"
 CONTAINER_BACKEND="docker"
 CONTAINER_GIT_HOST="$provider"
 CONTAINER_IMAGE="dce-base:latest"
-REPOS_DIR="$WORK/repos"
+REPO_NAMES=("$PROJECT")
+REPO_PATHS=("$WORK/repos/$PROJECT")
 SECRET_DIR="$WORK/secret"
 SSH_KEY_PATH="$WORK/secret/ssh_key"
 TOKEN_FILE="$token_path"

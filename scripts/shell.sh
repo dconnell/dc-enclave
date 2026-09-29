@@ -8,21 +8,6 @@
 # =============================================================================
 set -euo pipefail
 
-# `dce shell <project-name> [command]`. The first non-flag token is the project,
-# everything after it is the command. `dce shell <name> -- <cmd>` is honored so a
-# command beginning with '-' is not mistaken for a dce flag (the '--' itself is
-# dropped from the command).
-PROJECT="${1:?Usage: shell.sh <project-name> [command]}"
-shift
-[[ "${1:-}" == "--" ]] && shift
-
-HAS_COMMAND=false
-COMMAND=""
-if [[ $# -gt 0 ]]; then
-  HAS_COMMAND=true
-  COMMAND="$*"
-fi
-
 _src="${BASH_SOURCE[0]}"
 while [[ -L "$_src" ]]; do
   _dir="$(cd -P "$(dirname "$_src")" && pwd)"
@@ -37,6 +22,42 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$ROOT_DIR/lib/common.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/container-backend.sh"
+
+REPO_NAME=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      [[ $# -ge 2 && "$2" != --* ]] || dce_die "--repo requires a repo name"
+      REPO_NAME="$2"
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    --*)
+      dce_die "Unknown option: $1
+Usage: shell.sh [--repo <name>] <project-name> [command]"
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+# `dce shell [--repo <name>] <project-name> [command]`. The first non-flag token
+# is the project; everything after it is the command. `-- <cmd>` is honored so a
+# command beginning with '-' is not mistaken for a dce flag.
+PROJECT="${1:?Usage: shell.sh [--repo <name>] <project-name> [command]}"
+shift
+[[ "${1:-}" == "--" ]] && shift
+
+HAS_COMMAND=false
+COMMAND=""
+if [[ $# -gt 0 ]]; then
+  HAS_COMMAND=true
+  COMMAND="$*"
+fi
 
 CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
@@ -60,9 +81,22 @@ fi
 GIT_TOKEN="$(dce_read_git_token)"
 ENV_VAR="$(dce_git_host_field "$(dce_project_git_host)" env_var)"
 
+# Default working directory: single-repo projects land in the repo
+# (/workspace/<repo-name>); multi-repo projects land at the /workspace root.
+WORKDIR="$(dce_project_default_workdir)"
+SHELL_REPO_LINE=""
+while IFS= read -r _shell_repo_line; do
+  [[ -z "$_shell_repo_line" ]] && continue
+  SHELL_REPO_LINE+=" ${_shell_repo_line%%$'\t'*} -> ${_shell_repo_line#*$'\t'}"
+done < <(dce_repo_entries_lines)
+if [[ -n "$REPO_NAME" ]]; then
+  WORKDIR="$(dce_project_repo_workdir "$REPO_NAME" 2>/dev/null)" \
+    || dce_die "Unknown repo '$REPO_NAME' in project '$PROJECT'."
+fi
+
 echo "  Entering container: $PROJECT"
 echo "  Backend: $ACTIVE_BACKEND"
-echo "  Workspace: /workspace (-> $REPOS_DIR on host)"
+echo "  Workspace: /workspace (repos:$SHELL_REPO_LINE)"
 if [[ -n "$GIT_TOKEN" ]]; then
   echo "  ${ENV_VAR}: set"
 else
@@ -115,12 +149,12 @@ if $HAS_COMMAND; then
     # value read from the temp file ($1); the value never touches host argv.
     backend_exec "$PROJECT" env \
       "PS1=[${PROJECT}] %~ %# " \
-      sh -lc 'export "$3=$(cat "$1")"; rm -f "$1"; exec zsh -ic "$2"' \
-      _ "$_dce_token_env_file" "$COMMAND" "$ENV_VAR"
+      sh -lc 'export "$3=$(cat "$1")"; rm -f "$1"; cd "$4" 2>/dev/null || true; exec zsh -ic "$2"' \
+      _ "$_dce_token_env_file" "$COMMAND" "$ENV_VAR" "$WORKDIR"
   else
     backend_exec "$PROJECT" env \
       "PS1=[${PROJECT}] %~ %# " \
-      zsh -ic "$COMMAND"
+      zsh -ic "cd $WORKDIR 2>/dev/null || true; $COMMAND"
   fi
 else
   # shellcheck disable=SC2016
@@ -134,12 +168,12 @@ else
     backend_exec_interactive "$PROJECT" \
       --env "PS1=[${PROJECT}] %~ %# " \
       -- \
-      sh -lc 'export "$2=$(cat "$1")"; rm -f "$1"; cd /workspace 2>/dev/null || true; exec zsh -i' \
-      _ "$_dce_token_env_file" "$ENV_VAR"
+      sh -lc 'export "$2=$(cat "$1")"; rm -f "$1"; cd "$3" 2>/dev/null || true; exec zsh -i' \
+      _ "$_dce_token_env_file" "$ENV_VAR" "$WORKDIR"
   else
     backend_exec_interactive "$PROJECT" \
       --env "PS1=[${PROJECT}] %~ %# " \
       -- \
-      zsh -ic 'cd /workspace 2>/dev/null || true; exec zsh -i'
+      zsh -ic "cd $WORKDIR 2>/dev/null || true; exec zsh -i"
   fi
 fi

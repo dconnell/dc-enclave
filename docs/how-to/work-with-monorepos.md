@@ -4,7 +4,7 @@
 
 Monorepo:
 
-- One container, one workspace tree (example: ${DC_REPOS_DIR:-$HOME/repos}/myapp-monorepo)
+- One container, one repo mounted under `/workspace/<repo-name>` (or multiple app folders within that repo)
 - Can combine scopes with dce new ... `<scope1>,<scope2>` ...
 
 Multi-repo with separate trust boundaries:
@@ -13,7 +13,6 @@ Multi-repo with separate trust boundaries:
 
 Single-container multi-repo workspace:
 
-- Put all repos under one host folder for that container
-- Example: ${DC_REPOS_DIR:-$HOME/repos}/project-fe/frontend-app, ${DC_REPOS_DIR:-$HOME/repos}/project-fe/shared-ui, ${DC_REPOS_DIR:-$HOME/repos}/project-fe/api-client
-- All appear in container under /workspace
-
+- Use repeatable `--repo` (or `dce repo add`) so one project owns 1..N repos
+- Example: `dce new project-fe --repo frontend-app=~/repos/frontend-app --repo shared-ui=~/repos/shared-ui --repo api-client=~/repos/api-client`
+- Repos appear in the container under `/workspace/<repo-name>`

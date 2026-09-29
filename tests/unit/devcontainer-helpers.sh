@@ -65,19 +65,28 @@ sorted_out() {
 
 # =============================================================================
 # A. dce_devcontainer_expected_state: canonical comparable form from inputs
+# (the managed /workspace/.cache volume is ALWAYS part of the expected state;
+#  repos_nl carries the schema-v2 repo binds as <name><TAB><path> lines)
 # =============================================================================
 EXP="$(dce_devcontainer_expected_state "$PROJECT" "$DERIVED_DF" \
-  "node_modules,.cache" "mynet:10.0.0.5,obs" "3000:3000,8080")"
+  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" \
+  "$(printf 'web\t/host/web\napi\t/host/api')")"
 
 # scopes -> derived:<hash> (basename Containerfile.<16hex>).
 printf '%s\n' "$EXP" | grep -Fxq $'scopes\tderived:deadbeefdeadbeef' \
   || fail "expected_state: scopes token (got:$(printf '%s\n' "$EXP" | grep ^scopes))"
 
 # hidden -> one line per hidden path (the managed mount TARGET path).
-for hp in node_modules .cache; do
-  printf '%s\n' "$EXP" | grep -Fxq $'hidden\t'"$hp" \
-    || fail "expected_state: missing hidden '$hp'"
-done
+printf '%s\n' "$EXP" | grep -Fxq $'hidden\tnode_modules' \
+  || fail "expected_state: missing hidden 'node_modules'"
+# The managed cache volume is always expected, without being in the hidden CSV.
+printf '%s\n' "$EXP" | grep -Fxq $'hidden\t.cache' \
+  || fail "expected_state: managed .cache volume must always be expected"
+# repos -> one <name>=<host-path> line per schema-v2 repo bind.
+printf '%s\n' "$EXP" | grep -Fxq $'repos\tweb=/host/web' \
+  || fail "expected_state: missing repo 'web'"
+printf '%s\n' "$EXP" | grep -Fxq $'repos\tapi=/host/api' \
+  || fail "expected_state: missing repo 'api'"
 # networks -> name[:ip], one per entry, primary ip preserved.
 printf '%s\n' "$EXP" | grep -Fxq $'networks\tmynet:10.0.0.5' \
   || fail "expected_state: networks primary ip"
@@ -96,7 +105,7 @@ EXP_NODF="$(dce_devcontainer_expected_state "$PROJECT" "" "" "mynet" "")"
 printf '%s\n' "$EXP_NODF" | grep -Fxq $'networks\tmynet' \
   || fail "expected_state: networks still emitted when build_dockerfile empty"
 
-pass "dce_devcontainer_expected_state: canonical scopes/hidden/networks/ports"
+pass "dce_devcontainer_expected_state: canonical scopes/repos/hidden(+managed .cache)/networks/ports"
 
 # =============================================================================
 # B. dce_devcontainer_recorded_state: parse managed fields out of a JSON file
@@ -131,24 +140,49 @@ printf '%s\n' "$REC" | grep -Fxq $'networks\tobs' || fail "recorded_state: netwo
 printf '%s\n' "$REC" | grep -Fxq $'ports\t3000' || fail "recorded_state: port 3000"
 printf '%s\n' "$REC" | grep -Fxq $'ports\t8080' || fail "recorded_state: port 8080"
 
-pass "dce_devcontainer_recorded_state: parses managed fields, ignores user mounts/keys"
+pass "dce_devcontainer_recorded_state: parses managed fields (repos/hidden/cache), ignores user mounts/keys"
 
 # =============================================================================
 # C. dce_devcontainer_detect_drift: in-sync vs each drifted field
 # =============================================================================
 
 # (C0) fully in sync -> exit 0, NO stderr output.
-DC_SYNCED="$DC_FILE"
+# The schema-v2 repo set used across the drift cases (arg 10 repos_nl).
+REPOS_NL="$(printf 'web\t/host/web\napi\t/host/api')"
+
+# Helper: build a fully in-sync devcontainer.json for the drift cases. Every
+# C-case below starts from this baseline and varies exactly ONE managed field,
+# so a failure pinpoints the regressed tag.
+full_synced_dc() {  # <name> <mounts-json-array>
+  local name="$1" mounts="$2"
+  write_dc "$name" "{
+  \"name\": \"dce-$PROJECT\",
+  \"build\": { \"dockerfile\": \"$DERIVED_DF\", \"context\": \"$ROOT_DIR\" },
+  \"workspaceFolder\": \"/workspace\",
+  \"remoteUser\": \"dev\",
+  \"forwardPorts\": [3000, 8080],
+  \"mounts\": $mounts,
+  \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"]
+}"
+}
+
+SYNCED_MOUNTS="[\"source=/host/web,target=/workspace/web,type=bind\",
+    \"source=/host/api,target=/workspace/api,type=bind\",
+    \"source=$(hidden_vol .cache),target=/workspace/.cache,type=volume\",
+    \"source=$WORK/sec/.npmrc,target=/home/dev/.npmrc,type=bind,readonly\",
+    \"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"]"
+
+DC_SYNCED="$(full_synced_dc synced "$SYNCED_MOUNTS")"
 ERR="$(dce_devcontainer_detect_drift "$PROJECT" "$DC_SYNCED" "$DERIVED_DF" \
-  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" 2>&1 >/dev/null)" || true
+  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" "$REPOS_NL" 2>&1 >/dev/null)" || true
 [[ -z "$ERR" ]] || fail "detect_drift: in-sync must print nothing (got: $ERR)"
 if dce_devcontainer_detect_drift "$PROJECT" "$DC_SYNCED" "$DERIVED_DF" \
-    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" >/dev/null 2>&1; then
+    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" "$REPOS_NL" >/dev/null 2>&1; then
   :
 else
   fail "detect_drift: in-sync must return 0"
 fi
-pass "detect_drift: in-sync returns 0, silent"
+pass "detect_drift: in-sync (repos + managed .cache) returns 0, silent"
 
 # Helper: run detect_drift capturing combined output; fail unless it returns
 # non-zero (drift). Echoes the combined output for needle assertions.
@@ -162,57 +196,76 @@ drift_has() {
 
 # (C1) scopes drifted (different derived hash) -> mentions scopes + pointer.
 DC_SCOPES="$(write_dc scopes "{
-  \"build\": { \"dockerfile\": \"$ROOT_DIR/Containerfiles/generated/Containerfile.aaaaaaaaaaaaaaaa\" },
-  \"mounts\": [\"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
+  \"build\": { \"dockerfile\": \"$ROOT_DIR/Containerfiles/generated/Containerfile.aaaaaaaaaaaaaaaa\", \"context\": \"$ROOT_DIR\" },
+  \"mounts\": $SYNCED_MOUNTS,
   \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"],
   \"forwardPorts\": [3000, 8080]
 }")"
 OUT="$(dce_devcontainer_detect_drift "$PROJECT" "$DC_SCOPES" "$DERIVED_DF" \
-  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" 2>&1 >/dev/null)" || true
+  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" "$REPOS_NL" 2>&1 >/dev/null)" || true
 grep -Fqi 'scopes' <<<"$OUT" || fail "detect_drift(scopes): notice must mention scopes"
 grep -Fqi 'sync-vscode' <<<"$OUT" || fail "detect_drift(scopes): must point at sync-vscode"
 
-# (C2) hidden paths drifted (expected adds .cache) -> mentions hidden.
-OUT="$(dce_devcontainer_detect_drift "$PROJECT" "$DC_SYNCED" "$DERIVED_DF" \
-  "node_modules,.cache" "mynet:10.0.0.5,obs" "3000:3000,8080" 2>&1 >/dev/null)" || true
-grep -Eqi 'hidden|hide' <<<"$OUT" || fail "detect_drift(hidden): notice must mention hidden"
+# (C2) repos drifted (a host path moved) -> mentions repos.
+DC_REPOS="$(full_synced_dc repos "$(printf '%s' "$SYNCED_MOUNTS" \
+  | sed 's#source=/host/api,#source=/host/api-moved,#')")"
+OUT="$(dce_devcontainer_detect_drift "$PROJECT" "$DC_REPOS" "$DERIVED_DF" \
+  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" "$REPOS_NL" 2>&1 >/dev/null)" || true
+grep -Eqi 'repo' <<<"$OUT" || fail "detect_drift(repos): notice must mention repos (got: $OUT)"
 
-# (C3) networks drifted (expected drops obs) -> mentions networks.
+# (C3) managed .cache volume missing from the file -> mentions hidden.
+NOCACHE_MOUNTS="[\"source=/host/web,target=/workspace/web,type=bind\",
+    \"source=/host/api,target=/workspace/api,type=bind\",
+    \"source=$WORK/sec/.npmrc,target=/home/dev/.npmrc,type=bind,readonly\",
+    \"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"]"
+DC_NOCACHE="$(full_synced_dc nocache "$NOCACHE_MOUNTS")"
+OUT="$(dce_devcontainer_detect_drift "$PROJECT" "$DC_NOCACHE" "$DERIVED_DF" \
+  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" "$REPOS_NL" 2>&1 >/dev/null)" || true
+grep -Eqi 'hidden|hide' <<<"$OUT" || fail "detect_drift(hidden): missing .cache volume must mention hidden"
+
+# (C4) networks drifted (expected drops obs) -> mentions networks.
 OUT="$(dce_devcontainer_detect_drift "$PROJECT" "$DC_SYNCED" "$DERIVED_DF" \
-  "node_modules" "mynet:10.0.0.5" "3000:3000,8080" 2>&1 >/dev/null)" || true
+  "node_modules" "mynet:10.0.0.5" "3000:3000,8080" "" "" "" "$REPOS_NL" 2>&1 >/dev/null)" || true
 grep -Eqi 'network' <<<"$OUT" || fail "detect_drift(networks): notice must mention networks"
 
-# (C4) ports drifted (expected adds 9000) -> mentions ports.
+# (C5) ports drifted (expected adds 9000) -> mentions ports.
 OUT="$(dce_devcontainer_detect_drift "$PROJECT" "$DC_SYNCED" "$DERIVED_DF" \
-  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080,9000" 2>&1 >/dev/null)" || true
+  "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080,9000" "" "" "" "$REPOS_NL" 2>&1 >/dev/null)" || true
 grep -Eqi 'port' <<<"$OUT" || fail "detect_drift(ports): notice must mention ports"
 
-# (C5) user-only edit (add extensions, change nothing managed) -> NO drift.
+# (C6) user-only edit (add a user bind + top-level extensions) -> NO drift.
+USEREDIT_MOUNTS="[\"source=/host/web,target=/workspace/web,type=bind\",
+    \"source=/host/api,target=/workspace/api,type=bind\",
+    \"source=$(hidden_vol .cache),target=/workspace/.cache,type=volume\",
+    \"source=$WORK/sec/.npmrc,target=/home/dev/.npmrc,type=bind,readonly\",
+    \"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\",
+    \"source=/host/user-thing,target=/workspace/.user-thing,type=bind\"]"
 DC_USEREDIT="$(write_dc useredit "{
-  \"build\": { \"dockerfile\": \"$DERIVED_DF\" },
-  \"mounts\": [\"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
-  \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"],
+  \"build\": { \"dockerfile\": \"$DERIVED_DF\", \"context\": \"$ROOT_DIR\" },
+  \"workspaceFolder\": \"/workspace\",
   \"forwardPorts\": [3000, 8080],
+  \"mounts\": $USEREDIT_MOUNTS,
+  \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"],
   \"extensions\": [\"ms-python.python\"],
   \"settings\": { \"editor.formatOnSave\": true }
 }")"
 if dce_devcontainer_detect_drift "$PROJECT" "$DC_USEREDIT" "$DERIVED_DF" \
-    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" >/dev/null 2>&1; then
+    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" "$REPOS_NL" >/dev/null 2>&1; then
   :
 else
   fail "detect_drift: non-managed user edit must NOT count as drift"
 fi
 pass "detect_drift: per-field drift detected; user-only edits ignored"
 
-# (C6) grep fallback: shadow jq with a failing stub so detection must use grep.
+# (C7) grep fallback: shadow jq with a failing stub so detection must use grep.
 if [[ ${DC_SKIP_JQ_SHADOW:-0} -ne 1 ]]; then
   STUB_BIN="$WORK/bin"; mkdir -p "$STUB_BIN"
   printf '#!/usr/bin/env bash\nexit 127\n' > "$STUB_BIN/jq"
   chmod +x "$STUB_BIN/jq"
   OUT="$(PATH="$STUB_BIN:$PATH" dce_devcontainer_detect_drift "$PROJECT" "$DC_SCOPES" \
-    "$DERIVED_DF" "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" 2>&1 >/dev/null)" || true
+    "$DERIVED_DF" "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" "$REPOS_NL" 2>&1 >/dev/null)" || true
   if PATH="$STUB_BIN:$PATH" dce_devcontainer_detect_drift "$PROJECT" "$DC_SCOPES" \
-      "$DERIVED_DF" "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" >/dev/null 2>&1; then
+      "$DERIVED_DF" "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" "$REPOS_NL" >/dev/null 2>&1; then
     fail "detect_drift: grep fallback must still detect scopes drift (jq shadowed)"
   fi
   grep -Fqi 'scopes' <<<"$OUT" \
@@ -245,7 +298,8 @@ pass "expected_state: extensions tag gated on manifests_exist (migration guard)"
 # recorded_state: parses customizations.vscode.extensions (jq path).
 DC_EXT="$(write_dc extrec "{
   \"build\": { \"dockerfile\": \"$DERIVED_DF\" },
-  \"mounts\": [\"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
+  \"mounts\": [\"source=$(hidden_vol .cache),target=/workspace/.cache,type=volume\",
+              \"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
   \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"],
   \"forwardPorts\": [3000, 8080],
   \"customizations\": { \"vscode\": { \"extensions\": [\"a.b\", \"c.d\"] } }
@@ -268,7 +322,8 @@ fi
 # detect_drift: drifted extensions (recorded has x.y, expected does not) -> non-zero.
 DC_EXT_DRIFT="$(write_dc extdrift "{
   \"build\": { \"dockerfile\": \"$DERIVED_DF\" },
-  \"mounts\": [\"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
+  \"mounts\": [\"source=$(hidden_vol .cache),target=/workspace/.cache,type=volume\",
+              \"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
   \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"],
   \"forwardPorts\": [3000, 8080],
   \"customizations\": { \"vscode\": { \"extensions\": [\"a.b\", \"x.y\"] } }
@@ -303,7 +358,8 @@ if [[ ${DC_SKIP_JQ_SHADOW:-0} -ne 1 ]]; then
   # and must NOT be mistaken for customizations.<ns>.extensions in fallback mode.
   DC_EXT_NOISE="$(write_dc extnoise "{
     \"build\": { \"dockerfile\": \"$DERIVED_DF\" },
-    \"mounts\": [\"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
+    \"mounts\": [\"source=$(hidden_vol .cache),target=/workspace/.cache,type=volume\",
+              \"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\"],
     \"runArgs\": [\"--network\", \"mynet\", \"--ip\", \"10.0.0.5\", \"--network\", \"obs\"],
     \"forwardPorts\": [3000, 8080],
     \"extensions\": [\"user.owned\"],
@@ -332,15 +388,28 @@ fi
 # =============================================================================
 if command -v jq >/dev/null 2>&1; then
   RENDERED="$(dce_devcontainer_render "$PROJECT" "$DERIVED_DF" "$ROOT_DIR" "$WORK/sec" \
-    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "America/New_York" "pat")"
+    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "America/New_York" "pat" \
+    "" "" "$(printf 'web\t/host/web\napi\t/host/api')")"
   printf '%s' "$RENDERED" | jq -e '.name=="dce-myapp" and .build.dockerfile=="'"$DERIVED_DF"'" and .build.context=="'"$ROOT_DIR"'" and .workspaceFolder=="/workspace" and .remoteUser=="dev" and .postCreateCommand=="true"' >/dev/null \
     || fail "render: core fields wrong/invalid JSON"
+  # workspaceMount is gone: /workspace is assembled from per-repo binds and the
+  # managed cache volume; there is no localWorkspaceFolder binding anymore.
+  printf '%s' "$RENDERED" | jq -e '.workspaceMount == null' >/dev/null \
+    || fail "render: workspaceMount must not be emitted"
+  printf '%s' "$RENDERED" | jq -e 'tostring | contains("localWorkspaceFolder") | not' >/dev/null \
+    || fail "render: localWorkspaceFolder binding must be gone"
   printf '%s' "$RENDERED" | jq -e '.forwardPorts==[3000,8080]' >/dev/null || fail "render: forwardPorts"
   printf '%s' "$RENDERED" | jq -e '.runArgs==["--network","mynet","--ip","10.0.0.5","--network","obs"]' >/dev/null \
     || fail "render: runArgs ordering"
   printf '%s' "$RENDERED" | jq -e '.containerEnv.TZ=="America/New_York"' >/dev/null || fail "render: containerEnv.TZ"
   printf '%s' "$RENDERED" | jq -e '[.mounts[] | capture("source=(?<s>[^,]+)").s] | index("'"$(hidden_vol node_modules)"'") != null' >/dev/null \
     || fail "render: managed hidden mount missing"
+  printf '%s' "$RENDERED" | jq -e '[.mounts[] | capture("source=(?<s>[^,]+)").s] | index("'"$(hidden_vol .cache)"'") != null' >/dev/null \
+    || fail "render: managed .cache volume mount missing"
+  printf '%s' "$RENDERED" | jq -e '.mounts | index("source=/host/web,target=/workspace/web,type=bind") != null' >/dev/null \
+    || fail "render: repo bind 'web' missing"
+  printf '%s' "$RENDERED" | jq -e '.mounts | index("source=/host/api,target=/workspace/api,type=bind") != null' >/dev/null \
+    || fail "render: repo bind 'api' missing"
   printf '%s' "$RENDERED" | jq -e '[.mounts[] | capture("source=(?<s>[^,]+)").s] | index("'"$WORK"'/sec/.npmrc") != null' >/dev/null \
     || fail "render: managed npmrc mount missing"
   # PAT auth: VS Code must defer git ops to git's credential helper so the PAT
@@ -392,10 +461,12 @@ else
     \"name\": \"stale-name\",
     \"build\": { \"dockerfile\": \"$ROOT_DIR/Containerfiles/generated/Containerfile.0000000000000000\", \"context\": \"/old\" },
     \"workspaceFolder\": \"/old\",
+    \"workspaceMount\": \"source=/old/bind,target=/workspace,type=bind\",
     \"forwardPorts\": [1111],
     \"mounts\": [
       \"source=/old/npmrc,target=/home/dev/.npmrc,type=bind,readonly\",
       \"source=$(hidden_vol node_modules),target=/workspace/node_modules,type=volume\",
+      \"source=/host/stale-repo,target=/workspace/oldrepo,type=bind\",
       \"source=/host/.user-cache,target=/workspace/.user-cache,type=bind\"
     ],
     \"runArgs\": [\"--network\", \"oldnet\"],
@@ -412,7 +483,8 @@ else
   chmod 600 "$DC_SYNC_TARGET"
 
   dce_devcontainer_sync "$PROJECT" "$DC_SYNC_TARGET" "$DERIVED_DF" "$ROOT_DIR" "$SECRET" \
-    "node_modules,.cache" "mynet:10.0.0.5,obs" "3000:3000,8080" "America/New_York" "false" "pat" \
+    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "America/New_York" "false" "pat" \
+    "vscode" "" "false" "$(printf 'web\t/host/web\napi\t/host/api')" \
     >"$WORK/sync.out" 2>"$WORK/sync.err" || fail "sync exited non-zero ($(cat "$WORK/sync.err"))"
 
   AFTER="$(cat "$DC_SYNC_TARGET")"
@@ -438,22 +510,34 @@ else
     || fail "sync: user vscode settings lost"
   echo "$AFTER" | jq -e '.customizations.vscode.extensions == ["github.copilot"]' >/dev/null \
     || fail "sync: user vscode extensions lost"
-  # mounts merged: stale npmrc + stale single hidden vol dropped; new managed
-  # (npmrc + node_modules + .cache) added; user bind mount preserved.
+  # workspaceMount removed (no ${localWorkspaceFolder} binding on v2 projects).
+  echo "$AFTER" | jq -e '.workspaceMount == null' >/dev/null || fail "sync: workspaceMount must be removed"
+  echo "$AFTER" | jq -e '.workspaceFolder == "/workspace"' >/dev/null || fail "sync: workspaceFolder"
+  # mounts merged: stale npmrc + stale hidden vol + STALE REPO BIND dropped;
+  # new managed set (repo binds + cache + npmrc + hidden) added; user bind kept.
   echo "$AFTER" | jq -e '[.mounts[] | capture("source=(?<s>[^,]+)").s] | index("'"$SECRET"'/.npmrc") != null' >/dev/null \
     || fail "sync: new managed npmrc mount missing"
   echo "$AFTER" | jq -e '[.mounts[] | capture("source=(?<s>[^,]+)").s] | index("'"$(hidden_vol .cache)"'") != null' >/dev/null \
-    || fail "sync: new managed hidden (.cache) mount missing"
+    || fail "sync: managed .cache volume mount missing"
+  echo "$AFTER" | jq -e '.mounts | index("source=/host/web,target=/workspace/web,type=bind") != null' >/dev/null \
+    || fail "sync: repo bind 'web' missing"
+  echo "$AFTER" | jq -e '.mounts | index("source=/host/api,target=/workspace/api,type=bind") != null' >/dev/null \
+    || fail "sync: repo bind 'api' missing"
   echo "$AFTER" | jq -e '[.mounts[] | capture("source=(?<s>[^,]+)").s] | index("/host/.user-cache") != null' >/dev/null \
     || fail "sync: user bind mount dropped"
   echo "$AFTER" | jq -e '[.mounts[] | capture("source=(?<s>[^,]+)").s] | index("/old/npmrc") == null' >/dev/null \
     || fail "sync: stale npmrc mount not dropped"
+  echo "$AFTER" | jq -e '.mounts | map(select(test("target=/workspace/oldrepo"))) | length == 0' >/dev/null \
+    || fail "sync: stale repo bind (old target) not dropped"
+  echo "$AFTER" | jq -e '.mounts | map(select(test("source=/old/bind"))) | length == 0' >/dev/null \
+    || fail "sync: legacy root /workspace bind (workspaceMount) must not leak into mounts"
   # file mode preserved at 600.
   _mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
   [[ "$(_mode "$DC_SYNC_TARGET")" == "600" ]] || fail "sync: file mode not preserved (got $(_mode "$DC_SYNC_TARGET"))"
   # post-sync: detection reports in sync.
   dce_devcontainer_detect_drift "$PROJECT" "$DC_SYNC_TARGET" "$DERIVED_DF" \
-    "node_modules,.cache" "mynet:10.0.0.5,obs" "3000:3000,8080" >/dev/null 2>&1 \
+    "node_modules" "mynet:10.0.0.5,obs" "3000:3000,8080" "" "" "" \
+    "$(printf 'web\t/host/web\napi\t/host/api')" >/dev/null 2>&1 \
     || fail "sync: post-sync detection still reports drift"
   pass "dce_devcontainer_sync: rewrites managed fields, preserves user fields, keeps mode 600"
 

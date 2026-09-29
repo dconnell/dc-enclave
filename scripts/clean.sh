@@ -149,6 +149,11 @@ if $CLEAN_HIDDEN_VOLUMES; then
       hidden_volume="$(dce_hidden_volume_name "$project_name" "$hidden_path")"
       EXPECTED_VOLUMES["$hidden_volume"]=1
     done
+
+    # The managed /workspace/.cache cache volume is dce-owned state for every
+    # valid schema-v2 project: never report it as an orphan (only `dce rm`
+    # removes it).
+    EXPECTED_VOLUMES["$(dce_cache_volume_name "$project_name")"]=1
   done
 
   managed_prefix="dce-hide-"

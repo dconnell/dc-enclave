@@ -32,7 +32,7 @@ unset _dce_scripts_dir
 #
 # Per-subcommand grammar mirrors the real argument parsing in scripts/*.sh:
 #   start|stop              : variadic project names (0 args == all)
-#   shell                   : one project, then free-form command
+#   shell                   : [--repo <name>] one project, then free-form command
 #   editor                  : [--editor <id>] one project
 #   rebuild-container       : one project + --rotate-keys / --inject-creds /
 #                             --keep-hidden-volumes / --from-snap
@@ -43,7 +43,7 @@ unset _dce_scripts_dir
 #                             project (only meaningful with --hidden-volumes)
 #   new                     : <name> [scope] [--config <file>] [--save-team]
 #                             [--save-user] [--git-host <provider>]
-#                             [--repo-path <d>] [--cpus N]
+#                             [--repo <spec>] [--cpus N]
 #                             [--memory V] [--hide <path>] [--yes|-y]
 #                             [port:port ...]
 _dce_complete() {
@@ -73,20 +73,30 @@ _dce_complete() {
       return 0
       ;;
     shell)
-      # <name> [free-form command]. Project at slot 2, free-form after.
+      # [--repo <name>] <name> [free-form command]. Project at slot 2 unless a
+      # leading --repo consumes it first; free-form after the project.
+      if [[ "$prev" == "--repo" ]]; then
+        return 0
+      fi
       if [[ $COMP_CWORD -eq 2 ]]; then
         _dce_reply_projects "$cur"
+        [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
         return 0
       fi
       # Past slot 2: only complete if no project positional has been typed yet.
-      local _typed_proj=0 _w
+      local _typed_proj=0 _w _skip_next=0
       for _w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
+        if (( _skip_next )); then _skip_next=0; continue; fi
         case "$_w" in
+          --repo) _skip_next=1 ;;
           -*) : ;;
           *) _typed_proj=1 ;;
         esac
       done
-      [[ $_typed_proj -eq 0 ]] && _dce_reply_projects "$cur"
+      if [[ $_typed_proj -eq 0 ]]; then
+        _dce_reply_projects "$cur"
+        [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
+      fi
       return 0
       ;;
     editor)
@@ -131,14 +141,18 @@ _dce_complete() {
       return 0
       ;;
     exec)
-      # Optional leading --root, then one project, then a free-form command.
+      # Optional leading --repo/--root, then one project, then a free-form command.
       if [[ $COMP_CWORD -eq 2 ]]; then
         _dce_reply_projects "$cur"
         [[ -z "$cur" || "--root" == "$cur"* ]] && COMPREPLY+=("--root")
+        [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
         return 0
       fi
       if [[ "$prev" == "--root" ]]; then
         _dce_reply_projects "$cur"
+        [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
+      elif [[ "$prev" == "--repo" ]]; then
+        return 0
       fi
       return 0
       ;;
@@ -218,6 +232,10 @@ _dce_complete() {
       ;;
     network|net)
       _dce_complete_network "$cur" "$prev"
+      return 0
+      ;;
+    repo)
+      _dce_complete_repo "$cur" "$prev"
       return 0
       ;;
     config)
@@ -388,15 +406,11 @@ _dce_complete_new() {
 
   # Flags that consume a following value.
   case "$prev" in
-    --repo-path)
-      mapfile -t COMPREPLY < <(compgen -d -- "$cur")
-      return 0
-      ;;
     --config)
       mapfile -t COMPREPLY < <(compgen -f -- "$cur")
       return 0
       ;;
-    --cpus|--memory|--hide|--network|--ip)
+    --repo|--cpus|--memory|--hide|--network|--ip)
       return 0
       ;;
     --git-host)
@@ -405,13 +419,49 @@ _dce_complete_new() {
       ;;
   esac
 
-  local flags="--config --save-team --save-user --git-host --repo-path --cpus --memory --hide --network --ip --yes -y"
+  local flags="--config --save-team --save-user --git-host --repo --cpus --memory --hide --network --ip --yes -y"
   if [[ $COMP_CWORD -eq 3 ]]; then
     # Second positional: a scope (with flags also accepted).
     mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_scopes) $flags" -- "$cur")
   else
     mapfile -t COMPREPLY < <(compgen -W "$flags" -- "$cur")
   fi
+}
+
+# `dce repo <list|add|remove> ...`: subactions at position 2. `repo add` accepts
+# an optional --yes/-y before the project; repo selectors/specs remain free-form.
+_dce_complete_repo() {
+  local cur="$1" prev="$2"
+
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_repo_subactions)" -- "$cur")
+    return 0
+  fi
+
+  if [[ "${COMP_WORDS[2]}" == "add" ]]; then
+    if [[ "$prev" == "--yes" || "$prev" == "-y" ]]; then
+      _dce_reply_projects "$cur"
+      return 0
+    fi
+    if [[ $COMP_CWORD -eq 3 ]]; then
+      mapfile -t COMPREPLY < <(compgen -W "--yes -y $(dce_complete_projects "$cur")" -- "$cur")
+      return 0
+    fi
+    if [[ ( "${COMP_WORDS[3]:-}" == "--yes" || "${COMP_WORDS[3]:-}" == "-y" ) && $COMP_CWORD -eq 4 ]]; then
+      _dce_reply_projects "$cur"
+      return 0
+    fi
+    return 0
+  fi
+
+  case "${COMP_WORDS[2]}" in
+    list|remove)
+      if [[ $COMP_CWORD -eq 3 ]]; then
+        _dce_reply_projects "$cur"
+      fi
+      return 0
+      ;;
+  esac
 }
 
 # `dce network <subaction> ...`: subactions at position 2; afterwards a network

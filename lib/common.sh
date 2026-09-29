@@ -18,6 +18,7 @@
 #   common/scopes.sh            overlay scope validation, dce_effective_scopes_csv,
 #                               dce_image_ref_from_scopes, dce_image_hash_from_ref
 #   common/hidden-volumes.sh    hidden-path normalization + volume lifecycle
+#   common/workspace.sh         schema-v2 repo layout + shared mount planning
 #   common/git-credentials.sh   token/PAT/SSH insteadOf wiring + VS Code setting
 #   common/container-hosts.sh   per-project hosts fragment -> /etc/hosts block
 #   common/snapshots.sh         snapshot image/volume naming + volume manifests
@@ -76,6 +77,8 @@ source "$_dce_common_lib_dir/common/global-config.sh"
 source "$_dce_common_lib_dir/common/scopes.sh"
 # shellcheck disable=SC1091
 source "$_dce_common_lib_dir/common/hidden-volumes.sh"
+# shellcheck disable=SC1091
+source "$_dce_common_lib_dir/common/workspace.sh"
 # shellcheck disable=SC1091
 source "$_dce_common_lib_dir/common/git-credentials.sh"
 # shellcheck disable=SC1091

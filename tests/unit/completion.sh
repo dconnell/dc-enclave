@@ -75,7 +75,7 @@ pass "scopes dedup + membership"
 
 subs="$(dce_complete_subcommands | sort)"
 for c in new start stop status s list ls shell logs editor extensions exec restart rm \
-         rebuild-container rebuild-image snapshot snapshots provenance clean config network net doctor install rotate-token version help; do
+         rebuild-container rebuild-image snapshot snapshots provenance clean config network net repo doctor install rotate-token version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
 pass "subcommands list"
@@ -159,8 +159,9 @@ drive 3 dce start alpha "";            assert_reply "start alpha <TAB>" beta gam
 drive 4 dce start alpha beta "";       assert_reply "start alpha beta <TAB>" gamma
 drive 5 dce stop alpha beta gamma "";  assert_empty   "stop all three <TAB>"
 
-# shell: one project, then free-form command (nothing past project).
-drive 2 dce shell "";       assert_reply "shell <TAB>" alpha beta gamma
+# shell: optional --repo <name>, then one project, then free-form command.
+drive 2 dce shell "";       assert_reply "shell <TAB>" --repo alpha beta gamma
+drive 3 dce shell --repo ""; assert_empty "shell --repo <value> (no completion)"
 drive 3 dce shell alpha ""; assert_empty   "shell alpha <TAB>"
 
 # editor: optional --editor <id>, then one project.
@@ -216,6 +217,13 @@ drive 3 dce provenance alpha "--";      assert_reply "provenance alpha --<TAB>" 
 drive 2 dce network ""; assert_reply "network <TAB>" \
   add create list ls members remove rm
 
+# repo: subactions at position 2; project at 3; add/remove arg slots after.
+drive 2 dce repo ""; assert_reply "repo <TAB>" add list remove
+drive 3 dce repo list ""; assert_reply "repo list <TAB>" alpha beta gamma
+drive 3 dce repo add ""; assert_reply "repo add <TAB>" --yes -y alpha beta gamma
+drive 4 dce repo add --yes ""; assert_reply "repo add --yes <TAB>" alpha beta gamma
+drive 3 dce repo remove ""; assert_reply "repo remove <TAB>" alpha beta gamma
+
 # config: subactions at position 2; project at 3; key at 4 (get/set);
 # sync-vscode offers --dry-run at position 4.
 drive 2 dce config ""; assert_reply "config <TAB>" get ls set show sync-vscode
@@ -244,9 +252,10 @@ drive 3 dce logs alpha "";          assert_reply "logs alpha <TAB>" --follow -f 
 drive 3 dce logs alpha "--";        assert_reply "logs alpha --<TAB>" --follow --tail
 drive 4 dce logs alpha --tail "";   assert_empty "logs alpha --tail <val> (no completion)"
 
-# exec: optional leading --root, one project, then a free-form command.
-drive 2 dce exec "";                assert_reply "exec <TAB>" --root alpha beta gamma
-drive 3 dce exec --root "";         assert_reply "exec --root <TAB>" alpha beta gamma
+# exec: optional leading --repo/--root, one project, then a free-form command.
+drive 2 dce exec "";                assert_reply "exec <TAB>" --repo --root alpha beta gamma
+drive 3 dce exec --root "";         assert_reply "exec --root <TAB>" --repo alpha beta gamma
+drive 3 dce exec --repo "";         assert_empty "exec --repo <value> (no completion)"
 drive 3 dce exec alpha "";          assert_empty "exec alpha <cmd> (free-form)"
 
 # restart: variadic projects (excludes already-typed), like start/stop.
@@ -284,10 +293,11 @@ drive 3 dce snapshots list ""; assert_reply "snapshots list <project> <TAB>" alp
 # new: name is free text (no completion), pos3 = scope + flags.
 drive 2 dce new "";               assert_empty "new <name> (free text, no completion)"
 drive 3 dce new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
-  --config --cpus --git-host --hide --ip --memory --network --repo-path --save-team --save-user --yes -y all golang node
+  --config --cpus --git-host --hide --ip --memory --network --repo --save-team --save-user --yes -y all golang node
 # --network/--ip consume a value (no completion offered for the value).
 drive 4 dce new foo --network ""; assert_empty "new foo --network <val> (no completion)"
 drive 4 dce new foo --git-host ""; assert_reply "new foo --git-host <TAB>" github gitlab
+drive 4 dce new foo --repo "";     assert_empty "new foo --repo <spec> (free-form path/name=path)"
 
 # ---------------------------------------------------------------------------
 # Section 3 - zsh completion (scripts/_dce), gated on zsh being installed
@@ -454,7 +464,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dce_subcommands
-    local want="--help --version -h -v clean config doctor editor exec extensions help install list logs ls net network new provenance rebuild-container rebuild-image restart rm rotate-token s shell snapshot snapshots start status stop version"
+    local want="--help --version -h -v clean config doctor editor exec extensions help install list logs ls net network new provenance rebuild-container rebuild-image repo restart rm rotate-token s shell snapshot snapshots start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -463,6 +473,7 @@ if command -v zsh >/dev/null 2>&1; then
     chk() { SPEC=(); _dce_dispatch "$1"; [[ "${SPEC[*]}" == *"$2"* ]] || { print "FAIL: zsh $1 spec missing [$2] got [${SPEC[*]}]"; exit 1 }; }
     chk start            "*:project:"
     chk shell            "1:project:"
+    chk shell            "--repo+[repo name]"
     chk editor           "1:project:"
     chk editor           "--editor+[editor id]"
     chk extensions       "1:subcommand: _dce_extensions_subactions"
@@ -485,6 +496,7 @@ if command -v zsh >/dev/null 2>&1; then
     chk logs             "1:project:"
     chk logs             "--follow["
     chk exec             "--root["
+    chk exec             "--repo+[repo name]"
     chk exec             "1:project:"
     chk restart          "*:project:"
     chk rm               "1:project:"
@@ -502,13 +514,20 @@ if command -v zsh >/dev/null 2>&1; then
     chk rebuild-image    "1:target:_dce_rebuild_image_targets"
     chk provenance       "1:project:_dce_projects_simple"
     chk provenance       "--history["
+    chk repo             "1:subcommand: _dce_repo_subactions"
+    words=(repo add "") CURRENT=3 SPEC=(); _dce_repo
+    [[ "${SPEC[*]}" == *"--yes[skip confirmation prompts for repo paths outside the default repos dir]"* ]] \
+      || { print "FAIL: zsh repo add should offer --yes -> [${SPEC[*]}]"; exit 1; }
+    [[ "${SPEC[*]}" == *"2:project"* ]] \
+      || { print "FAIL: zsh repo add should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1; }
     chk new              "2:scope:_dce_scopes"
     chk new              "*--hide["
     chk new              "--git-host+[git host provider (github/gitlab)]"
+    chk new              "*--repo+[repo spec"
     chk new              "*--network["
     chk new              "--ip+["
-    chk new              "--yes[skip the recipe-repo-path confirmation prompt]"
-    chk new              "-y[skip the recipe-repo-path confirmation prompt]"
+    chk new              "--yes[skip confirmation prompts for repo paths outside the default repos dir]"
+    chk new              "-y[skip confirmation prompts for repo paths outside the default repos dir]"
     words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--from-snap+[recreate from snapshot"
     chk snapshot         "1:project or rm:"

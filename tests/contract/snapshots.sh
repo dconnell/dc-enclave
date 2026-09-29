@@ -390,7 +390,7 @@ grep -Fxq "$PROJECT" "$RUNNING" || printf '%s\n' "$PROJECT" >> "$RUNNING"
 # ===========================================================================
 snap_ref="$(dce_snapshot_ref "$PROJECT" "pre")"
 : > "$LOG"
-run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" pre >"$WORK/snap.stdout" 2>"$WORK/snap.stderr" \
+run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" pre --yes >"$WORK/snap.stdout" 2>"$WORK/snap.stderr" \
   || fail "dce snapshot exited non-zero
 -- stderr:$(cat "$WORK/snap.stderr")"
 
@@ -438,7 +438,7 @@ pass "dce snapshot: validates label charset (rejects '/')"
 
 # Default label is a sortable timestamp.
 : > "$LOG"
-run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" >"$WORK/snap4.stdout" 2>"$WORK/snap4.stderr" \
+run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" --yes >"$WORK/snap4.stdout" 2>"$WORK/snap4.stderr" \
   || fail "dce snapshot (default label) exited non-zero"
 # A second snapshot ref with a timestamp-shaped label now exists for myapp.
 if ! grep -Fxq "dce-snap-myapp-$(date -u +%Y%m%d)-" "$IMAGES" 2>/dev/null \
@@ -485,7 +485,7 @@ img_has "$snap_ref" "$IMAGES" && fail "snapshot rm: image still present" || true
 pass "dce snapshot rm: removes one snapshot image"
 
 # Re-create 'pre' for the clean/restore sections below.
-run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" pre >/dev/null 2>&1 \
+run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" pre --yes >/dev/null 2>&1 \
   || fail "dce snapshot (re-create pre) exited non-zero"
 img_has "$snap_ref" "$IMAGES" || fail "snapshot: re-create failed"
 
@@ -538,8 +538,8 @@ pass "rebuild-container --from-snap: fail-fast on missing snapshot (no destructi
 # E. dce clean: default ignores snapshots; --snapshots reclaims; dry-run/scoping
 # ===========================================================================
 # Recreate two snapshots: one for myapp, one for 'other'.
-run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" keep1 >/dev/null 2>&1 || fail "setup snapshot keep1"
-run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" keep2 >/dev/null 2>&1 || fail "setup snapshot keep2"
+run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" keep1 --yes >/dev/null 2>&1 || fail "setup snapshot keep1"
+run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" keep2 --yes >/dev/null 2>&1 || fail "setup snapshot keep2"
 img_has "dce-snap-myapp-keep1:latest" "$IMAGES" || fail "setup: keep1 missing"
 img_has "dce-snap-myapp-keep2:latest" "$IMAGES" || fail "setup: keep2 missing"
 

@@ -33,12 +33,12 @@ _show_summary() {
   echo "  stop [name ...]                                   Stop one or more projects, or all"
   echo "  list                                              List containers and status"
   echo "  status                                            Show overall status and per-project details"
-  echo "  shell <name> [command]                            Interactive shell/command; seeds git token as provider env var (zsh -ic)"
+  echo "  shell [--repo <name>] <project> [command]         Interactive shell/command; seeds git token as provider env var (zsh -ic)"
   echo "  logs <name> [-f|--follow] [--tail N]              Fetch container log stream"
   echo "  editor [--editor <id>] <name>                     Launch your editor attached to the running container (/workspace)"
   echo "  extensions <list|host|available|show|diff|capture> [<name>] [--scope <s>] [--editor <id>]"
   echo "                                                    Inspect, compare, and capture editor extensions"
-  echo "  exec [--root] <name> <command...>                 Raw one-shot in a running container; no token (docker-exec style)"
+  echo "  exec [--repo <name>] [--root] <name> <command...> Raw one-shot in a running container; no token (docker-exec style)"
   echo "  restart [name ...]                                Restart one or more projects, or all"
   echo "  rm <name> [--yes] [--keep-config] [--keep-volumes]"
   echo "                                                    Remove a project (container, volumes, snapshots, config)"
@@ -55,6 +55,7 @@ _show_summary() {
   echo "  network <create|ls|members|rm|add|remove> ...     Manage private networks between containers"
   echo "  install <name> <path>                             Install dotfiles"
   echo "  rotate-token <name>                              Push the current git token into a container (state-preserving)"
+  echo "  repo <list|add|remove> ...                        Manage a project's repo set (config only)"
   echo "  config <show|get|set|sync-vscode|ls> ...         Inspect/edit config; sync devcontainer managed fields"
   echo "  version                                           Print version (aliases: --version, -v)"
   echo "  help [command]                                    Show this help or detailed help"
@@ -66,16 +67,16 @@ _show_summary() {
 _show_help_new() {
   cat <<'EOF'
 Usage: dce new <name> [scope[,scope...]] [--cpus <N>] [--memory <val>]
-              [--repo-path <path>] [--hide <path[,path...]> ...]
+              [--repo <path|name=path>] ... [--hide <path[,path...]> ...]
               [--network <name[,name...]>] [--ip <addr>] [--git-host <provider>]
               [--config <path>] [--save-team] [--save-user] [--yes|-y]
               [port|host:container ...]
 
 Description:
   Creates a new isolated dev container: per-project SSH deploy key, git-host
-  token placeholder, .npmrc template, and a host directory bind-mounted as
-  /workspace. The container is created and started, then wired for editors
-  (.devcontainer/devcontainer.json).
+  token placeholder, .npmrc template, and one or more host repos mounted under
+  /workspace/<repo-name>. The container is created and started, then wired for
+  editors via the managed devcontainer.json in the project config dir.
 
   The image is chosen from scopes:
   - No scopes: the shared base image (dce-base:latest).
@@ -106,16 +107,16 @@ Options:
   --memory <val>
              Memory limit (e.g. 4g, 512m).
 
-  --repo-path <path>
-             Host directory to bind-mount as /workspace. Default:
-             $DC_REPOS_DIR/<name> (~/repos/<name>).
-             CLI --repo-path is unrestricted. A recipe-sourced repo-path is
-             gated: values resolving to /, your home, the repos root, or a
-             parent of it -- and relative paths that escape the repos root --
-             are rejected; absolute paths outside the default repos dir
-             prompt for confirmation (--yes honors them with a notice).
-             Characters unsafe in a bind-mount source are rejected from any
-             source.
+  --repo <path|name=path>
+               Add one repo to the project. Repeatable. With no --repo, `dce new`
+               creates a single repo at $DC_REPOS_DIR/<name> (~/repos/<name>) and
+               names it <name>. A path outside the default repos dir prompts for
+               confirmation unless --yes/-y is given. The repos root itself
+               ($DC_REPOS_DIR or ~/repos) and any parent of it are rejected
+               outright because they are too broad to expose as one repo.
+              Examples:
+                --repo ~/code/api
+                --repo web=~/code/frontend
 
   --hide <path[,path...]>
              Keep /workspace-relative paths in named volumes so generated
@@ -158,9 +159,10 @@ Options:
              <name>. Both flags may be given; recipe-defaulted values are
              never written, only what you passed on the CLI.
 
-  --yes, -y  Skip the recipe repo-path confirmation prompt: the value is
-             honored with a visible notice instead. No effect on CLI
-             --repo-path or recipe paths inside the default repos dir.
+  --yes, -y  Skip confirmation prompts for repo paths outside the default repos
+               directory (recipe-sourced or --repo); the values are honored with
+               a visible notice instead. Does not override the hard rejection for
+               the repos root or a parent of it.
 
 Examples:
   dce new myapp                          base image, no scopes
@@ -170,15 +172,18 @@ Examples:
   dce new api nodejs --cpus 2 --memory 4g --hide node_modules 3000 --save-team
   dce new myapp --network myapp --ip 10.0.0.5
   dce new myapp --config ~/.config/dce-enclave/team/container-recipes/api
-  dce new myapp node --repo-path ~/code/myapp
-  dce new mono nodejs,golang --hide apps/web/node_modules --hide .cache/go/mod
+  dce new myapp node --repo ~/code/myapp
+  dce new workspace --repo web=~/code/web --repo api=~/code/api
+  dce new mono nodejs,golang --hide apps/web/node_modules --hide api/target
 
 Notes:
   - Requires dce-base:latest on the backend; run scripts/setup.sh first.
   - Config and secrets are stored in ~/.config/dce-enclave/<name>/ with
     restrictive permissions (chmod 600/700).
-  - .devcontainer/devcontainer.json is seeded once and never overwritten;
-    drift prints a notice -- reconcile with `dce config sync-vscode <name>`.
+  - The managed devcontainer.json lives at
+    ~/.config/dce-enclave/<name>/devcontainer.json and is seeded once; existing
+    files are never overwritten. Managed-field drift prints a notice --
+    reconcile with `dce config sync-vscode <name>`.
   - apple/container: DNS is set at create time (override: DCE_DNS); VS Code
     attach is experimental (see `dce help editor`).
   - Create-time choices (cpus, memory, hide, network, ports, scopes) change
@@ -316,7 +321,7 @@ EOF
 
 _show_help_shell() {
   cat <<'EOF'
-Usage: dce shell <name> [command]
+Usage: dce shell [--repo <name>] <project> [command]
 
 Description:
   Opens an interactive zsh inside a dev container (started automatically if
@@ -334,7 +339,11 @@ Description:
   GITLAB_TOKEN for gitlab.
 
 Arguments:
-  <name>     Project name. Must already exist.
+  <project>  Project name. Must already exist.
+
+Options:
+  --repo <name>
+             Run from /workspace/<name> instead of the default shell cwd.
 
   [command]  Optional command to run instead of opening an interactive
              shell. If it begins with '-', separate it from the project
@@ -342,12 +351,13 @@ Arguments:
 
 Examples:
   dce shell myapp                         Interactive zsh session
-  dce shell myapp "git pull"              One command, then exit
+  dce shell --repo api myapp "git pull"   One command in /workspace/api, then exit
   dce shell myapp "npm install && npm run dev"
 
 Notes:
   - A stopped container is started automatically.
-  - /workspace is the host repos dir, bind-mounted.
+  - Interactive shells default to /workspace/<repo> for single-repo projects and
+    /workspace for multi-repo projects. Use --repo to target one repo explicitly.
   - For a raw, scriptable exec with NO token and NO zsh wrapping
     (docker-exec style, args passed verbatim), use `dce exec` -- the
     container must already be running. See: dce help exec.
@@ -375,7 +385,8 @@ Description:
   config so editor/terminal git uses the container's PAT-backed
   ~/.git-credentials instead of VS Code's host-credential forwarding. This
   is attach-mode state, separate from `dce config sync-vscode` (which
-  manages .devcontainer/devcontainer.json only).
+  manages the managed devcontainer.json at
+  ~/.config/dce-enclave/<project>/devcontainer.json only).
 
 Editor selection (first match wins):
   --editor <id>     Explicit one-shot override (also --editor=<id>).
@@ -439,7 +450,8 @@ Description:
   present, then each effective scope, team-then-user, first occurrence
   wins on duplicates.
 
-  `dce new` seeds the merged set into .devcontainer/devcontainer.json
+  `dce new` seeds the merged set into the managed devcontainer.json at
+  ~/.config/dce-enclave/<project>/devcontainer.json
   (customizations.<editor>.extensions) and `dce config sync-vscode`
   re-syncs it, so VS Code installs the declared set on open.
 
@@ -545,7 +557,7 @@ EOF
 
 _show_help_exec() {
   cat <<'EOF'
-Usage: dce exec [--root] <name> <command...>
+Usage: dce exec [--repo <name>] [--root] <name> <command...>
 
 Description:
   Runs a single command in a running container, docker-exec style: args
@@ -565,6 +577,9 @@ Arguments:
                 arrive untouched).
 
 Options:
+  --repo <name>
+             Run the command from /workspace/<name>.
+
   --root        Run as uid 0, non-interactively, without a TTY -- for
                 permission debugging (chown, system package installs).
                 Maps to the same root-exec path rebuild-container uses.
@@ -572,6 +587,7 @@ Options:
 
 Examples:
   dce exec myapp whoami
+  dce exec --repo api myapp pwd
   dce exec myapp node -v
   dce exec myapp ls -la /workspace
   dce exec --root myapp chown -R dev:dev /workspace/build
@@ -626,7 +642,7 @@ Description:
     4. remove the per-project config + secrets directory
        (~/.config/dce-enclave/<name>): SSH key, git token, .npmrc
 
-  Your host code directory ($REPOS_DIR) is NEVER touched by this command.
+  Your host repo directories are NEVER touched by this command.
 
   Destructive: prompts for confirmation (type 'yes') unless --yes is
   given. If the backend is unreachable, container/volume/snapshot removal
@@ -637,10 +653,11 @@ Options:
   --yes, -y       Skip the confirmation prompt.
 
   --keep-config   Preserve the config + secrets directory. Only the
-                  container and hidden volumes are removed.
+                  container and managed volumes are removed.
 
-  --keep-volumes  Preserve managed hidden volumes AND snapshots. Only the
-                  container and config + secrets are removed.
+  --keep-volumes  Preserve managed hidden volumes, the /workspace/.cache
+                  volume, AND snapshots. Only the container and config +
+                  secrets are removed.
 
 Arguments:
   <name>     Project name.
@@ -652,10 +669,10 @@ Examples:
   dce rm myapp --keep-volumes        Keep hidden volumes + snapshots
 
 Notes:
-  - Host code at $REPOS_DIR is preserved; remove it manually if no longer
-    needed:  rm -rf "${DC_REPOS_DIR:-$HOME/repos}/<name>"
-  - The generated .devcontainer/devcontainer.json lives under $REPOS_DIR
-    and is likewise preserved.
+  - Host repos are preserved; the exact paths are listed by the command
+    (they are the REPO_PATHS entries in the project config).
+  - The managed devcontainer.json lives in the project config dir
+    (~/.config/dce-enclave/<name>/devcontainer.json) and is removed with it.
   - To recreate a removed project: `dce new <name> [scope] ...`.
   - To wipe only the container filesystem while keeping config and code:
     `dce rebuild-container <name>`.
@@ -749,7 +766,7 @@ Notes:
   - You will be prompted to type 'yes' to confirm before destruction
     (use --yes/-y to skip, e.g. for automation).
   - Re-apply dotfiles after rebuild with `dce install <name> <path>`.
-  - Existing .devcontainer/devcontainer.json is preserved; a non-fatal
+  - Existing managed devcontainer.json is preserved; a non-fatal
     drift notice prints when managed fields diverge -- reconcile with
     `dce config sync-vscode <name>`.
   - Snapshots capture the image plus the container's writable layer and,
@@ -917,7 +934,7 @@ Description:
   runtime is running.
 
   `sync-vscode` is the one carved-out subcommand: it rewrites the MANAGED
-  fields in the project's .devcontainer/devcontainer.json (outside the
+  fields in the project's managed devcontainer.json (outside the
   config file), preserving user edits. It makes no backend call either,
   but requires jq and loads global config to re-derive the managed
   dockerfile path. It does NOT manage VS Code's attached-container named
@@ -961,7 +978,7 @@ Keys:
     memory      Memory limit, e.g. 4g or 512m. Empty = backend default.
     scopes      Overlay scopes, comma-separated (e.g. nodejs,golang).
     ports       Port mappings, comma-separated (e.g. 3000:3000,8080).
-    hide        Hidden /workspace paths, comma-separated (e.g. node_modules,.cache).
+    hide        Hidden /workspace paths, comma-separated (e.g. node_modules,apps/web/node_modules).
     networks    Networks, comma-separated; each is name or name:ip.
   Read-only (get only): project, backend, image, repos.
 
@@ -982,8 +999,8 @@ Notes:
     only after `dce rebuild-container <name>` (resource limits and mounts
     are applied at container creation time). A successful `set` prints a
     reminder.
-  - `dce new` / `dce rebuild-container` never overwrite an existing
-    .devcontainer/devcontainer.json; they print a drift notice when its
+  - `dce new` / `dce rebuild-container` never overwrite an existing managed
+    devcontainer.json; they print a drift notice when its
     managed fields diverge from current config. Use
     `dce config sync-vscode <name>` to reconcile on demand.
   - To create or remove a project (rather than edit its config), use
@@ -1055,7 +1072,52 @@ Notes:
   - apple/container: attach with --network at `dce new` time only -- live
     add/remove and static IPs are unsupported, and a container may join a
     single network.
-  - Containers with no --network are not linked to any dce peer.
+EOF
+}
+
+_show_help_repo() {
+  cat <<'EOF'
+Usage: dce repo list <project>
+       dce repo add <project> [--yes|-y] <path|name=path>
+       dce repo remove <project> <name-or-path>
+
+Description:
+  Lists and edits the set of host repositories a project binds into the
+  container (config keys REPO_NAMES/REPO_PATHS). Each repo is mounted
+  read-write at /workspace/<repo-name>. This command family changes only
+  the config file; it never touches a running container.
+
+Subcommands:
+  list <project>
+              Print one `name=path` line per configured repo.
+
+  add <project> <path|name=path>
+               Append one repo. A bare <path> derives the repo name from
+               the path's basename; `name=path` names it explicitly. The
+               target directory is created if it does not exist yet, so a
+               repo you have not cloned still gets a writable bind source
+               at rebuild time. Adding a path that aliases an
+               already-configured repo is rejected (entries are matched by
+               best-effort resolved path). Paths outside the default repos dir
+               prompt for confirmation unless --yes/-y is given; the repos
+               root itself ($DC_REPOS_DIR or ~/repos) and any parent of it
+               are rejected outright.
+
+  remove <project> <name-or-path>
+              Drop one repo, given by name or by its configured path. A
+              project must keep at least one repo.
+
+Examples:
+  dce repo list myapp
+  dce repo add myapp ~/repos/web
+  dce repo add myapp api=~/work/company-api
+  dce repo remove myapp api
+
+Notes:
+  - Config-only: every change prints a reminder to run
+    `dce rebuild-container <project>`; mounts change only on rebuild.
+  - Repo names must be valid repo names; '.cache' is reserved for the
+    dce-managed cache volume mounted at /workspace/.cache.
 EOF
 }
 
@@ -1289,7 +1351,7 @@ Arguments:
               new, start, stop, status, list, shell, logs, editor,
               extensions, exec, restart, rm, rebuild-container,
               rebuild-image, snapshot, provenance, clean, config,
-              doctor, network, install, rotate-token, version, help
+              doctor, network, repo, install, rotate-token, version, help
 
               Aliases resolve too: s (status), ls (list), net (network),
               snapshots (snapshot).
@@ -1353,6 +1415,7 @@ case "$COMMAND" in
   config)             _show_help_config ;;
   doctor)             _show_help_doctor ;;
   network|net)        _show_help_network ;;
+  repo)               _show_help_repo ;;
   install)            _show_help_install ;;
   rotate-token)       _show_help_rotate_token ;;
   version|--version|-v) _show_help_version ;;

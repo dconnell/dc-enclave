@@ -27,7 +27,7 @@ _dce() {
   #
   # No `emulate -L zsh`: the completion system already runs widgets under a
   # controlled option set, and `emulate -L zsh` here breaks `_files` (used by
-  # `install` and `new --repo-path`) -- its internal directory glob miscompiles
+  # `install` and `new --config`) -- its internal directory glob miscompiles
   # under the option combination `emulate zsh` selects.
   _arguments -C \
     '1: :->subcmd' \
@@ -90,6 +90,7 @@ _dce_dispatch() {
     shell)
       # One project, then a free-form command (no completion past it).
       _arguments \
+        '--repo+[repo name]:repo name:' \
         '1:project:_dce_projects_simple'
       ;;
     editor)
@@ -108,6 +109,7 @@ _dce_dispatch() {
     exec)
       # Optional --root, then one project, then a free-form command.
       _arguments \
+        '--repo+[repo name]:repo name:' \
         '--root[run as uid 0 (non-interactive)]' \
         '1:project:_dce_projects_simple'
       ;;
@@ -174,6 +176,9 @@ _dce_dispatch() {
       ;;
     network|net)
       _dce_network
+      ;;
+    repo)
+      _dce_repo
       ;;
     config)
       _dce_config
@@ -302,7 +307,7 @@ _dce_doctor() {
   _wanted targets expl 'backend or project' compadd -a all
 }
 
-# `dce new <name> [scope] [--config <file>] [--save-team] [--save-user] [--repo-path <d>] [--cpus N] [--memory V] [--hide <p>] [--network <n>[,...]] [--ip <addr>] [--yes|-y] [ports]`.
+# `dce new <name> [scope] [--config <file>] [--save-team] [--save-user] [--repo <spec>] [--cpus N] [--memory V] [--hide <p>] [--network <n>[,...]] [--ip <addr>] [--yes|-y] [ports]`.
 _dce_new() {
   _arguments \
     '1:project name:' \
@@ -311,14 +316,14 @@ _dce_new() {
     '--save-team[save CLI-supplied recipe keys to team container-recipes/<name>]' \
     '--save-user[save CLI-supplied recipe keys to user container-recipes/<name>]' \
     '--git-host+[git host provider (github/gitlab)]:provider:(github gitlab)' \
-    '--repo-path+[override the repos directory]:directory:_files -/' \
+    '*--repo+[repo spec (<path> or <name>=<path>)]:repo spec:' \
     '--cpus+[cpu limit (e.g. 2, 1.5)]:value:' \
     '--memory+[memory limit (e.g. 4g, 512m)]:value:' \
     '*--hide[workspace path(s) to keep in a named volume]:path:' \
     '*--network[network(s) to attach (name\[,name...\] or name:ip)]:network:' \
     '--ip+[static IPv4 for the primary network]:addr:' \
-    '--yes[skip the recipe-repo-path confirmation prompt]' \
-    '-y[skip the recipe-repo-path confirmation prompt]'
+    '--yes[skip confirmation prompts for repo paths outside the default repos dir]' \
+    '-y[skip confirmation prompts for repo paths outside the default repos dir]'
 }
 
 # `dce network <subaction> [args]`.
@@ -331,6 +336,38 @@ _dce_network() {
   local -a subs
   subs=("${(@f)$(dce_complete_network_subactions)}")
   _describe 'network subcommand' subs
+}
+
+# `dce repo <list|add|remove> ...`.
+_dce_repo() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+
+  local sub="${words[2]}"
+  case "$sub" in
+    list|remove)
+      _arguments \
+        '1:subcommand: _dce_repo_subactions' \
+        '2:project:_dce_projects_simple'
+      ;;
+    add)
+      _arguments \
+        '1:subcommand: _dce_repo_subactions' \
+        '2:project:_dce_projects_simple' \
+        '--yes[skip confirmation prompts for repo paths outside the default repos dir]' \
+        '-y[skip confirmation prompts for repo paths outside the default repos dir]'
+      ;;
+    *)
+      _arguments '1:subcommand: _dce_repo_subactions'
+      ;;
+  esac
+}
+_dce_repo_subactions() {
+  local -a subs
+  subs=("${(@f)$(dce_complete_repo_subactions)}")
+  _describe 'repo subcommand' subs
 }
 
 # `dce config <show|get|set|sync-vscode|ls> ...`. Position 1 is the subaction;
