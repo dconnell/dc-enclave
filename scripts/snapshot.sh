@@ -212,7 +212,8 @@ do_create() {
     fi
   fi
 
-  local config="$HOME/.config/dc-enclave/$project/config"
+  local config=""
+  config="$(dce_project_config_path "$project")"
   if [[ ! -f "$config" ]]; then
     dce_die "No project '$project' (config not found)."
   fi
@@ -546,22 +547,19 @@ do_list() {
   # attributed to its project and labeled. Snapshots whose project is gone
   # (orphan) fall back to their slug.
   declare -A slug_to_project=()
-  local cfg_dir="$HOME/.config/dc-enclave"
-  local d="" pname="" pslug=""
-  if [[ -d "$cfg_dir" ]]; then
-    for d in "$cfg_dir"/*; do
-      [[ -d "$d" && -f "$d/config" ]] || continue
-      pname="$(basename "$d")"
-      pslug="$(dce_project_slug "$pname")"
-      # First project wins on slug collision (slugs truncate at 24 chars).
-      [[ -n "${slug_to_project[$pslug]:-}" ]] || slug_to_project["$pslug"]="$pname"
-    done
-  fi
+  local config_file="" pname="" pslug=""
+  while IFS= read -r config_file; do
+    [[ -f "$config_file" ]] || continue
+    pname="$(basename "$(dirname "$config_file")")"
+    pslug="$(dce_project_slug "$pname")"
+    # First project wins on slug collision (slugs truncate at 24 chars).
+    [[ -n "${slug_to_project[$pslug]:-}" ]] || slug_to_project["$pslug"]="$pname"
+  done < <(dce_project_config_paths)
 
   local target_slug=""
   if [[ -n "$project" ]]; then
     target_slug="$(dce_project_slug "$project")"
-    if [[ ! -d "$cfg_dir/$project" ]]; then
+    if [[ ! -d "$(dce_project_dir "$project")" ]]; then
       dce_die "No project '$project' (config not found)."
     fi
   fi

@@ -101,7 +101,7 @@ run_new() {
 
 load_cfg() {
   local project="$1"
-  local cfg="$HOME/.config/dc-enclave/$project/config"
+  local cfg="$HOME/.config/dc-enclave/projects/$project/config"
   [[ -f "$cfg" ]] || fail "missing config for $project"
   # shellcheck disable=SC2034
   # Reset before dce_load_project_config repopulates them from the sourced cfg.
@@ -121,7 +121,7 @@ repo_name_of() {
 
 assert_no_config() {
   local project="$1"
-  [[ ! -f "$HOME/.config/dc-enclave/$project/config" ]] \
+  [[ ! -f "$HOME/.config/dc-enclave/projects/$project/config" ]] \
     || fail "unexpected config created for failing recipe: $project"
 }
 

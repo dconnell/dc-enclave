@@ -82,7 +82,7 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 | `get <name> <key>` | Print one value (`cpus`, `memory`, `scopes`, `ports`, `hide`, `networks`, and read-only `project`, `backend`, `image`, `repos`). |
 | `set <name> <key>=<value>` | Validate + atomically write one mutable key (`cpus`, `memory`, `scopes`, `ports`, `hide`, `networks`). Empty clears a key back to default. |
 | `set <name> <key> <value>` | Space-separated equivalent of `key=value`. |
-| `sync-vscode <name>` | Rewrite MANAGED fields in `~/.config/dc-enclave/<name>/devcontainer.json` to match current config while preserving user keys/mounts. Includes `customizations.vscode.extensions` when extension manifests are adopted (migration guard preserves hand-curated arrays pre-adoption). Docker-compatible projects only. Requires `jq`. |
+| `sync-vscode <name>` | Rewrite MANAGED fields in `~/.config/dc-enclave/projects/<name>/devcontainer.json` to match current config while preserving user keys/mounts. Includes `customizations.vscode.extensions` when extension manifests are adopted (migration guard preserves hand-curated arrays pre-adoption). Docker-compatible projects only. Requires `jq`. |
 | `--dry-run` *(with `sync-vscode`)* | Preview drift + planned managed-field rewrites without writing the file. |
 | `ls` | List projects that have a config file. |
 

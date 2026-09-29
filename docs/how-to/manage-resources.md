@@ -31,7 +31,7 @@ Clear a limit back to the backend default by setting it empty:
 dce config set <name> cpus=
 ```
 
-`dce config` is a thin, validating wrapper over the config file — it stays the source of truth. Use `dce config show <name>` to inspect the current values and `dce config get <name> memory` to read one value for scripting. (You can still edit `~/.config/dc-enclave/<name>/config` by hand, but `dce config set` validates before it writes.)
+`dce config` is a thin, validating wrapper over the config file — it stays the source of truth. Use `dce config show <name>` to inspect the current values and `dce config get <name> memory` to read one value for scripting. (You can still edit `~/.config/dc-enclave/projects/<name>/config` by hand, but `dce config set` validates before it writes.)
 
 Resource limits are applied at container creation time. Changes take effect only after `dce rebuild-container <name>` — `dce start` simply starts the existing container with its existing limits. `dce config set` prints a reminder.
 
@@ -41,4 +41,3 @@ Config keys:
 - `CONTAINER_MEMORY` — memory limit with suffix (e.g. `4g`, `512m`). Empty = backend default.
 
 All backends use the same flag syntax (`--cpus`, `--memory`). No backend-specific configuration is needed.
-

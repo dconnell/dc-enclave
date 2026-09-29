@@ -20,7 +20,7 @@ If you already work with Docker, Podman, or apple/container directly, `dce` orch
 What `dce` adds beyond raw backend commands:
 
 - project bootstrap from a shared base image plus optional overlay Containerfiles
-- persisted per-project configuration in `~/.config/dc-enclave/<name>/config`
+- persisted per-project configuration in `~/.config/dc-enclave/projects/<name>/config`
 - consistent mounts, ports, and resource limit handling across backends
 - optional per-project credential layout for PAT/SSH key/.npmrc with repeatable rebuild flows
 - one-command rebuild and key-rotation workflows for incident response
@@ -37,4 +37,3 @@ The table below focuses on the commands where `dce` replaces the most manual bac
 | `dce install myapp ~/.dotfiles` | Stream dotfiles via `tar` + `docker exec`, run `install.sh`, then remove temp files | Same flow with `podman` | Same flow with `container exec` |
 
 Of these, `dce new`, `dce rebuild-image`, and `dce rebuild-container` cover image lifecycle, container recovery, and security response as repeatable one-command workflows, without retyping backend-specific command sequences. `dce clean` and `dce install` reduce ongoing maintenance once projects are running.
-

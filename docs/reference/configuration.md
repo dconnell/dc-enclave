@@ -98,7 +98,7 @@ dce new workspace --repo api=~/code/api --repo web=~/code/web --save-team
 
 ## Project config keys
 
-Each project's config lives at `~/.config/dc-enclave/<name>/config` and is
+Each project's config lives at `~/.config/dc-enclave/projects/<name>/config` and is
 written by `dce new`. The hardened loader rejects unknown keys, unsafe shell
 syntax, and out-of-contract value combinations.
 

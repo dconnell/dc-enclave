@@ -68,7 +68,7 @@ dce_snapshot_volume_name() {
 # Directory holding a project's snapshot volume manifests (one per snapshot that
 # captured volumes). Lives under the project config dir alongside secrets.
 dce_snapshot_volumes_dir() {
-  printf '%s/.config/dc-enclave/%s/snapshots\n' "$HOME" "$1"
+  printf '%s/snapshots\n' "$(dce_project_dir "$1")"
 }
 
 # Path to the volumes manifest for a given snapshot label. The manifest is the

@@ -11,7 +11,7 @@
 #   and that every successful set leaves a loadable, mode-600 file behind.
 #
 # The command is backend-free and global-config-free: it touches only the
-# project config under $HOME/.config/dc-enclave/<name>/config, so the test
+# project config under $HOME/.config/dc-enclave/projects/<name>/config, so the test
 # points $HOME at a temp tree and never needs a container runtime.
 # =============================================================================
 set -euo pipefail
@@ -49,7 +49,7 @@ mode_is() {
 # (mode 600 / dir 700).
 write_project_config() {
   local project="$1"
-  local dir="$FAKE_HOME/.config/dc-enclave/$project"
+  local dir="$FAKE_HOME/.config/dc-enclave/projects/$project"
   mkdir -p "$dir"
   chmod 700 "$dir"
   {
@@ -71,7 +71,7 @@ write_project_config() {
 }
 
 config_path() {
-  printf '%s/.config/dc-enclave/%s/config\n' "$FAKE_HOME" "$1"
+  printf '%s/.config/dc-enclave/projects/%s/config\n' "$FAKE_HOME" "$1"
 }
 
 # ============================================================================
@@ -221,10 +221,18 @@ pass "read-only and unknown keys rejected"
 # ============================================================================
 write_project_config ls-a
 write_project_config ls-b
+mkdir -p "$FAKE_HOME/.config/dc-enclave/flat-legacy"
+touch "$FAKE_HOME/.config/dc-enclave/flat-legacy/config"
 mapfile -t listed < <(dce_config ls 2>/dev/null)
 found_a=0; found_b=0
-for n in "${listed[@]}"; do [[ "$n" == "ls-a" ]] && found_a=1; [[ "$n" == "ls-b" ]] && found_b=1; done
+found_flat=0
+for n in "${listed[@]}"; do
+  [[ "$n" == "ls-a" ]] && found_a=1
+  [[ "$n" == "ls-b" ]] && found_b=1
+  [[ "$n" == "flat-legacy" ]] && found_flat=1
+done
 [[ $found_a -eq 1 && $found_b -eq 1 ]] || fail "ls must list configured projects (got ${listed[*]:-})"
+[[ $found_flat -eq 0 ]] || fail "ls must ignore legacy flat project dirs (got ${listed[*]:-})"
 pass "config ls lists configured projects"
 
 # ============================================================================

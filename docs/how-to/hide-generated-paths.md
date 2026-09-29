@@ -39,7 +39,7 @@ Hidden paths are `/workspace`-relative and persisted repo-prefixed, because each
 - After container start, dce ensures the hidden mount points are writable by the `dev` user (root `mkdir`/`chown` fallback applied across all backends).
 - Hidden paths are persisted in the project config (`CONTAINER_HIDDEN_PATHS`) and automatically remounted on `dce rebuild-container`.
 - **`dce rebuild-container` removes hidden volumes by default** for a clean slate (fresh dependency install, no stale caches). Use `--keep-hidden-volumes` to preserve them.
-- For Docker-compatible backends, hidden paths are also added as mounts to the managed `devcontainer.json` (`~/.config/dc-enclave/<project>/devcontainer.json`) so VS Code Dev Containers uses the same layout. Existing files are preserved; if managed fields drift, `dce new` / `dce rebuild-container` print a notice and you can reconcile with `dce config sync-vscode <name>` (`--dry-run` previews only).
+- For Docker-compatible backends, hidden paths are also added as mounts to the managed `devcontainer.json` (`~/.config/dc-enclave/projects/<project>/devcontainer.json`) so VS Code Dev Containers uses the same layout. Existing files are preserved; if managed fields drift, `dce new` / `dce rebuild-container` print a notice and you can reconcile with `dce config sync-vscode <name>` (`--dry-run` previews only).
 
 ### Cleaning up hidden volumes
 

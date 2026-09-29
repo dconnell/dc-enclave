@@ -45,7 +45,7 @@ mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
 } > "$DC_ROOT/config"
 
 PROJ2="cfgproj"
-SECRET2="$DC_ROOT/$PROJ2"
+SECRET2="$DC_ROOT/projects/$PROJ2"
 REPOS2="$WORK/home/repos/$PROJ2"
 mkdir -p "$SECRET2" "$REPOS2"
 chmod 700 "$SECRET2"
@@ -223,7 +223,7 @@ RB_PROJ="rbproj"
 : > "$RLOG"
 run_dce "$ROOT_DIR/scripts/new-container.sh" "$RB_PROJ" \
   >"$WORK/n.out" 2>"$WORK/n.err" || fail "new (rbproj) exited non-zero ($(cat "$WORK/n.err"))"
-RB_DC="$DC_ROOT/$RB_PROJ/devcontainer.json"
+RB_DC="$DC_ROOT/projects/$RB_PROJ/devcontainer.json"
 [[ -f "$RB_DC" ]] || fail "new (rbproj): devcontainer.json not created"
 
 # Mutate ports via `dce config set` (the canonical drift trigger).
@@ -243,7 +243,7 @@ pass "dce rebuild-container: emits drift notice (ports) after config change, exi
 # H. `dce new` pre-existing devcontainer.json: preserve file + emit drift notice
 # =============================================================================
 PRE_PROJ="preexistproj"
-PRE_DC="$DC_ROOT/$PRE_PROJ/devcontainer.json"
+PRE_DC="$DC_ROOT/projects/$PRE_PROJ/devcontainer.json"
 mkdir -p "$(dirname "$PRE_DC")"
 cat > "$PRE_DC" <<EOF
 {
@@ -281,7 +281,7 @@ SNAP_PROJ="fromsnapdrift"
 run_dce "$ROOT_DIR/scripts/new-container.sh" "$SNAP_PROJ" \
   >"$WORK/fs.new.out" 2>"$WORK/fs.new.err" \
   || fail "new (from-snap fixture) exited non-zero ($(cat "$WORK/fs.new.err"))"
-SNAP_DC="$DC_ROOT/$SNAP_PROJ/devcontainer.json"
+SNAP_DC="$DC_ROOT/projects/$SNAP_PROJ/devcontainer.json"
 [[ -f "$SNAP_DC" ]] || fail "from-snap fixture: devcontainer.json missing"
 
 # Canonical drift trigger: mutate config ports only.
@@ -340,7 +340,7 @@ else
   printf 'a.b\nc.d\n' > "$EXT_USER_DIR/all.txt"
 
   EXT_PROJ="extproj"
-  EXT_SECRET="$DC_ROOT/$EXT_PROJ"
+  EXT_SECRET="$DC_ROOT/projects/$EXT_PROJ"
   EXT_REPO="$WORK/home/repos/$EXT_PROJ"
   mkdir -p "$EXT_SECRET" "$EXT_REPO"
   chmod 700 "$EXT_SECRET"

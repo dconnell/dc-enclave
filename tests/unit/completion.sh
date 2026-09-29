@@ -26,10 +26,14 @@ chmod 700 "$WORK"
 
 export HOME="$WORK"
 DC_ROOT="$HOME/.config/dc-enclave"
-mkdir -p "$DC_ROOT"/{alpha,beta,gamma}
-touch "$DC_ROOT"/alpha/config "$DC_ROOT"/beta/config "$DC_ROOT"/gamma/config
+PROJECTS_ROOT="$DC_ROOT/projects"
+mkdir -p "$PROJECTS_ROOT"/{alpha,beta,gamma}
+touch "$PROJECTS_ROOT"/alpha/config "$PROJECTS_ROOT"/beta/config "$PROJECTS_ROOT"/gamma/config
 # A dir without a config file must NOT be offered as a project.
-mkdir -p "$DC_ROOT/incomplete"
+mkdir -p "$PROJECTS_ROOT/incomplete"
+# Legacy flat project dirs are a clean-break miss and must not be discovered.
+mkdir -p "$DC_ROOT/flat-legacy"
+touch "$DC_ROOT/flat-legacy/config"
 
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
@@ -89,6 +93,11 @@ expect_sorted "config keys" \
 # doctor targets: the five backend names plus configured projects.
 expect_sorted "doctor targets" \
   "$(dce_complete_doctor_targets)" apple docker orbstack colima podman alpha beta gamma
+
+if dce_complete_projects | grep -qx 'flat-legacy'; then
+  fail "project discovery must ignore legacy flat config dirs"
+fi
+pass "project discovery ignores legacy flat config dirs"
 
 # Hardened global-config parser: must accept a clean quoted value and reject
 # anything that could execute ($, backtick, or unquoted).

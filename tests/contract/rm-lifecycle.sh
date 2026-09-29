@@ -87,7 +87,7 @@ export PATH="$STUB_DIR:$ORIG_PATH"
 
 PROJECT="rmproj"
 REPOS_DIR="$WORK/home/repos/$PROJECT"
-SECRET_DIR="$DC_ROOT/$PROJECT"
+SECRET_DIR="$DC_ROOT/projects/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 # Write a valid project config (strict loader format) + secrets, and plant the

@@ -15,20 +15,73 @@ if [[ -n "${_DC_COMMON_GLOBAL_CONFIG_SH_LOADED:-}" ]]; then
 fi
 declare -gr _DC_COMMON_GLOBAL_CONFIG_SH_LOADED=1
 
+# Path to the root DC Enclave config directory.
+dce_config_root() {
+  printf '%s/.config/dc-enclave\n' "$HOME"
+}
+
 # Path to the global DC Enclave config file (DC_TEAM_DIR/DC_USER_DIR live here).
 dce_global_config_path() {
-  printf '%s/.config/dc-enclave/config\n' "$HOME"
+  printf '%s/config\n' "$(dce_config_root)"
 }
 
 # Default team/user roots used by setup.sh when bootstrapping global config. Each
 # is an independent root that may be its own git repo, containing both overlays/
 # (image layers) and container-recipes/ (per-container-name recipe files).
 dce_team_default_root() {
-  printf '%s/.config/dc-enclave/team\n' "$HOME"
+  printf '%s/team\n' "$(dce_config_root)"
 }
 
 dce_user_default_root() {
-  printf '%s/.config/dc-enclave/user\n' "$HOME"
+  printf '%s/user\n' "$(dce_config_root)"
+}
+
+# Path to the parent directory holding all per-project config + secret dirs.
+dce_projects_root() {
+  printf '%s/projects\n' "$(dce_config_root)"
+}
+
+# Path to one project's config + secret dir.
+dce_project_dir() {
+  local project="$1"
+  printf '%s/%s\n' "$(dce_projects_root)" "$project"
+}
+
+# Path to one project's config file.
+dce_project_config_path() {
+  local project="$1"
+  printf '%s/config\n' "$(dce_project_dir "$project")"
+}
+
+# Path to one project's hosts fragment.
+dce_project_hosts_file() {
+  local project="$1"
+  printf '%s/hosts\n' "$(dce_project_dir "$project")"
+}
+
+# Echo every active project config path, one per line. Only the projects/
+# subtree is scanned so global roots like team/ and user/ are never mistaken for
+# projects.
+dce_project_config_paths() {
+  local base=""
+  base="$(dce_projects_root)"
+  [[ -d "$base" ]] || return 0
+
+  local had_nullglob=0
+  if shopt -q nullglob; then
+    had_nullglob=1
+  else
+    shopt -s nullglob
+  fi
+
+  local config_file=""
+  for config_file in "$base"/*/config; do
+    [[ -f "$config_file" ]] && printf '%s\n' "$config_file"
+  done
+
+  if [[ "$had_nullglob" -eq 0 ]]; then
+    shopt -u nullglob
+  fi
 }
 
 # Single source of truth for the four leaf directories under the two roots. The

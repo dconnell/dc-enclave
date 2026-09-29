@@ -6,7 +6,7 @@
 #   - the container (stopped first if running)
 #   - every managed hidden volume (dce-hide-<project>-<hash>)
 #   - the managed persistent cache volume (/workspace/.cache)
-#   - the per-project config + secrets dir (~/.config/dc-enclave/<name>)
+#   - the per-project config + secrets dir (~/.config/dc-enclave/projects/<name>)
 # Escape hatches: --keep-config preserves config+secrets; --keep-volumes
 # preserves hidden volumes + the cache volume. --yes/-y skips confirmation.
 #
@@ -84,7 +84,7 @@ if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
   dce_die "Invalid project name: $PROJECT"
 fi
 
-SECRET_DIR="$HOME/.config/dc-enclave/$PROJECT"
+SECRET_DIR="$(dce_project_dir "$PROJECT")"
 CONFIG="$SECRET_DIR/config"
 
 HIDDEN_PATHS=()
@@ -247,7 +247,7 @@ if ! $KEEP_CONFIG; then
   if [[ -d "$SECRET_DIR" ]]; then
     # Guard against a symlinked project dir escaping the config root: resolve
     # both and require the secrets dir to live under the DC Enclave root.
-    dce_root_real="$(cd -P "$HOME/.config/dc-enclave" 2>/dev/null && pwd)"
+    dce_root_real="$(cd -P "$(dce_projects_root)" 2>/dev/null && pwd)"
     secret_real="$(cd -P "$SECRET_DIR" 2>/dev/null && pwd)"
     if [[ -n "$dce_root_real" && -n "$secret_real" ]]; then
       if [[ "$secret_real" != "$dce_root_real" && "$secret_real" != "$dce_root_real"/* ]]; then

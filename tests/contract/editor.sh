@@ -343,7 +343,7 @@ ORIG_PATH="$PATH"
 make_project() {
   local project="$1"
   local running="${2:-}"
-  local cfg_dir="$DC_ROOT/$project"
+  local cfg_dir="$DC_ROOT/projects/$project"
   local repos="$WORK/home/repos/$project"
   mkdir -p "$cfg_dir" "$repos"
   chmod 700 "$cfg_dir"
@@ -378,7 +378,7 @@ make_project_token() {
   local project="$1"
   local running="${2:-}"
   local provider="${3:-github}"
-  local cfg_dir="$DC_ROOT/$project"
+  local cfg_dir="$DC_ROOT/projects/$project"
   local repos="$WORK/home/repos/$project"
   local sentinel="" real_token="" token_file=""
   sentinel="$(dce_git_host_field "$provider" sentinel)"
@@ -555,8 +555,8 @@ pass "Section 5: unknown explicit editor hard-errors with guidance"
 # known {id, image}; the fake `code` captures the --folder-uri argv.
 # ===========================================================================
 make_project "zeta" running
-sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/zeta/config"
-rm -f "$DC_ROOT/zeta/config.bak"
+sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/projects/zeta/config"
+rm -f "$DC_ROOT/projects/zeta/config.bak"
 
 : > "$DOCKER_LOG"; : > "$CODE_LOG"
 DC_STUB_APPLE_INSPECT_IMAGE="dce-base:latest" \
@@ -705,13 +705,13 @@ make_project "kappa" running
 # Inject a placeholder-only token file + SSH path so the project has a token
 # slot, but dce_read_git_token filters the sentinel out -> auth method "none".
 kappa_sentinel="$(dce_git_host_field github sentinel)"
-kappa_cfg="$DC_ROOT/kappa/config"
+kappa_cfg="$DC_ROOT/projects/kappa/config"
 kappa_token="$WORK/github-token-kappa"
 printf '%s\n' "$kappa_sentinel" > "$kappa_token"
 chmod 600 "$kappa_token"
 {
   printf 'TOKEN_FILE="%s"\n' "$kappa_token"
-  printf 'SSH_KEY_PATH="%s/ssh_key"\n' "$DC_ROOT/kappa"
+  printf 'SSH_KEY_PATH="%s/ssh_key"\n' "$DC_ROOT/projects/kappa"
 } >> "$kappa_cfg"
 : > "$DOCKER_LOG"; : > "$CODE_LOG"
 run_editor kappa >"$WORK/sec12.out" 2>"$WORK/err" || fail "editor kappa exited non-zero
@@ -809,7 +809,7 @@ seed_ext_manifest() {  # <scope> <content>
 # (a) Declared set has two IDs; one already installed -> only the missing one
 # is installed. Idempotent: the already-installed id is never re-installed.
 make_project "nu" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/nu/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/nu/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 CONTAINER_EXT_FILE="$WORK/nu-installed.txt"
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
@@ -849,7 +849,7 @@ pass "Section 15c: pre-adoption (no manifests) -> no enforcement, editor launche
 # (d) Per-id install failure is reported but not fatal: the editor still
 # launches, the failing id is surfaced, the succeeding id is installed.
 make_project "pi" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/pi/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/pi/config"
 seed_ext_manifest nodejs $'good.id\nbad.id\n'
 : > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -993,7 +993,7 @@ run_watcher() {
 # the join guarantee before this section ends.
 # ---------------------------------------------------------------------------
 make_project "rho" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/rho/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/rho/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1050,7 +1050,7 @@ pass "Section 16a: server absent + declared set -> detached watcher, non-blockin
 # watcher: the already-installed id is never re-installed.
 # ---------------------------------------------------------------------------
 make_project "sigma" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/sigma/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/sigma/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1086,7 +1086,7 @@ pass "Section 16b: watcher converges when the server lands; idempotence preserve
 # attempted along the way.
 # ---------------------------------------------------------------------------
 make_project "tau" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/tau/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/tau/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 : > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1130,7 +1130,7 @@ pass "Section 16c: watcher times out with the retry hint; no installs attempted"
 # exactly-once assertions loudly instead of hanging on a timeout.
 # ---------------------------------------------------------------------------
 make_project "upsilon" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/upsilon/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/upsilon/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\ngamma.missing\n'
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1274,7 +1274,7 @@ pass "Section 16f: pre-adoption + server absent -> nothing spawned, nothing prin
 # the very first probe) and no "already active" line is ever logged.
 # ---------------------------------------------------------------------------
 make_project "psi" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/psi/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/psi/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 : > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1310,9 +1310,9 @@ pass "Section 16g: stale lock is removed and retaken; the watcher converges"
 # assertion carries over, with the apple-container launch URI.
 # ---------------------------------------------------------------------------
 make_project "omega" running
-sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/omega/config"
-rm -f "$DC_ROOT/omega/config.bak"
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/omega/config"
+sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/projects/omega/config"
+rm -f "$DC_ROOT/projects/omega/config.bak"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/omega/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"

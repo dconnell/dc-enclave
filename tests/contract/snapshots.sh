@@ -371,7 +371,7 @@ fi
 # ===========================================================================
 BACKEND=docker
 PROJECT="myapp"
-SECRET_DIR="$WORK/home/.config/dc-enclave/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dc-enclave/projects/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" "$PROJECT" nodejs 3000:3000 \
@@ -454,8 +454,8 @@ pass "dce snapshot: default label is a sortable timestamp"
 printf '%s\n' "dce-snap-other-v1:latest" >> "$IMAGES"
 printf 'dce-snap-other-v1:latest\tdce.snapshot.project=other\n' >> "$LABELS"
 # Make "other" a configured project so its slug resolves.
-mkdir -p "$WORK/home/.config/dc-enclave/other"
-printf 'CONTAINER_OVERLAY_SCOPES=""\n' > "$WORK/home/.config/dc-enclave/other/config"
+mkdir -p "$WORK/home/.config/dc-enclave/projects/other"
+printf 'CONTAINER_OVERLAY_SCOPES=""\n' > "$WORK/home/.config/dc-enclave/projects/other/config"
 
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/snapshot.sh" list "$PROJECT" >"$WORK/list1.stdout" 2>"$WORK/list1.stderr" \

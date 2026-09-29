@@ -105,11 +105,12 @@ _dce_read_config_root() {
 _dce_read_team_dir() { _dce_read_config_root "$1" DC_TEAM_DIR; }
 _dce_read_user_dir() { _dce_read_config_root "$1" DC_USER_DIR; }
 
-# Print configured project names (dirs under ~/.config/dc-enclave with a
-# `config` file). When $1 is non-empty, only names with that prefix are printed.
+# Print configured project names (dirs under ~/.config/dc-enclave/projects with
+# a `config` file). When $1 is non-empty, only names with that prefix are
+# printed.
 dce_complete_projects() {
   local cur="${1:-}"
-  local base="$HOME/.config/dc-enclave"
+  local base="$HOME/.config/dc-enclave/projects"
   local d name
 
   [[ -d "$base" ]] || return 0
@@ -240,7 +241,7 @@ dce_complete_doctor_targets() {
   local cur="${1:-}"
   local d name
   printf '%s\n' apple docker orbstack colima podman
-  for d in "$HOME/.config/dc-enclave"/*; do
+  for d in "$HOME/.config/dc-enclave/projects"/*; do
     [[ -d "$d" && -f "$d/config" ]] || continue
     name="$(basename "$d")"
     [[ -z "$cur" || "$name" == "$cur"* ]] && printf '%s\n' "$name"

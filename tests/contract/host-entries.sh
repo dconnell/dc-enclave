@@ -8,7 +8,7 @@
 # the REAL scripts through stubbed docker/container/podman CLIs:
 #
 #   scaffold  -> `dce new` creates the hosts template comment-only, mode 644,
-#                at ~/.config/dc-enclave/<project>/hosts -- and re-running
+#                at ~/.config/dc-enclave/projects/<project>/hosts -- and re-running
 #                creation never overwrites a user-seeded fragment
 #   no-op     -> `dce start` / `dce shell` with NO fragment issue zero
 #                hosts-related exec traffic (no /tmp/.dce-hosts staging, no
@@ -158,7 +158,7 @@ _mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
 make_project() {  # <project> [running]
   local project="$1"
   local running="${2:-}"
-  local cfg_dir="$DC_ROOT/$project"
+  local cfg_dir="$DC_ROOT/projects/$project"
   local repos="$WORK/home/repos/$project"
   mkdir -p "$cfg_dir" "$repos"
   chmod 700 "$cfg_dir"
@@ -208,7 +208,7 @@ if ! run_script "$ROOT_DIR/scripts/new-container.sh" "$SPROJ" nodejs \
 -- stderr:$(cat "$WORK/new1.err")"
 fi
 
-HOSTS_FILE="$DC_ROOT/$SPROJ/hosts"
+HOSTS_FILE="$DC_ROOT/projects/$SPROJ/hosts"
 [[ -f "$HOSTS_FILE" ]] || fail "scaffold: hosts template missing at $HOSTS_FILE"
 [[ "$(_mode "$HOSTS_FILE")" == "644" ]] \
   || fail "scaffold: template must be 644 (got $(_mode "$HOSTS_FILE")): a scaffold, not a secret"
@@ -231,7 +231,7 @@ SEEDED="$WORK/seeded.hosts"
 } > "$SEEDED"
 cp "$SEEDED" "$HOSTS_FILE"
 chmod 644 "$HOSTS_FILE"
-rm -f "$DC_ROOT/$SPROJ/config"
+rm -f "$DC_ROOT/projects/$SPROJ/config"
 : > "$CONTAINERS"
 : > "$LOG"
 if ! run_script "$ROOT_DIR/scripts/new-container.sh" "$SPROJ" nodejs \
@@ -289,7 +289,7 @@ pass "no-op wiring: dce shell command mode without a fragment issues zero hosts 
 # ===========================================================================
 APPLY_PROJ="hostproj"
 make_project "$APPLY_PROJ" ""
-printf '# corp registry\n\n10.0.0.5 registry.corp.internal\n' > "$DC_ROOT/$APPLY_PROJ/hosts"
+printf '# corp registry\n\n10.0.0.5 registry.corp.internal\n' > "$DC_ROOT/projects/$APPLY_PROJ/hosts"
 : > "$LOG"
 if ! run_script "$ROOT_DIR/scripts/start.sh" "$APPLY_PROJ" \
     >"$WORK/s3.out" 2>"$WORK/s3.err"; then

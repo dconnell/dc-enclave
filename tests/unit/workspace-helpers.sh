@@ -28,9 +28,17 @@ chmod 700 "$WORK"
 HOME="$WORK/home"
 mkdir -p "$HOME"
 
+# --- project config paths -----------------------------------------------------
+[[ "$(dce_projects_root)" == "$HOME/.config/dc-enclave/projects" ]] \
+  || fail "projects root wrong (got $(dce_projects_root))"
+[[ "$(dce_project_dir "myproj")" == "$HOME/.config/dc-enclave/projects/myproj" ]] \
+  || fail "project dir wrong (got $(dce_project_dir "myproj"))"
+[[ "$(dce_project_config_path "myproj")" == "$HOME/.config/dc-enclave/projects/myproj/config" ]] \
+  || fail "project config path wrong (got $(dce_project_config_path "myproj"))"
+
 # --- managed devcontainer path (project config dir, never a repo root) --------
 dc_file="$(dce_managed_devcontainer_file "myproj")"
-[[ "$dc_file" == "$HOME/.config/dc-enclave/myproj/devcontainer.json" ]] \
+[[ "$dc_file" == "$HOME/.config/dc-enclave/projects/myproj/devcontainer.json" ]] \
   || fail "managed devcontainer path wrong (got $dc_file)"
 
 # --- managed cache constants ---------------------------------------------------

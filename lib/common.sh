@@ -28,7 +28,7 @@
 # Key concepts (unchanged from the historical single-file layout):
 #   - Overlay scopes  -> see dce_effective_scopes_csv / dce_image_ref_from_scopes
 #   - Hidden volumes  -> see dce_hidden_volume_name and friends
-#   - Per-project cfg -> ~/.config/dc-enclave/<name>/config (key=value)
+#   - Per-project cfg -> ~/.config/dc-enclave/projects/<name>/config (key=value)
 # =============================================================================
 
 if [[ -z "${BASH_VERSION:-}" ]]; then

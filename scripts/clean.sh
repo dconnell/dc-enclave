@@ -113,7 +113,7 @@ dce_load_global_config
 if $CLEAN_HIDDEN_VOLUMES; then
   declare -A EXPECTED_VOLUMES=()
 
-  for config_file in "$HOME"/.config/dc-enclave/*/config; do
+  while IFS= read -r config_file; do
     [[ -f "$config_file" ]] || continue
 
     project_name="$(basename "$(dirname "$config_file")")"
@@ -154,7 +154,7 @@ if $CLEAN_HIDDEN_VOLUMES; then
     # valid schema-v2 project: never report it as an orphan (only `dce rm`
     # removes it).
     EXPECTED_VOLUMES["$(dce_cache_volume_name "$project_name")"]=1
-  done
+  done < <(dce_project_config_paths)
 
   managed_prefix="dce-hide-"
   if [[ -n "$TARGET_PROJECT" ]]; then
@@ -330,7 +330,7 @@ is_managed_repo() {
 declare -A EXPECTED_REPOS=()
 EXPECTED_REPOS["dce-base"]=1
 
-for config_file in "$HOME"/.config/dc-enclave/*/config; do
+while IFS= read -r config_file; do
   [[ -f "$config_file" ]] || continue
 
   if ! scope_csv="$(dce_config_extract_scalar "$config_file" CONTAINER_OVERLAY_SCOPES)"; then
@@ -347,7 +347,7 @@ for config_file in "$HOME"/.config/dc-enclave/*/config; do
     continue
   fi
   EXPECTED_REPOS["${image_ref%%:*}"]=1
-done
+done < <(dce_project_config_paths)
 
 declare -A MANAGED_REPOS=()
 while IFS=$'\t' read -r repo tag image_id; do

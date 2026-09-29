@@ -3,7 +3,7 @@
 # lib/common/container-hosts.sh - Per-project /etc/hosts reconciliation.
 #
 # Sourced (never executed directly) via lib/common.sh. Reads a project's hosts
-# fragment (~/.config/dc-enclave/<project>/hosts) and reconciles it into the
+# fragment (~/.config/dc-enclave/projects/<project>/hosts) and reconciles it into the
 # container's /etc/hosts as a marker-delimited managed block at container entry
 # points (hooks/scaffolding that call dce_ensure_container_hosts land in later
 # tasks).
@@ -170,9 +170,10 @@ EOF
 }
 
 # Reconcile <project>'s hosts fragment into its container's /etc/hosts,
-# idempotently. The fragment lives at ~/.config/dc-enclave/<project>/hosts;
-# when absent the function is a strict no-op with ZERO backend calls, so
-# pre-feature projects keep their exact prior entry behavior.
+# idempotently. The fragment lives at
+# ~/.config/dc-enclave/projects/<project>/hosts; when absent the function is a
+# strict no-op with ZERO backend calls, so pre-feature projects keep their exact
+# prior entry behavior.
 #
 # Flow: normalize on the host (invalid lines warn here and never reach the
 # container), stream the normalized content -- possibly empty, which removes a
@@ -188,7 +189,7 @@ dce_ensure_container_hosts() {
   local project="$1"
 
   local fragment=""
-  fragment="$HOME/.config/dc-enclave/$project/hosts"
+  fragment="$(dce_project_hosts_file "$project")"
   if [[ ! -f "$fragment" ]]; then
     return 0
   fi

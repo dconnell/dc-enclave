@@ -88,7 +88,7 @@ Notes:
 
 ## Seed and sync devcontainer.json
 
-`dce new` seeds `~/.config/dc-enclave/<project>/devcontainer.json` with
+`dce new` seeds `~/.config/dc-enclave/projects/<project>/devcontainer.json` with
 `customizations.vscode.extensions` when manifests resolve non-empty.
 
 `dce config sync-vscode <name>` is the single writer for managed fields.

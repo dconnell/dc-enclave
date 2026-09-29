@@ -183,7 +183,7 @@ vol_has() { grep -Fxq "$1" "$VOLUMES" 2>/dev/null; }
 # ===========================================================================
 BACKEND=docker
 PROJECT="myapp"
-SECRET_DIR="$WORK/home/.config/dc-enclave/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dc-enclave/projects/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" "$PROJECT" nodejs \

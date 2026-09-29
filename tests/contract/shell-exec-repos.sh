@@ -57,7 +57,7 @@ chmod +x "$STUB_DIR/docker"
 write_config() {
   local project="$1"
   shift
-  local dir="$DC_ROOT/$project"
+  local dir="$DC_ROOT/projects/$project"
   mkdir -p "$dir"
   chmod 700 "$dir"
   {

@@ -254,7 +254,7 @@ model as overlays: an all.txt (if present) is prepended, then each effective
 project scope; the team file is read before the user file per scope, and first
 occurrence wins (de-duplicated, order-preserving). The merged set seeds and
 syncs customizations.vscode.extensions in the managed devcontainer.json
-(~/.config/dc-enclave/<project>/devcontainer.json).
+(~/.config/dc-enclave/projects/<project>/devcontainer.json).
 
 Inspect the resolved set, check runtime drift, and curate ids back into a
 manifest here:

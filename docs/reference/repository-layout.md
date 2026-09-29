@@ -81,9 +81,9 @@ dc-enclave/
 Host-side paths:
 
 - code: one or more repos, defaulting to `${DC_REPOS_DIR:-$HOME/repos}/<project>` for the single-repo case
-- secrets: ~/.config/dc-enclave/<project>
-- per-project config: ~/.config/dc-enclave/<project>/config (backend, image, ports, resource limits, secrets paths)
-- managed devcontainer: ~/.config/dc-enclave/<project>/devcontainer.json
+- secrets: ~/.config/dc-enclave/projects/<project>
+- per-project config: ~/.config/dc-enclave/projects/<project>/config (backend, image, ports, resource limits, secrets paths)
+- managed devcontainer: ~/.config/dc-enclave/projects/<project>/devcontainer.json
 - global config: ~/.config/dc-enclave/config
 - team root: `DC_TEAM_DIR` (typically `~/.config/dc-enclave/team`) — holds `overlays/` and `container-recipes/`
 - user root: `DC_USER_DIR` (typically `~/.config/dc-enclave/user`) — holds `overlays/` and `container-recipes/`

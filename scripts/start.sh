@@ -30,7 +30,8 @@ source "$ROOT_DIR/lib/container-backend.sh"
 # re-inject the SSH key if the container lost it (e.g. after a host reboot).
 _start_container() {
   local project="$1"
-  local config="$HOME/.config/dc-enclave/$project/config"
+  local config=""
+  config="$(dce_project_config_path "$project")"
 
   if [[ ! -f "$config" ]]; then
     echo "✗ No config found for '$project' at $config"
@@ -108,7 +109,7 @@ if [[ $# -gt 0 ]]; then
     _start_container "$project"
   done
 else
-  PROJECTS=("$HOME"/.config/dc-enclave/*/config)
+  mapfile -t PROJECTS < <(dce_project_config_paths)
   if [[ ${#PROJECTS[@]} -eq 0 ]]; then
     echo "No containers configured yet. Run: dce new <name> [scope]"
     exit 0

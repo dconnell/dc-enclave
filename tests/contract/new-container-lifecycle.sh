@@ -138,7 +138,7 @@ run_script() {
 first_call() { grep -En "$1" "$LOG" | head -n1 | cut -d: -f1; }
 
 PROJECT="myapp"
-SECRET_DIR="$WORK/home/.config/dc-enclave/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dc-enclave/projects/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 # ===========================================================================
@@ -358,7 +358,7 @@ pass "dce new: reuses existing derived image (no rebuild)"
 # config key, and guidance copy. (github default is covered by the case above.)
 # ===========================================================================
 GL_PROJ="glapp"
-GL_SECRET_DIR="$WORK/home/.config/dc-enclave/$GL_PROJ"
+GL_SECRET_DIR="$WORK/home/.config/dc-enclave/projects/$GL_PROJ"
 GL_CONFIG="$GL_SECRET_DIR/config"
 GL_SENTINEL="$(dce_git_host_field gitlab sentinel)"
 GL_TOKEN_FILE="$GL_SECRET_DIR/$(dce_git_host_field gitlab token_filename)"
@@ -632,7 +632,7 @@ run_script "$ROOT_DIR/scripts/new-container.sh" "$APROJ" nodejs 3000:3000 \
   || fail "dce new (apple) exited non-zero"
 
 # apple seeds the same managed devcontainer.json (experimental attach path).
-apple_dc="$WORK/home/.config/dc-enclave/$APROJ/devcontainer.json"
+apple_dc="$WORK/home/.config/dc-enclave/projects/$APROJ/devcontainer.json"
 [[ -f "$apple_dc" ]] || fail "apple: managed devcontainer.json missing"
 grep -Fq '"workspaceFolder": "/workspace"' "$apple_dc" || fail "apple: devcontainer.json workspaceFolder"
 grep -Fq '"remoteUser": "dev"' "$apple_dc" || fail "apple: devcontainer.json remoteUser"

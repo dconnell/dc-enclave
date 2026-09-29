@@ -74,11 +74,12 @@ dce_repo_default_name_from_path() {
 }
 
 # Echo the managed devcontainer.json path for a project: inside the project
-# config dir (~/.config/dc-enclave/<project>/), never inside a repo. There is
-# no canonical repo root anymore, so editor config lives with the project.
+# config dir (~/.config/dc-enclave/projects/<project>/), never inside a repo.
+# There is no canonical repo root anymore, so editor config lives with the
+# project.
 dce_managed_devcontainer_file() {
   local project="$1"
-  printf '%s\n' "${HOME}/.config/dc-enclave/${project}/devcontainer.json"
+  printf '%s/devcontainer.json\n' "$(dce_project_dir "$project")"
 }
 
 # Echo the deterministic managed volume name backing /workspace/.cache.

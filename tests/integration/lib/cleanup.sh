@@ -84,10 +84,11 @@ _it_leak_scan_backend() {  # <backend>
     [[ -n "$vol" && "$vol" == "$snapvol"* ]] && { printf 'snapshot-volume\t%s\n' "$vol"; found=1; }
   done < <(backend_use "$backend" >/dev/null 2>&1 && backend_list_volumes 2>/dev/null)
 
-  # Project config dirs under the real config root (~/.config/dc-enclave) for
+  # Project config dirs under the real projects root
+  # (~/.config/dc-enclave/projects) for
   # test projects of this run. (Phase 1 uses the real config root; phase 2 will
   # isolate via DCE_CONFIG_ROOT.)
-  local cfgroot="$HOME/.config/dc-enclave"
+  local cfgroot="$HOME/.config/dc-enclave/projects"
   if [[ -d "$cfgroot" ]]; then
     while IFS= read -r d; do
       printf 'config-dir\t%s\n' "$d"; found=1

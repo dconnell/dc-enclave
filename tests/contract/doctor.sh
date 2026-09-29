@@ -413,7 +413,7 @@ pass "backend with missing CLI: reported + nonzero"
 # ---------------------------------------------------------------------------
 make_project() {  # <name> <backend> <image> [token-content]
   local name="$1" backend="$2" image="${3:-dce-base:latest}" token="${4:-}"
-  local pdir="$DC_ROOT/$name"
+  local pdir="$DC_ROOT/projects/$name"
   mkdir -p "$pdir"
   chmod 700 "$pdir"
   local cfg="$pdir/config"
@@ -499,11 +499,11 @@ DC_TEAM_DIR="$TEAM_DIR"
 DC_USER_DIR="$USER_DIR"
 allo_img="$(dce_image_ref_from_scopes "$TEAM_DIR/overlays" "$USER_DIR/overlays" "")"
 make_project alloverlay docker "$allo_img" "ghp_realtoken"
-allo_dc="$DC_ROOT/alloverlay/devcontainer.json"
-mkdir -p "$DC_ROOT/alloverlay"
+allo_dc="$DC_ROOT/projects/alloverlay/devcontainer.json"
+mkdir -p "$DC_ROOT/projects/alloverlay"
 allo_bf="$(dce_devcontainer_build_file "$ROOT_DIR" \
   "$(dce_effective_scopes_csv "$TEAM_DIR/overlays" "$USER_DIR/overlays" "")")"
-dce_devcontainer_render "alloverlay" "$allo_bf" "$ROOT_DIR" "$DC_ROOT/alloverlay" \
+dce_devcontainer_render "alloverlay" "$allo_bf" "$ROOT_DIR" "$DC_ROOT/projects/alloverlay" \
   "" "" "" "" "ssh" "" "" "$(printf 'alloverlay\t%s' "$WORK/repos/alloverlay")" \
   > "$allo_dc"
 DC_STUB_CONTAINERS="" run_doctor alloverlay; out="$RUN_OUT"
@@ -576,8 +576,8 @@ make_project extdoc docker dce-base:latest "ghp_realtoken"
 # mount -- the v2 mount shape doctor's drift comparator expects).
 mkdir -p "$USER_DIR/extensions/vscode"
 printf 'a.b\n' > "$USER_DIR/extensions/vscode/all.txt"
-EXTDOC_DC="$DC_ROOT/extdoc/devcontainer.json"
-mkdir -p "$DC_ROOT/extdoc"
+EXTDOC_DC="$DC_ROOT/projects/extdoc/devcontainer.json"
+mkdir -p "$DC_ROOT/projects/extdoc"
 write_extdoc_dc() {  # <extensions-json-array>
   local extarr="$1"
   cat > "$EXTDOC_DC" <<EOF

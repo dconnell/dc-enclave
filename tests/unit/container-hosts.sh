@@ -43,7 +43,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 
 PROJECT="hosts-proj"
-PROJ_DIR="$HOME/.config/dc-enclave/$PROJECT"
+PROJ_DIR="$HOME/.config/dc-enclave/projects/$PROJECT"
 FRAGMENT="$PROJ_DIR/hosts"
 mkdir -p "$PROJ_DIR"
 

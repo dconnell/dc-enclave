@@ -46,7 +46,7 @@ echo "Containers (active backend):"
 backend_list_all 2>/dev/null || echo "  (none)"
 echo ""
 
-PROJECTS=("$HOME"/.config/dc-enclave/*/config)
+mapfile -t PROJECTS < <(dce_project_config_paths)
 STALE_PROJECTS=()
 if [[ ${#PROJECTS[@]} -gt 0 ]]; then
   echo "Project details:"
@@ -132,7 +132,7 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
 
     # One-line image provenance from the project log (team/user commit + built
     # time), when present. Skipped silently for projects with no log yet.
-    prov_log="$HOME/.config/dc-enclave/$project/provenance.jsonl"
+    prov_log="$(dce_provenance_log_path "$project")"
     if [[ -s "$prov_log" ]]; then
       prov_last="$(tail -n1 "$prov_log" 2>/dev/null || true)"
       if [[ -n "$prov_last" ]] && command -v jq >/dev/null 2>&1; then

@@ -2,7 +2,7 @@
 # =============================================================================
 # scripts/config.sh - `dce config`: thin validating wrapper over project config.
 #
-# The per-project config (~/.config/dc-enclave/<name>/config) is the source of
+# The per-project config (~/.config/dc-enclave/projects/<name>/config) is the source of
 # truth. This command never edits any other state and needs NO container backend
 # and NO global config: it loads, validates, and rewrites that one file through
 # the hardened helpers in lib/common.sh (dce_load_project_config, the per-key
@@ -73,7 +73,7 @@ USAGE() {
   cat <<EOF
 Usage: dce config <subcommand> [args]
 
-Inspect and edit a project's config file (~/.config/dc-enclave/<name>/config)
+Inspect and edit a project's config file (~/.config/dc-enclave/projects/<name>/config)
 without leaving the CLI. The file stays the source of truth; this is a thin,
 validating wrapper. Needs no container backend.
 
@@ -86,7 +86,7 @@ Subcommands:
                                     Arrays take a comma-separated value.
   sync-vscode <name> [--dry-run]    Rewrite the MANAGED fields of the project's
                                     managed devcontainer.json
-                                    (~/.config/dc-enclave/<name>/devcontainer.json)
+                                    (~/.config/dc-enclave/projects/<name>/devcontainer.json)
                                     to match the current config, preserving user
                                     edits. Requires jq + a docker-compatible
                                     backend.
@@ -203,7 +203,7 @@ _cfg_normalize_value() {
 _cfg_require_config() {
   local project="$1"
   local config=""
-  config="$HOME/.config/dc-enclave/$project/config"
+  config="$(dce_project_config_path "$project")"
   if [[ ! -f "$config" ]]; then
     dce_die "No config for project '$project'.
 Run 'dce new $project ...' first, or 'dce config ls' to see configured projects."
@@ -393,21 +393,18 @@ Usage: dce config set <name> <key>=<value>
 
 # --- ls ----------------------------------------------------------------------
 do_ls() {
-  local base="$HOME/.config/dc-enclave"
-  [[ -d "$base" ]] || return 0
-  local d name
-  while IFS= read -r d; do
-    [[ -d "$d" ]] || continue
-    [[ -f "$d/config" ]] || continue
-    name="$(basename "$d")"
+  local config="" name=""
+  while IFS= read -r config; do
+    [[ -f "$config" ]] || continue
+    name="$(basename "$(dirname "$config")")"
     printf '%s\n' "$name"
-  done < <(find "$base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  done < <(dce_project_config_paths | sort)
 }
 
 # --- sync-vscode -------------------------------------------------------------
 # Carved-out exception to config's "never edits other state / needs no backend"
 # invariant: this subcommand rewrites the managed devcontainer.json at
-# ~/.config/dc-enclave/<project>/devcontainer.json (outside the config file)
+# ~/.config/dc-enclave/projects/<project>/devcontainer.json (outside the config file)
 # and loads global config (to re-derive the managed dockerfile path). It still
 # performs NO container-backend call. Requires jq.
 do_sync_vscode() {

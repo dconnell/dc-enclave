@@ -41,10 +41,9 @@ Copies the dotfiles directory into the running container and executes its `insta
 - Shared essentials → `Containerfile.base`
 - Overlay examples (copy-first templates) → `Containerfiles/example/` (`Containerfile.all`, `Containerfile.nodejs`, `Containerfile.golang`, and any others you add)
 - Preferred day-to-day tools → user overlay Containerfile(s) layered during `dce new`/`dce rebuild-image`
-- Project secrets (PAT, SSH key, .npmrc) → `~/.config/dc-enclave/<name>/`
+- Project secrets (PAT, SSH key, .npmrc) → `~/.config/dc-enclave/projects/<name>/`
 - Personal preferences (git identity, vim, shell) → your dotfiles repo
 
 ### Starter dotfiles
 
 See `templates/dotfiles/` in this repo for a ready-to-fork example.
-
