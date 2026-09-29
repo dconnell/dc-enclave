@@ -458,7 +458,6 @@ _dce_new_repo_path_is_sensitive_root() {  # <resolved> <home> <repos_root>
 
 DEFAULT_REPOS_ROOT_CANON="$(dce_default_repos_root)"
 DEFAULT_REPOS_ROOT_CANON="$(dce_resolve_path "$DEFAULT_REPOS_ROOT_CANON" 2>/dev/null || printf '%s' "$DEFAULT_REPOS_ROOT_CANON")"
-HOME_CANON="$(dce_resolve_path "$HOME")"
 
 if [[ ${#REPO_SPECS[@]} -eq 0 ]]; then
   REPO_SPECS=("$(_dce_new_repo_path_expand_tilde "${DC_REPOS_DIR:-$HOME/repos}")/$PROJECT")
