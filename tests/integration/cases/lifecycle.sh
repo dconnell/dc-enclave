@@ -271,7 +271,7 @@ _it_lc_snapshot_restore() {  # <backend> <case_id>
 _it_lc_rebuild_rotate_keys() {  # <backend> <case_id>
   local b="$1" c="$2" p pub_before pub_after secret
   p="$(_it_mkproj "$b" "$c")" || { it_case_fail "dce new (baseline) failed"; return 1; }
-  secret="$HOME/.config/dce-enclave/$p/ssh_key.pub"
+  secret="$HOME/.config/dc-enclave/$p/ssh_key.pub"
   [[ -f "$secret" ]] || { it_case_fail "no ssh_key.pub for $p"; return 1; }
   pub_before="$(cat "$secret")"
 

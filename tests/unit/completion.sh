@@ -25,7 +25,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 mkdir -p "$DC_ROOT"/{alpha,beta,gamma}
 touch "$DC_ROOT"/alpha/config "$DC_ROOT"/beta/config "$DC_ROOT"/gamma/config
 # A dir without a config file must NOT be offered as a project.

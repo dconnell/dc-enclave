@@ -25,7 +25,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 TEAM_OD="$TEAM_DIR/overlays"
@@ -101,7 +101,7 @@ run_new() {
 
 load_cfg() {
   local project="$1"
-  local cfg="$HOME/.config/dce-enclave/$project/config"
+  local cfg="$HOME/.config/dc-enclave/$project/config"
   [[ -f "$cfg" ]] || fail "missing config for $project"
   # shellcheck disable=SC2034
   # Reset before dce_load_project_config repopulates them from the sourced cfg.
@@ -121,7 +121,7 @@ repo_name_of() {
 
 assert_no_config() {
   local project="$1"
-  [[ ! -f "$HOME/.config/dce-enclave/$project/config" ]] \
+  [[ ! -f "$HOME/.config/dc-enclave/$project/config" ]] \
     || fail "unexpected config created for failing recipe: $project"
 }
 
@@ -651,13 +651,13 @@ pass "CLI --repo to the repos root rejected outright"
 # (p3) CLI --repo resolving to an ancestor of the repos root is rejected outright.
 : > "$LOG"
 mkdir -p "$WORK/outer/home/repos"
-mkdir -p "$WORK/outer/home/.config/dce-enclave/team/overlays" \
-         "$WORK/outer/home/.config/dce-enclave/team/container-recipes" \
-         "$WORK/outer/home/.config/dce-enclave/user/overlays" \
-         "$WORK/outer/home/.config/dce-enclave/user/container-recipes"
-cat > "$WORK/outer/home/.config/dce-enclave/config" <<EOF
-DC_TEAM_DIR="$WORK/outer/home/.config/dce-enclave/team"
-DC_USER_DIR="$WORK/outer/home/.config/dce-enclave/user"
+mkdir -p "$WORK/outer/home/.config/dc-enclave/team/overlays" \
+         "$WORK/outer/home/.config/dc-enclave/team/container-recipes" \
+         "$WORK/outer/home/.config/dc-enclave/user/overlays" \
+         "$WORK/outer/home/.config/dc-enclave/user/container-recipes"
+cat > "$WORK/outer/home/.config/dc-enclave/config" <<EOF
+DC_TEAM_DIR="$WORK/outer/home/.config/dc-enclave/team"
+DC_USER_DIR="$WORK/outer/home/.config/dc-enclave/user"
 EOF
 if HOME="$WORK/outer/home" DC_REPOS_DIR="$WORK/outer/home/repos" TZ=UTC \
   DC_STUB_LOG="$LOG" DC_STUB_IMAGES="$IMAGES" DC_STUB_NETWORKS="$NETWORKS" \

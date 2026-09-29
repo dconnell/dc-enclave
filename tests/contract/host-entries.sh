@@ -8,7 +8,7 @@
 # the REAL scripts through stubbed docker/container/podman CLIs:
 #
 #   scaffold  -> `dce new` creates the hosts template comment-only, mode 644,
-#                at ~/.config/dce-enclave/<project>/hosts -- and re-running
+#                at ~/.config/dc-enclave/<project>/hosts -- and re-running
 #                creation never overwrites a user-seeded fragment
 #   no-op     -> `dce start` / `dce shell` with NO fragment issue zero
 #                hosts-related exec traffic (no /tmp/.dce-hosts staging, no
@@ -17,7 +17,7 @@
 #   apply     -> `dce start` with a fragment first wires git credentials, then
 #                (a) stages the NORMALIZED entries via a root stdin exec at
 #                /tmp/.dce-hosts, and (b) reconciles via a root exec whose
-#                script targets /etc/hosts between the dce-enclave markers
+#                script targets /etc/hosts between the dc-enclave markers
 #   ordering  -> static pin: every entry script calls
 #                dce_ensure_container_hosts after dce_ensure_git_credentials
 #
@@ -44,7 +44,7 @@ chmod 700 "$WORK"
 # Fake HOME + global config + nodejs-scope overlays.
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -190,9 +190,9 @@ assert_no_hosts_traffic() {  # <label>
     fail "$1: hosts staging traffic observed without a fragment
 $(grep -F '/tmp/.dce-hosts' "$LOG")"
   fi
-  if grep -qF 'dce-enclave hosts (managed)' "$LOG"; then
+  if grep -qF 'dc-enclave hosts (managed)' "$LOG"; then
     fail "$1: managed-block marker reached a container argv without a fragment
-$(grep -F 'dce-enclave hosts (managed)' "$LOG")"
+$(grep -F 'dc-enclave hosts (managed)' "$LOG")"
   fi
 }
 
@@ -336,9 +336,9 @@ grep -Fq "TARGET='/etc/hosts'" <<<"$recon_payload" \
   || fail "apply: reconcile script does not target /etc/hosts"
 grep -Fq "FRAG='/tmp/.dce-hosts'" <<<"$recon_payload" \
   || fail "apply: reconcile script does not consume the staged fragment"
-grep -Fq '# >>> dce-enclave hosts (managed) >>>' <<<"$recon_payload" \
+grep -Fq '# >>> dc-enclave hosts (managed) >>>' <<<"$recon_payload" \
   || fail "apply: reconcile script missing the BEGIN marker"
-grep -Fq '# <<< dce-enclave hosts (managed) <<<' <<<"$recon_payload" \
+grep -Fq '# <<< dc-enclave hosts (managed) <<<' <<<"$recon_payload" \
   || fail "apply: reconcile script missing the END marker"
 
 # Ordering: the hosts staging follows the git-credentials wiring in the same

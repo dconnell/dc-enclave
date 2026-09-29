@@ -105,7 +105,7 @@ echo ""
 echo "==> Creating host directories..."
 
 DIRS=(
-  "$HOME/.config/dce-enclave"
+  "$HOME/.config/dc-enclave"
 )
 
 for dir in "${DIRS[@]}"; do
@@ -113,7 +113,7 @@ for dir in "${DIRS[@]}"; do
   echo "  ✓ $dir"
 done
 
-GLOBAL_CONFIG="$HOME/.config/dce-enclave/config"
+GLOBAL_CONFIG="$HOME/.config/dc-enclave/config"
 DEFAULT_TEAM_DIR="$(dce_team_default_root)"
 DEFAULT_USER_DIR="$(dce_user_default_root)"
 
@@ -156,12 +156,12 @@ _dce_setup_normalize() {
 
 if ! DC_TEAM_DIR="$(dce_config_extract_scalar "$GLOBAL_CONFIG" DC_TEAM_DIR)" \
    || [[ -z "${DC_TEAM_DIR:-}" ]]; then
-  dce_die "DC_TEAM_DIR is not set (or is malformed) in ~/.config/dce-enclave/config
+  dce_die "DC_TEAM_DIR is not set (or is malformed) in ~/.config/dc-enclave/config
 Set DC_TEAM_DIR and rerun scripts/setup.sh"
 fi
 if ! DC_USER_DIR="$(dce_config_extract_scalar "$GLOBAL_CONFIG" DC_USER_DIR)" \
    || [[ -z "${DC_USER_DIR:-}" ]]; then
-  dce_die "DC_USER_DIR is not set (or is malformed) in ~/.config/dce-enclave/config
+  dce_die "DC_USER_DIR is not set (or is malformed) in ~/.config/dc-enclave/config
 Set DC_USER_DIR and rerun scripts/setup.sh"
 fi
 _dce_setup_normalize DC_TEAM_DIR
@@ -254,7 +254,7 @@ model as overlays: an all.txt (if present) is prepended, then each effective
 project scope; the team file is read before the user file per scope, and first
 occurrence wins (de-duplicated, order-preserving). The merged set seeds and
 syncs customizations.vscode.extensions in the managed devcontainer.json
-(~/.config/dce-enclave/<project>/devcontainer.json).
+(~/.config/dc-enclave/<project>/devcontainer.json).
 
 Inspect the resolved set, check runtime drift, and curate ids back into a
 manifest here:

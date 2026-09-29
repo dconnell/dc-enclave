@@ -459,7 +459,7 @@ _dce_dc_csv_from_array() {
 
 doctor_project() {  # <name>
   local name="$1"
-  local cfg="$HOME/.config/dce-enclave/$name/config"
+  local cfg="$HOME/.config/dc-enclave/$name/config"
   echo ""
   printf 'Project: %s\n' "$name"
 
@@ -602,7 +602,7 @@ EOF
     apple|docker|orbstack|colima|podman)
       DOCTOR_MODE="backend"; DOCTOR_TARGET="$1" ;;
     *)
-      if [[ -f "$HOME/.config/dce-enclave/$1/config" ]]; then
+      if [[ -f "$HOME/.config/dc-enclave/$1/config" ]]; then
         DOCTOR_MODE="project"; DOCTOR_TARGET="$1"
       else
         printf 'Unknown backend or project: %s\n' "$1" >&2

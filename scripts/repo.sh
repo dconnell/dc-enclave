@@ -31,7 +31,7 @@ EOF
 
 _repo_require_config() {
   local project="$1"
-  local config="$HOME/.config/dce-enclave/$project/config"
+  local config="$HOME/.config/dc-enclave/$project/config"
   [[ -f "$config" ]] || dce_die "No config for project '$project'."
   printf '%s' "$config"
 }

@@ -20,7 +20,7 @@ If you already work with Docker, Podman, or apple/container directly, `dce` orch
 What `dce` adds beyond raw backend commands:
 
 - project bootstrap from a shared base image plus optional overlay Containerfiles
-- persisted per-project configuration in `~/.config/dce-enclave/<name>/config`
+- persisted per-project configuration in `~/.config/dc-enclave/<name>/config`
 - consistent mounts, ports, and resource limit handling across backends
 - optional per-project credential layout for PAT/SSH key/.npmrc with repeatable rebuild flows
 - one-command rebuild and key-rotation workflows for incident response

@@ -66,7 +66,7 @@ You aliased a name in your **host** `/etc/hosts` (a corporate registry, an inter
 
 **Cause:** `/etc/hosts` is per-machine. Container runtimes regenerate the container's `/etc/hosts` at every start from their own state, so host-only aliases are not part of it. (OrbStack follows the macOS resolver and usually picks host aliases up; the other backends don't.)
 
-**Fix:** put the entry in the project's hosts fragment, `~/.config/dce-enclave/<name>/hosts` (`dce new` scaffolds a template). dce reconciles it into the container at the next entry point — `dce start`, `dce shell`, `dce editor`, … — and leaves the rest of `/etc/hosts` alone. See [custom host entries](how-to/custom-host-entries.md), then verify:
+**Fix:** put the entry in the project's hosts fragment, `~/.config/dc-enclave/<name>/hosts` (`dce new` scaffolds a template). dce reconciles it into the container at the next entry point — `dce start`, `dce shell`, `dce editor`, … — and leaves the rest of `/etc/hosts` alone. See [custom host entries](how-to/custom-host-entries.md), then verify:
 
 ```
 dce exec <name> getent hosts internal.corp
@@ -100,7 +100,7 @@ colima status
 ## Managed `devcontainer.json` not overwritten
 
 - expected behavior to avoid clobbering local config: the managed file lives
-  at `~/.config/dce-enclave/<project>/devcontainer.json` (repo-local
+  at `~/.config/dc-enclave/<project>/devcontainer.json` (repo-local
   `.vscode/settings.json` is never written)
 - `dce new` / `dce rebuild-container` print a drift notice when managed fields
   diverge from config (scopes/hide/networks/ports)
@@ -113,12 +113,12 @@ dce config sync-vscode <name> --dry-run   # preview only
 
 ## Changed ports or resource limits
 
-- update ~/.config/dce-enclave/<name>/config
+- update ~/.config/dc-enclave/<name>/config
 - run dce rebuild-container <name>
 
 ## SSH auth issues
 
-- verify ~/.config/dce-enclave/<name>/ssh_key and the git-host token file (github-token / gitlab-token)
+- verify ~/.config/dc-enclave/<name>/ssh_key and the git-host token file (github-token / gitlab-token)
 - restart with dce start or recreate with dce rebuild-container
 
 ## Podman on macOS not starting

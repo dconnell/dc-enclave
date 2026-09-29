@@ -105,11 +105,11 @@ _dce_read_config_root() {
 _dce_read_team_dir() { _dce_read_config_root "$1" DC_TEAM_DIR; }
 _dce_read_user_dir() { _dce_read_config_root "$1" DC_USER_DIR; }
 
-# Print configured project names (dirs under ~/.config/dce-enclave with a
+# Print configured project names (dirs under ~/.config/dc-enclave with a
 # `config` file). When $1 is non-empty, only names with that prefix are printed.
 dce_complete_projects() {
   local cur="${1:-}"
-  local base="$HOME/.config/dce-enclave"
+  local base="$HOME/.config/dc-enclave"
   local d name
 
   [[ -d "$base" ]] || return 0
@@ -136,7 +136,7 @@ dce_complete_projects() {
 # (first occurrence wins). Dedup uses a newline-delimited accumulator so a
 # scope name can never partially match another (names cannot contain newlines).
 dce_complete_scopes() {
-  local config="$HOME/.config/dce-enclave/config"
+  local config="$HOME/.config/dc-enclave/config"
   local team_dir="" user_dir=""
   local f name
   local nl=$'\n'
@@ -149,8 +149,8 @@ dce_complete_scopes() {
     user_dir="$(_dce_complete_resolve_root "$user_dir")"
   fi
 
-  [[ -z "$team_dir" ]] && team_dir="$HOME/.config/dce-enclave/team"
-  [[ -z "$user_dir" ]] && user_dir="$HOME/.config/dce-enclave/user"
+  [[ -z "$team_dir" ]] && team_dir="$HOME/.config/dc-enclave/team"
+  [[ -z "$user_dir" ]] && user_dir="$HOME/.config/dc-enclave/user"
 
   local team_od="$team_dir/overlays"
   local user_od="$user_dir/overlays"
@@ -187,7 +187,7 @@ _dce_complete_resolve_root() {
   if [[ "$val" == "~" || "$val" == "~/"* ]]; then
     val="$HOME${val#\~}"
   elif [[ "$val" != /* && -n "$val" ]]; then
-    val="$HOME/.config/dce-enclave/$val"
+    val="$HOME/.config/dc-enclave/$val"
   fi
   printf '%s' "$val"
 }
@@ -240,7 +240,7 @@ dce_complete_doctor_targets() {
   local cur="${1:-}"
   local d name
   printf '%s\n' apple docker orbstack colima podman
-  for d in "$HOME/.config/dce-enclave"/*; do
+  for d in "$HOME/.config/dc-enclave"/*; do
     [[ -d "$d" && -f "$d/config" ]] || continue
     name="$(basename "$d")"
     [[ -z "$cur" || "$name" == "$cur"* ]] && printf '%s\n' "$name"

@@ -258,7 +258,7 @@ do_add() {
   dce_validate_network_name "$name" || dce_die "Invalid network name '$name'"
   [[ -z "$ip" ]] || dce_validate_ip_value "$ip" || exit 1
 
-  local config="$HOME/.config/dce-enclave/$project/config"
+  local config="$HOME/.config/dc-enclave/$project/config"
   [[ -f "$config" ]] || dce_die "No config for project '$project'."
 
   PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
@@ -320,7 +320,7 @@ do_remove() {
   [[ -n "$name" && -n "$project" ]] || dce_die "network remove requires <name> <project>"
   dce_validate_network_name "$name" || dce_die "Invalid network name '$name'"
 
-  local config="$HOME/.config/dce-enclave/$project/config"
+  local config="$HOME/.config/dc-enclave/$project/config"
   [[ -f "$config" ]] || dce_die "No config for project '$project'."
 
   # shellcheck disable=SC2034

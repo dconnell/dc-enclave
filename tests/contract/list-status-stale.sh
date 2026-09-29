@@ -81,7 +81,7 @@ chmod +x "$STUB_DIR/docker"
 # owner-only dir (chmod 700), as dce_load_project_config requires.
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 mkdir -p "$DC_ROOT"
 
 # fresh: running, container id == desired id -> not stale

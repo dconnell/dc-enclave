@@ -356,11 +356,11 @@ for port_mapping in "${PORTS[@]}"; do
   fi
 done
 
-SECRET_DIR="$HOME/.config/dce-enclave/$PROJECT"
-CONFIG_FILE="$HOME/.config/dce-enclave/$PROJECT/config"
+SECRET_DIR="$HOME/.config/dc-enclave/$PROJECT"
+CONFIG_FILE="$HOME/.config/dc-enclave/$PROJECT/config"
 # shellcheck disable=SC2088
 # Display path shown to the user with a literal ~; not meant to expand.
-CONFIG_FILE_DISPLAY="~/.config/dce-enclave/$PROJECT/config"
+CONFIG_FILE_DISPLAY="~/.config/dc-enclave/$PROJECT/config"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   dce_die "Project '$PROJECT' already exists (config: $CONFIG_FILE_DISPLAY)
@@ -853,7 +853,7 @@ dce_ensure_git_credentials "$PROJECT"
 dce_ensure_container_hosts "$PROJECT"
 
 # Seed the MANAGED devcontainer.json inside the project config dir
-# (~/.config/dce-enclave/<project>/devcontainer.json) + the VS Code named-
+# (~/.config/dc-enclave/<project>/devcontainer.json) + the VS Code named-
 # attach config for every backend. There is no canonical repo root anymore, so
 # no devcontainer file is ever written into a repo. apple/container uses VS
 # Code Dev Containers' EXPERIMENTAL apple-container attach path
@@ -948,10 +948,10 @@ echo "======================================================================"
 echo "Container '$PROJECT' created and started."
 echo "======================================================================"
 echo ""
-echo "Config: ~/.config/dce-enclave/$PROJECT/"
+echo "Config: ~/.config/dc-enclave/$PROJECT/"
 echo "  [ ] ${GIT_HOST_TOKEN_FILENAME}   Replace ${GIT_HOST_SENTINEL} with your ${GIT_HOST_DISPLAY} token"
 echo "  [ ] ssh_key.pub    Add as ${GIT_HOST_DISPLAY} Deploy Key for your repos"
-echo "  [ ] (Optional) hosts       Add host entries if the container needs them (~/.config/dce-enclave/$PROJECT/hosts)"
+echo "  [ ] (Optional) hosts       Add host entries if the container needs them (~/.config/dc-enclave/$PROJECT/hosts)"
 echo ""
 while IFS= read -r _new_repo_line; do
   [[ -z "$_new_repo_line" ]] && continue

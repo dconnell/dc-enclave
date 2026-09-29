@@ -27,7 +27,7 @@ chmod 700 "$WORK"
 # Stub harness: fake HOME + global config + stub docker + stub host `code`.
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -184,7 +184,7 @@ ORIG_PATH="$PATH"
 # Build a minimal project config (mirrors editor.sh's fixture + scopes).
 make_project() {
   local project="$1" scopes="${2:-}" running="${3:-}"
-  local cfg_dir="$HOME/.config/dce-enclave/$project"
+  local cfg_dir="$HOME/.config/dc-enclave/$project"
   local repos="$WORK/repos/$project"
   mkdir -p "$cfg_dir" "$repos"
   chmod 700 "$cfg_dir"
@@ -472,8 +472,8 @@ pass "unknown editor rejected"
 # ===========================================================================
 make_project "beta" "nodejs" running
 # Rewrite beta's backend to apple.
-sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$HOME/.config/dce-enclave/beta/config"
-rm -f "$HOME/.config/dce-enclave/beta/config.bak"
+sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$HOME/.config/dc-enclave/beta/config"
+rm -f "$HOME/.config/dc-enclave/beta/config.bak"
 # Deterministic declared + installed state for beta.
 seed_manifest user nodejs "node.declared\n"
 printf 'node.declared\nextra.runtime\n' > "$CONTAINER_EXT_FILE"

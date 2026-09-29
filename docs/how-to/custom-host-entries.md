@@ -5,7 +5,7 @@ A hostname you alias in your **host** `/etc/hosts` — a corporate registry, an 
 dce gives each project its own hosts fragment and reconciles it into that container's `/etc/hosts` as root:
 
 ```
-~/.config/dce-enclave/<project>/hosts
+~/.config/dc-enclave/<project>/hosts
 ```
 
 ## The file
@@ -44,9 +44,9 @@ Reconciliation is best-effort by design: if it fails, dce prints a warning and t
 Because runtimes regenerate `/etc/hosts` at every container start, an entry appended once would vanish on the next restart. dce instead maintains a managed block inside the file, delimited by:
 
 ```
-# >>> dce-enclave hosts (managed) >>>
+# >>> dc-enclave hosts (managed) >>>
 10.0.0.5   internal.corp registry.internal
-# <<< dce-enclave hosts (managed) <<<
+# <<< dc-enclave hosts (managed) <<<
 ```
 
 At each entry point the block is stripped and rewritten from the current fragment. Two consequences:
@@ -60,7 +60,7 @@ The managed block is appended **last**, and the resolver uses the **first** matc
 
 ## Workflow
 
-1. Edit `~/.config/dce-enclave/<project>/hosts` on the host.
+1. Edit `~/.config/dc-enclave/<project>/hosts` on the host.
 2. Land the edits: enter with `dce shell` / `dce editor` (both reconcile on entry), or run `dce restart`. (`dce start` no-ops on an already-running container — see above.)
 3. Verify inside the container:
 

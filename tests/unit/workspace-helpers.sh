@@ -30,7 +30,7 @@ mkdir -p "$HOME"
 
 # --- managed devcontainer path (project config dir, never a repo root) --------
 dc_file="$(dce_managed_devcontainer_file "myproj")"
-[[ "$dc_file" == "$HOME/.config/dce-enclave/myproj/devcontainer.json" ]] \
+[[ "$dc_file" == "$HOME/.config/dc-enclave/myproj/devcontainer.json" ]] \
   || fail "managed devcontainer path wrong (got $dc_file)"
 
 # --- managed cache constants ---------------------------------------------------

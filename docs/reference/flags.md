@@ -82,7 +82,7 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 | `get <name> <key>` | Print one value (`cpus`, `memory`, `scopes`, `ports`, `hide`, `networks`, and read-only `project`, `backend`, `image`, `repos`). |
 | `set <name> <key>=<value>` | Validate + atomically write one mutable key (`cpus`, `memory`, `scopes`, `ports`, `hide`, `networks`). Empty clears a key back to default. |
 | `set <name> <key> <value>` | Space-separated equivalent of `key=value`. |
-| `sync-vscode <name>` | Rewrite MANAGED fields in `~/.config/dce-enclave/<name>/devcontainer.json` to match current config while preserving user keys/mounts. Includes `customizations.vscode.extensions` when extension manifests are adopted (migration guard preserves hand-curated arrays pre-adoption). Docker-compatible projects only. Requires `jq`. |
+| `sync-vscode <name>` | Rewrite MANAGED fields in `~/.config/dc-enclave/<name>/devcontainer.json` to match current config while preserving user keys/mounts. Includes `customizations.vscode.extensions` when extension manifests are adopted (migration guard preserves hand-curated arrays pre-adoption). Docker-compatible projects only. Requires `jq`. |
 | `--dry-run` *(with `sync-vscode`)* | Preview drift + planned managed-field rewrites without writing the file. |
 | `ls` | List projects that have a config file. |
 
@@ -162,4 +162,4 @@ These take only positional arguments (or none):
 | `CONTAINER_BACKEND` | Force a backend (`apple`, `colima`, `docker`, `orbstack`, `podman`) instead of auto-detection. See [backends](backends.md). |
 | `DCE_DNS` | Comma-separated DNS nameserver IPs passed to `container create` / `docker create` as `--dns`. Default empty on Docker-family backends (their embedded DNS works); the apple/container backend defaults to `1.1.1.1,8.8.8.8` because its auto-configured resolver does not forward external DNS. Set empty to opt out of the apple default. Set at create time only (`dce new` / `dce rebuild-container`). See [backends](backends.md). |
 | `DC_REPOS_DIR` | Override the host repos root (default `~/repos`). |
-| `DC_TEAM_DIR` / `DC_USER_DIR` | Team and user overlay/recipe roots, set by `setup.sh` in `~/.config/dce-enclave/config`. |
+| `DC_TEAM_DIR` / `DC_USER_DIR` | Team and user overlay/recipe roots, set by `setup.sh` in `~/.config/dc-enclave/config`. |

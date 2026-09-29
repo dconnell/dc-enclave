@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# lib/common/global-config.sh - Global dce-enclave config (team/user roots).
+# lib/common/global-config.sh - Global dc-enclave config (team/user roots).
 #
 # Sourced (never executed directly) via lib/common.sh. Owns the path layout of
-# the global config (~/.config/dce-enclave/config) and the four leaf overlay /
+# the global config (~/.config/dc-enclave/config) and the four leaf overlay /
 # recipe directories under the two roots it exports (DC_TEAM_DIR, DC_USER_DIR).
 # dce_load_global_config parses the file without `source` (via
 # dce_config_extract_scalar from config.sh) so a malicious or corrupted file
@@ -17,18 +17,18 @@ declare -gr _DC_COMMON_GLOBAL_CONFIG_SH_LOADED=1
 
 # Path to the global DC Enclave config file (DC_TEAM_DIR/DC_USER_DIR live here).
 dce_global_config_path() {
-  printf '%s/.config/dce-enclave/config\n' "$HOME"
+  printf '%s/.config/dc-enclave/config\n' "$HOME"
 }
 
 # Default team/user roots used by setup.sh when bootstrapping global config. Each
 # is an independent root that may be its own git repo, containing both overlays/
 # (image layers) and container-recipes/ (per-container-name recipe files).
 dce_team_default_root() {
-  printf '%s/.config/dce-enclave/team\n' "$HOME"
+  printf '%s/.config/dc-enclave/team\n' "$HOME"
 }
 
 dce_user_default_root() {
-  printf '%s/.config/dce-enclave/user\n' "$HOME"
+  printf '%s/.config/dc-enclave/user\n' "$HOME"
 }
 
 # Single source of truth for the four leaf directories under the two roots. The
@@ -70,7 +70,7 @@ dce_load_global_config() {
   cfg="$(dce_global_config_path)"
 
   if [[ ! -f "$cfg" ]]; then
-    dce_die "Global config not found: ~/.config/dce-enclave/config
+    dce_die "Global config not found: ~/.config/dc-enclave/config
 Run: scripts/setup.sh"
   fi
 
@@ -81,20 +81,20 @@ Run: scripts/setup.sh"
   unset DC_TEAM_DIR DC_USER_DIR
 
   if ! DC_TEAM_DIR="$(dce_config_extract_scalar "$cfg" DC_TEAM_DIR)"; then
-    dce_die "DC_TEAM_DIR is not set (or is not a clean quoted value) in ~/.config/dce-enclave/config
+    dce_die "DC_TEAM_DIR is not set (or is not a clean quoted value) in ~/.config/dc-enclave/config
 Set DC_TEAM_DIR and rerun scripts/setup.sh"
   fi
   if ! DC_USER_DIR="$(dce_config_extract_scalar "$cfg" DC_USER_DIR)"; then
-    dce_die "DC_USER_DIR is not set (or is not a clean quoted value) in ~/.config/dce-enclave/config
+    dce_die "DC_USER_DIR is not set (or is not a clean quoted value) in ~/.config/dc-enclave/config
 Set DC_USER_DIR and rerun scripts/setup.sh"
   fi
 
   if [[ -z "${DC_TEAM_DIR:-}" ]]; then
-    dce_die "DC_TEAM_DIR is not set in ~/.config/dce-enclave/config
+    dce_die "DC_TEAM_DIR is not set in ~/.config/dc-enclave/config
 Set DC_TEAM_DIR and rerun scripts/setup.sh"
   fi
   if [[ -z "${DC_USER_DIR:-}" ]]; then
-    dce_die "DC_USER_DIR is not set in ~/.config/dce-enclave/config
+    dce_die "DC_USER_DIR is not set in ~/.config/dc-enclave/config
 Set DC_USER_DIR and rerun scripts/setup.sh"
   fi
 

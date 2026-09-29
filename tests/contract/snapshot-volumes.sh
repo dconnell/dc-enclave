@@ -27,7 +27,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 TEAM_OD="$TEAM_DIR/overlays"
@@ -183,7 +183,7 @@ vol_has() { grep -Fxq "$1" "$VOLUMES" 2>/dev/null; }
 # ===========================================================================
 BACKEND=docker
 PROJECT="myapp"
-SECRET_DIR="$WORK/home/.config/dce-enclave/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dc-enclave/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" "$PROJECT" nodejs \

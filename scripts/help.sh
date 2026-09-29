@@ -171,17 +171,17 @@ Examples:
   dce new web node 3000 8080:3000        multiple ports; one remapped
   dce new api nodejs --cpus 2 --memory 4g --hide node_modules 3000 --save-team
   dce new myapp --network myapp --ip 10.0.0.5
-  dce new myapp --config ~/.config/dce-enclave/team/container-recipes/api
+  dce new myapp --config ~/.config/dc-enclave/team/container-recipes/api
   dce new myapp node --repo ~/code/myapp
   dce new workspace --repo web=~/code/web --repo api=~/code/api
   dce new mono nodejs,golang --hide apps/web/node_modules --hide api/target
 
 Notes:
   - Requires dce-base:latest on the backend; run scripts/setup.sh first.
-  - Config and secrets are stored in ~/.config/dce-enclave/<name>/ with
+  - Config and secrets are stored in ~/.config/dc-enclave/<name>/ with
     restrictive permissions (chmod 600/700).
   - The managed devcontainer.json lives at
-    ~/.config/dce-enclave/<name>/devcontainer.json and is seeded once; existing
+    ~/.config/dc-enclave/<name>/devcontainer.json and is seeded once; existing
     files are never overwritten. Managed-field drift prints a notice --
     reconcile with `dce config sync-vscode <name>`.
   - apple/container: DNS is set at create time (override: DCE_DNS); VS Code
@@ -313,7 +313,7 @@ Examples:
 
 Notes:
   - Requires a reachable container backend.
-  - Lists projects with a config under ~/.config/dce-enclave/, running or
+  - Lists projects with a config under ~/.config/dc-enclave/, running or
     not -- it does not enumerate raw backend containers.
   - STALE means drift is proven: rebuild with `dce rebuild-container`.
 EOF
@@ -386,12 +386,12 @@ Description:
   ~/.git-credentials instead of VS Code's host-credential forwarding. This
   is attach-mode state, separate from `dce config sync-vscode` (which
   manages the managed devcontainer.json at
-  ~/.config/dce-enclave/<project>/devcontainer.json only).
+  ~/.config/dc-enclave/<project>/devcontainer.json only).
 
 Editor selection (first match wins):
   --editor <id>     Explicit one-shot override (also --editor=<id>).
   $DCE_EDITOR       Per-shell environment variable.
-  DCE_EDITOR        Key in ~/.config/dce-enclave/config.
+  DCE_EDITOR        Key in ~/.config/dc-enclave/config.
   $VISUAL           Standard full-screen-editor env var.
   $EDITOR           Standard line-editor env var (often terminal-only).
   (default)         vscode
@@ -451,7 +451,7 @@ Description:
   wins on duplicates.
 
   `dce new` seeds the merged set into the managed devcontainer.json at
-  ~/.config/dce-enclave/<project>/devcontainer.json
+  ~/.config/dc-enclave/<project>/devcontainer.json
   (customizations.<editor>.extensions) and `dce config sync-vscode`
   re-syncs it, so VS Code installs the declared set on open.
 
@@ -640,7 +640,7 @@ Description:
     3. remove snapshot artifacts (dce-snap-* images, dce-snapvol-*
        volumes, manifests) -- these follow --keep-volumes
     4. remove the per-project config + secrets directory
-       (~/.config/dce-enclave/<name>): SSH key, git token, .npmrc
+       (~/.config/dc-enclave/<name>): SSH key, git token, .npmrc
 
   Your host repo directories are NEVER touched by this command.
 
@@ -672,7 +672,7 @@ Notes:
   - Host repos are preserved; the exact paths are listed by the command
     (they are the REPO_PATHS entries in the project config).
   - The managed devcontainer.json lives in the project config dir
-    (~/.config/dce-enclave/<name>/devcontainer.json) and is removed with it.
+    (~/.config/dc-enclave/<name>/devcontainer.json) and is removed with it.
   - To recreate a removed project: `dce new <name> [scope] ...`.
   - To wipe only the container filesystem while keeping config and code:
     `dce rebuild-container <name>`.
@@ -824,7 +824,7 @@ Description:
   via `docker image inspect` / `podman image inspect`.
 
 Source:
-  The append-only log ~/.config/dce-enclave/<project>/provenance.jsonl.
+  The append-only log ~/.config/dc-enclave/<project>/provenance.jsonl.
   Events are appended by `dce new` and `dce rebuild-image` (image builds),
   `dce snapshot` (snapshot events), and `dce rebuild-container
   --from-snap` (restore events). Identical rebuilds are deduped, so the
@@ -928,7 +928,7 @@ Usage: dce config <subcommand> [args]
 
 Description:
   Inspects and edits a project's config file
-  (~/.config/dce-enclave/<name>/config) without leaving the CLI. The file
+  (~/.config/dc-enclave/<name>/config) without leaving the CLI. The file
   stays the source of truth; this is a thin, validating wrapper.
   show/get/set/ls need NO container backend, so they work even when no
   runtime is running.
@@ -1159,7 +1159,7 @@ Description:
   Pushes the project's current host git token (PAT) into its container,
   refreshing ~/.git-credentials without a rebuild. Run it right after
   editing the host token file
-  (~/.config/dce-enclave/<name>/<host>-token).
+  (~/.config/dc-enclave/<name>/<host>-token).
 
   State-preserving: packages, caches, and running processes are untouched
   (unlike `dce rebuild-container`, which destroys and recreates). The
@@ -1222,7 +1222,7 @@ Arguments:
   [backend|project]
                 A known backend name selects that backend; any other name
                 is treated as a project (it must have a config under
-                ~/.config/dce-enclave/<name>/config). Unknown names error.
+                ~/.config/dc-enclave/<name>/config). Unknown names error.
 
 Examples:
   dce doctor              All detected backends + host environment

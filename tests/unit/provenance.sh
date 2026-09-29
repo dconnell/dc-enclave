@@ -23,7 +23,7 @@ chmod 700 "$WORK"
 
 # Fake HOME so dce_provenance_log_path / dce_log_provenance write under it.
 export HOME="$WORK/home"
-mkdir -p "$HOME/.config/dce-enclave"
+mkdir -p "$HOME/.config/dc-enclave"
 
 # Two independent roots (mirroring DC_TEAM_DIR / DC_USER_DIR). Each holds an
 # overlays/ leaf dir. content_hash takes the leaf dir; dce_log_provenance takes
@@ -183,7 +183,7 @@ mkdir -p "$TEAM_OD" "$USER_OD"
 mkfrag team nodejs
 mkfrag user nodejs
 PROJECT="proj1"
-PROJDIR="$HOME/.config/dce-enclave/$PROJECT"; mkdir -p "$PROJDIR"
+PROJDIR="$HOME/.config/dc-enclave/$PROJECT"; mkdir -p "$PROJDIR"
 
 dce_log_provenance "$PROJECT" "dce-img-deadbeefdeadbeef:latest" "new" "$TEAM_ROOT" "$USER_ROOT" "nodejs" "sha256:baseAAA"
 LOG="$PROJDIR/provenance.jsonl"
@@ -230,7 +230,7 @@ if command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   printf 'RUN echo teamgit\n' > "$TEAM_OD/Containerfile.nodejs"
   git -C "$TGREPO" add -A && git -C "$TGREPO" commit -qm init
   printf 'RUN echo userloose\n' > "$USER_OD/Containerfile.nodejs"
-  PROJECT="proj2"; PROJDIR="$HOME/.config/dce-enclave/$PROJECT"; mkdir -p "$PROJDIR"
+  PROJECT="proj2"; PROJDIR="$HOME/.config/dc-enclave/$PROJECT"; mkdir -p "$PROJDIR"
   dce_log_provenance "$PROJECT" "dce-img-1111222233334444:latest" "new" "$TEAM_ROOT" "$USER_ROOT" "nodejs" "sha256:baseZZZ"
   jq -e '.team.git_commit != "" and .user.git_commit == "" and .team.git_dirty == false' \
     "$PROJDIR/provenance.jsonl" >/dev/null \
@@ -243,7 +243,7 @@ fi
 # ---------------------------------------------------------------------------
 # compose-containerfile.sh emits the provenance LABEL block
 # ---------------------------------------------------------------------------
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 {
   printf 'DC_TEAM_DIR="%s"\n' "$TEAM_ROOT"
   printf 'DC_USER_DIR="%s"\n' "$USER_ROOT"

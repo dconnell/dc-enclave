@@ -3,7 +3,7 @@
 # lib/common/container-hosts.sh - Per-project /etc/hosts reconciliation.
 #
 # Sourced (never executed directly) via lib/common.sh. Reads a project's hosts
-# fragment (~/.config/dce-enclave/<project>/hosts) and reconciles it into the
+# fragment (~/.config/dc-enclave/<project>/hosts) and reconciles it into the
 # container's /etc/hosts as a marker-delimited managed block at container entry
 # points (hooks/scaffolding that call dce_ensure_container_hosts land in later
 # tasks).
@@ -37,8 +37,8 @@ declare -gr _DC_COMMON_CONTAINER_HOSTS_SH_LOADED=1
 
 # Managed-block markers. The reconciler strips everything between them
 # (inclusive) before appending the fresh block; keep the pair in sync.
-readonly _DCE_HOSTS_BLOCK_BEGIN='# >>> dce-enclave hosts (managed) >>>'
-readonly _DCE_HOSTS_BLOCK_END='# <<< dce-enclave hosts (managed) <<<'
+readonly _DCE_HOSTS_BLOCK_BEGIN='# >>> dc-enclave hosts (managed) >>>'
+readonly _DCE_HOSTS_BLOCK_END='# <<< dc-enclave hosts (managed) <<<'
 
 # Echo the normalized entry lines of a hosts fragment file, one per line:
 # trailing CR stripped (CRLF-authored fragments), leading/trailing whitespace
@@ -83,7 +83,7 @@ _dce_hosts_sh_quote() {
 }
 
 # Internal: echo (as a single string) a POSIX sh script that reconciles the
-# dce-enclave managed block inside <target-file> from <fragment-file>. Intended
+# dc-enclave managed block inside <target-file> from <fragment-file>. Intended
 # to run as root inside the container via `sh -c "$script"`; the fragment path
 # is the staged copy (/tmp/.dce-hosts), which the script removes when done.
 #
@@ -106,7 +106,7 @@ _dce_hosts_reconcile_script() {
   # placeholders are substituted afterwards (with quoting applied).
   local script=""
   script="$(cat <<'EOF'
-# Reconcile the dce-enclave managed hosts block. Best-effort: any failure still
+# Reconcile the dc-enclave managed hosts block. Best-effort: any failure still
 # cleans up and exits 0 so the container entry point never breaks.
 TARGET=@TARGET@
 FRAG=@FRAG@
@@ -170,7 +170,7 @@ EOF
 }
 
 # Reconcile <project>'s hosts fragment into its container's /etc/hosts,
-# idempotently. The fragment lives at ~/.config/dce-enclave/<project>/hosts;
+# idempotently. The fragment lives at ~/.config/dc-enclave/<project>/hosts;
 # when absent the function is a strict no-op with ZERO backend calls, so
 # pre-feature projects keep their exact prior entry behavior.
 #
@@ -188,7 +188,7 @@ dce_ensure_container_hosts() {
   local project="$1"
 
   local fragment=""
-  fragment="$HOME/.config/dce-enclave/$project/hosts"
+  fragment="$HOME/.config/dc-enclave/$project/hosts"
   if [[ ! -f "$fragment" ]]; then
     return 0
   fi

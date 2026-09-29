@@ -41,7 +41,7 @@ chmod 700 "$WORK"
 # Stub harness (shared by B-I): fakes docker/container/podman.
 # ===========================================================================
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -139,7 +139,7 @@ printf 'mynet\nobs\n' > "$NETWORKS"   # both networks exist
 : > "$CONTAINERS"
 
 PROJECT="webproj"
-SECRET_DIR="$WORK/home/.config/dce-enclave/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dc-enclave/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 : > "$LOG"
@@ -198,7 +198,7 @@ fi
 grep -Fqi 'does not exist' "$WORK/c.stderr" || fail "missing-network error should mention 'does not exist' (stderr)"
 grep -Fqi 'dce network create ghost' "$WORK/c.stderr" || fail "missing-network error should suggest dce network create (stderr)"
 if grep -qE 'create --name cproj' "$LOG"; then fail "dce new: must not create container when network missing"; fi
-if [[ -d "$WORK/home/.config/dce-enclave/$CPROJ" ]]; then
+if [[ -d "$WORK/home/.config/dc-enclave/$CPROJ" ]]; then
   fail "dce new: must not leave a project config dir when network missing"
 fi
 pass "Section C: missing network fails fast"
@@ -326,7 +326,7 @@ pass "Section G: apple network create/ls (header parse)"
 BACKEND=docker
 printf 'rmnet\n' > "$NETWORKS"
 # webproj references... no. Build a project that references rmnet.
-RP="$WORK/home/.config/dce-enclave/rmhost"
+RP="$WORK/home/.config/dc-enclave/rmhost"
 mkdir -p "$RP"; chmod 700 "$RP"
 {
   echo 'CONTAINER_PROJECT="rmhost"'; echo 'CONFIG_SCHEMA_VERSION="2"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
@@ -358,7 +358,7 @@ pass "Section H: dce network rm membership guard + --force"
 BACKEND=docker
 printf 'addnet\n' > "$NETWORKS"
 IPROJ="iprod"
-ICONFIG="$WORK/home/.config/dce-enclave/$IPROJ/config"
+ICONFIG="$WORK/home/.config/dc-enclave/$IPROJ/config"
 mkdir -p "$(dirname "$ICONFIG")"; chmod 700 "$(dirname "$ICONFIG")"
 {
   echo 'CONTAINER_PROJECT="iprod"'; echo 'CONFIG_SCHEMA_VERSION="2"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'

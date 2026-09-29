@@ -13,7 +13,7 @@ Images built on one backend are not visible to another. `dce new` checks for `dc
 
 `setup.sh` also bootstraps global configuration and directories:
 
-- `~/.config/dce-enclave/config` with `DC_TEAM_DIR` and `DC_USER_DIR`
+- `~/.config/dc-enclave/config` with `DC_TEAM_DIR` and `DC_USER_DIR`
 - `$DC_TEAM_DIR/overlays` and `$DC_TEAM_DIR/container-recipes`
 - `$DC_USER_DIR/overlays` and `$DC_USER_DIR/container-recipes`
 
@@ -132,9 +132,9 @@ Starter file note:
 
 After dce new:
 
-1. Edit `~/.config/dce-enclave/<name>/github-token` (or gitlab-token if you ran
+1. Edit `~/.config/dc-enclave/<name>/github-token` (or gitlab-token if you ran
    `dce new ... --git-host gitlab`) and replace the placeholder with your token
-2. Add `~/.config/dce-enclave/<name>/ssh_key.pub` as a deploy key on your git host
+2. Add `~/.config/dc-enclave/<name>/ssh_key.pub` as a deploy key on your git host
 3. Clone repo(s) into the host paths listed by `dce config get <name> repos`
 
 Port mapping notes:

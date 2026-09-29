@@ -103,7 +103,7 @@ fi
 
 dce_load_global_config
 
-CONFIG_DIR="$HOME/.config/dce-enclave"
+CONFIG_DIR="$HOME/.config/dc-enclave"
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   dce_die "Compose helper not found at $COMPOSE_SCRIPT"

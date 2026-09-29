@@ -27,7 +27,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 mkdir -p "$DC_ROOT"
 
 STUB_DIR="$WORK/bin"

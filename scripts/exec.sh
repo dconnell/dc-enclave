@@ -80,7 +80,7 @@ if [[ ${#CMD[@]} -eq 0 ]]; then
   For an interactive shell, use: dce shell $PROJECT"
 fi
 
-CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG="$HOME/.config/dc-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
   dce_die "No config for '$PROJECT'. Run: dce new $PROJECT"
 fi

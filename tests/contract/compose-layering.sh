@@ -29,7 +29,7 @@ chmod 700 "$WORK"
 # Fake HOME + global config so compose resolves DC_TEAM_DIR/DC_USER_DIR via the
 # real dce_load_global_config path (no monkey-patching of the helper).
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"

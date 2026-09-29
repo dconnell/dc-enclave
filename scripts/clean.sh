@@ -113,7 +113,7 @@ dce_load_global_config
 if $CLEAN_HIDDEN_VOLUMES; then
   declare -A EXPECTED_VOLUMES=()
 
-  for config_file in "$HOME"/.config/dce-enclave/*/config; do
+  for config_file in "$HOME"/.config/dc-enclave/*/config; do
     [[ -f "$config_file" ]] || continue
 
     project_name="$(basename "$(dirname "$config_file")")"
@@ -330,7 +330,7 @@ is_managed_repo() {
 declare -A EXPECTED_REPOS=()
 EXPECTED_REPOS["dce-base"]=1
 
-for config_file in "$HOME"/.config/dce-enclave/*/config; do
+for config_file in "$HOME"/.config/dc-enclave/*/config; do
   [[ -f "$config_file" ]] || continue
 
   if ! scope_csv="$(dce_config_extract_scalar "$config_file" CONTAINER_OVERLAY_SCOPES)"; then

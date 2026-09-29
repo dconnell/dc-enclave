@@ -38,7 +38,7 @@ chmod 700 "$WORK"
 # Stub harness: fake docker + fake editor binary.
 # ===========================================================================
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"

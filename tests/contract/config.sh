@@ -11,7 +11,7 @@
 #   and that every successful set leaves a loadable, mode-600 file behind.
 #
 # The command is backend-free and global-config-free: it touches only the
-# project config under $HOME/.config/dce-enclave/<name>/config, so the test
+# project config under $HOME/.config/dc-enclave/<name>/config, so the test
 # points $HOME at a temp tree and never needs a container runtime.
 # =============================================================================
 set -euo pipefail
@@ -49,7 +49,7 @@ mode_is() {
 # (mode 600 / dir 700).
 write_project_config() {
   local project="$1"
-  local dir="$FAKE_HOME/.config/dce-enclave/$project"
+  local dir="$FAKE_HOME/.config/dc-enclave/$project"
   mkdir -p "$dir"
   chmod 700 "$dir"
   {
@@ -71,7 +71,7 @@ write_project_config() {
 }
 
 config_path() {
-  printf '%s/.config/dce-enclave/%s/config\n' "$FAKE_HOME" "$1"
+  printf '%s/.config/dc-enclave/%s/config\n' "$FAKE_HOME" "$1"
 }
 
 # ============================================================================

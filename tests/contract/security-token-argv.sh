@@ -139,7 +139,7 @@ run_provider() {
   chmod 600 "$token_path"
 
   local fake_home="$WORK/home-$provider"
-  local cfg_dir="$fake_home/.config/dce-enclave/$PROJECT"
+  local cfg_dir="$fake_home/.config/dc-enclave/$PROJECT"
   mkdir -p "$cfg_dir"
   chmod 700 "$cfg_dir"
   cat > "$cfg_dir/config" <<CFG

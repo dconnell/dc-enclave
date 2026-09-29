@@ -98,7 +98,7 @@ if [[ -z "$PROJECT" ]]; then
 Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
 fi
 
-CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG="$HOME/.config/dc-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
   dce_die "No config for '$PROJECT'."
 fi

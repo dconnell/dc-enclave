@@ -59,7 +59,7 @@ if [[ $# -gt 0 ]]; then
   COMMAND="$*"
 fi
 
-CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG="$HOME/.config/dc-enclave/$PROJECT/config"
 if [[ ! -f "$CONFIG" ]]; then
   dce_die "No config for '$PROJECT'. Run: dce new $PROJECT <scope>"
 fi

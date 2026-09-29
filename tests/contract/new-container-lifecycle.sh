@@ -40,7 +40,7 @@ chmod 700 "$WORK"
 # hash is purely a function of (nodejs, golang).
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 TEAM_OD="$TEAM_DIR/overlays"
@@ -138,7 +138,7 @@ run_script() {
 first_call() { grep -En "$1" "$LOG" | head -n1 | cut -d: -f1; }
 
 PROJECT="myapp"
-SECRET_DIR="$WORK/home/.config/dce-enclave/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dc-enclave/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 # ===========================================================================
@@ -358,7 +358,7 @@ pass "dce new: reuses existing derived image (no rebuild)"
 # config key, and guidance copy. (github default is covered by the case above.)
 # ===========================================================================
 GL_PROJ="glapp"
-GL_SECRET_DIR="$WORK/home/.config/dce-enclave/$GL_PROJ"
+GL_SECRET_DIR="$WORK/home/.config/dc-enclave/$GL_PROJ"
 GL_CONFIG="$GL_SECRET_DIR/config"
 GL_SENTINEL="$(dce_git_host_field gitlab sentinel)"
 GL_TOKEN_FILE="$GL_SECRET_DIR/$(dce_git_host_field gitlab token_filename)"
@@ -562,7 +562,7 @@ pass "rebuild -y: short form skips prompt"
 # The myapp project has scopes nodejs,golang. Adopt manifests: declare a.b only.
 BACKEND=docker
 cp "$IMAGES_BAK" "$IMAGES"; printf '%s\n' "$CONTAINER_IMAGE" >> "$IMAGES"
-EXT_USER_DIR="$WORK/home/.config/dce-enclave/user/extensions/vscode"
+EXT_USER_DIR="$WORK/home/.config/dc-enclave/user/extensions/vscode"
 mkdir -p "$EXT_USER_DIR"
 printf 'a.b\n' > "$EXT_USER_DIR/nodejs.txt"
 : > "$EXT_USER_DIR/golang.txt"
@@ -632,7 +632,7 @@ run_script "$ROOT_DIR/scripts/new-container.sh" "$APROJ" nodejs 3000:3000 \
   || fail "dce new (apple) exited non-zero"
 
 # apple seeds the same managed devcontainer.json (experimental attach path).
-apple_dc="$WORK/home/.config/dce-enclave/$APROJ/devcontainer.json"
+apple_dc="$WORK/home/.config/dc-enclave/$APROJ/devcontainer.json"
 [[ -f "$apple_dc" ]] || fail "apple: managed devcontainer.json missing"
 grep -Fq '"workspaceFolder": "/workspace"' "$apple_dc" || fail "apple: devcontainer.json workspaceFolder"
 grep -Fq '"remoteUser": "dev"' "$apple_dc" || fail "apple: devcontainer.json remoteUser"

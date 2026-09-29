@@ -34,7 +34,7 @@ dce rebuild-container myapp-monorepo --yes
 For incident recovery (e.g. suspected supply-chain compromise), always rebuild **without** `--keep-hidden-volumes` so hidden volumes like `node_modules` and build caches are destroyed and reinstalled from scratch. When the project has hidden paths configured, combining `--rotate-keys` with `--keep-hidden-volumes` triggers a warning (key rotation implies incident response, where preserving volumes may be unsafe).
 
 On Docker-compatible backends, rebuild preserves any existing managed
-`~/.config/dce-enclave/<name>/devcontainer.json` (never overwritten). If managed fields in that
+`~/.config/dc-enclave/<name>/devcontainer.json` (never overwritten). If managed fields in that
 file drift from current config (scopes/hide/networks/ports), rebuild prints a
 non-fatal notice; reconcile on demand with:
 
@@ -48,7 +48,7 @@ dce config sync-vscode <name> --dry-run
 
 Three distinct operations cover credential changes; pick by what changed:
 
-- **You edited the host git token** (`~/.config/dce-enclave/<name>/<host>-token`) and
+- **You edited the host git token** (`~/.config/dc-enclave/<name>/<host>-token`) and
   want the running container to use it, without losing container state (packages,
   caches, running processes):
 
@@ -139,7 +139,7 @@ Safety and cleanup scope:
 
 1. stops the container if it is running, then deletes it
 2. removes every managed hidden volume (`dce-hide-<project>-<hash>`)
-3. removes the per-project config + secrets directory (`~/.config/dce-enclave/<name>`), including the SSH key, GitHub token, and `.npmrc`
+3. removes the per-project config + secrets directory (`~/.config/dc-enclave/<name>`), including the SSH key, GitHub token, and `.npmrc`
 
 ```
 dce rm myapp                       # remove everything (prompts to confirm)

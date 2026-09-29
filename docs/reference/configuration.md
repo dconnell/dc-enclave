@@ -4,14 +4,14 @@
 `setup.sh` bootstraps global configuration in:
 
 ```
-~/.config/dce-enclave/config
+~/.config/dc-enclave/config
 ```
 
 Required keys:
 
 ```bash
-DC_TEAM_DIR="$HOME/.config/dce-enclave/team"
-DC_USER_DIR="$HOME/.config/dce-enclave/user"
+DC_TEAM_DIR="$HOME/.config/dc-enclave/team"
+DC_USER_DIR="$HOME/.config/dc-enclave/user"
 ```
 
 `dce new`, `dce rebuild-image`, and `dce rebuild-container` load `DC_TEAM_DIR` and `DC_USER_DIR` from this config file. If the global config file is missing, either root is unset, or a root does not exist, the command fails fast with remediation guidance.
@@ -98,7 +98,7 @@ dce new workspace --repo api=~/code/api --repo web=~/code/web --save-team
 
 ## Project config keys
 
-Each project's config lives at `~/.config/dce-enclave/<name>/config` and is
+Each project's config lives at `~/.config/dc-enclave/<name>/config` and is
 written by `dce new`. The hardened loader rejects unknown keys, unsafe shell
 syntax, and out-of-contract value combinations.
 

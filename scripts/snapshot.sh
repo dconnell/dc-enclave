@@ -212,7 +212,7 @@ do_create() {
     fi
   fi
 
-  local config="$HOME/.config/dce-enclave/$project/config"
+  local config="$HOME/.config/dc-enclave/$project/config"
   if [[ ! -f "$config" ]]; then
     dce_die "No project '$project' (config not found)."
   fi
@@ -546,7 +546,7 @@ do_list() {
   # attributed to its project and labeled. Snapshots whose project is gone
   # (orphan) fall back to their slug.
   declare -A slug_to_project=()
-  local cfg_dir="$HOME/.config/dce-enclave"
+  local cfg_dir="$HOME/.config/dc-enclave"
   local d="" pname="" pslug=""
   if [[ -d "$cfg_dir" ]]; then
     for d in "$cfg_dir"/*; do

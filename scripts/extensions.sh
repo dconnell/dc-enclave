@@ -7,7 +7,7 @@
 #   $DC_TEAM_DIR/extensions/<editor>/<scope>.txt  (layered first per scope)
 #   $DC_USER_DIR/extensions/<editor>/<scope>.txt  (layered second per scope)
 # and seeded/synced into the managed devcontainer.json at
-# ~/.config/dce-enclave/<project>/devcontainer.json by `dce new` /
+# ~/.config/dc-enclave/<project>/devcontainer.json by `dce new` /
 # `dce config sync-vscode`. This command is the operational surface for
 # bootstrapping those manifests and inspecting runtime vs declared state.
 #
@@ -175,7 +175,7 @@ fi
 # IDs) must not require backend selection/CLI availability.
 _load_project() {
   local project="$1"
-  local config="$HOME/.config/dce-enclave/$project/config"
+  local config="$HOME/.config/dc-enclave/$project/config"
   if [[ ! -f "$config" ]]; then
     dce_die "No config for project '$project'.
        Run 'dce new $project ...' first, or 'dce config ls' for projects."

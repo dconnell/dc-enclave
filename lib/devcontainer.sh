@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# lib/devcontainer.sh - Managed devcontainer.json helpers (file lives at ~/.config/dce-enclave/<project>/devcontainer.json).
+# lib/devcontainer.sh - Managed devcontainer.json helpers (file lives at ~/.config/dc-enclave/<project>/devcontainer.json).
 #
 # The devcontainer.json that `dce new` seeds (Docker-compatible backends) embeds
 # several fields derived from dce-managed state: build.dockerfile (from scopes),

@@ -29,7 +29,7 @@ source "$ROOT_DIR/lib/container-backend.sh"
 backend_use "${CONTAINER_BACKEND:-}"
 DEFAULT_BACKEND="$(backend_name)"
 
-PROJECTS=("$HOME"/.config/dce-enclave/*/config)
+PROJECTS=("$HOME"/.config/dc-enclave/*/config)
 if [[ ${#PROJECTS[@]} -eq 0 ]]; then
   echo "No projects found."
   exit 0

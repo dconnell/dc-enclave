@@ -37,7 +37,7 @@ dce_repo_cmd_in() {
 write_project_config() {
   local project="$1"
   shift
-  local dir="$FAKE_HOME/.config/dce-enclave/$project"
+  local dir="$FAKE_HOME/.config/dc-enclave/$project"
   mkdir -p "$dir"
   chmod 700 "$dir"
   {
@@ -62,7 +62,7 @@ write_project_config() {
 
 load_cfg() {
   local project="$1"
-  local cfg="$FAKE_HOME/.config/dce-enclave/$project/config"
+  local cfg="$FAKE_HOME/.config/dc-enclave/$project/config"
   # shellcheck disable=SC2034  # reset-before-load hygiene for globals sourced by the loader
   PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=() REPO_NAMES=() REPO_PATHS=()
   dce_load_project_config "$cfg"
