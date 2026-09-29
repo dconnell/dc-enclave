@@ -434,7 +434,7 @@ EOF
 
 _show_help_extensions() {
   cat <<'EOF'
-Usage: dce extensions <list|host|available|show|diff|capture> [<project>] [ids...]
+Usage: dce extensions <list|host|available|show|diff|capture> [<project>] [flags] [ids...]
                [--editor <id>] [--format ids|json|manifest]
                [--scope <scope>] [--user|--team] [--all]
 

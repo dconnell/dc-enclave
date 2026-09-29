@@ -235,6 +235,87 @@ dce_complete_repo_root_names() {
   done
 }
 
+# Print the configured hidden-volume paths for one project (CONTAINER_HIDDEN_PATHS),
+# optionally filtered by a prefix. Parsed directly from the project config.
+dce_complete_project_hidden_paths() {
+  local project="$1"
+  local cur="${2:-}"
+  local config="$HOME/.config/dc-enclave/projects/$project/config"
+  local path=""
+
+  [[ -f "$config" ]] || return 0
+
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    if [[ -z "$cur" || "$path" == "$cur"* ]]; then
+      printf '%s\n' "$path"
+    fi
+  done < <(_dce_complete_extract_array "$config" CONTAINER_HIDDEN_PATHS)
+}
+
+# Print the configured network names for one project (CONTAINER_NETWORKS),
+# optionally filtered by a prefix. The stored form is <name> or <name>:<ip>.
+dce_complete_project_networks() {
+  local project="$1"
+  local cur="${2:-}"
+  local config="$HOME/.config/dc-enclave/projects/$project/config"
+  local entry="" name=""
+
+  [[ -f "$config" ]] || return 0
+
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    name="${entry%%:*}"
+    if [[ -z "$cur" || "$name" == "$cur"* ]]; then
+      printf '%s\n' "$name"
+    fi
+  done < <(_dce_complete_extract_array "$config" CONTAINER_NETWORKS)
+}
+
+# Print the union of configured network names across all projects, filtered by a
+# prefix. Used for `dce network` completions without requiring backend access.
+dce_complete_network_names() {
+  local cur="${1:-}"
+  local config="" project="" seen=""
+  local name=""
+
+  while IFS= read -r config; do
+    [[ -f "$config" ]] || continue
+    project="$(basename "$(dirname "$config")")"
+    while IFS= read -r name; do
+      [[ -z "$name" ]] && continue
+      case " $seen " in
+        *" $name "*) continue ;;
+      esac
+      seen+=" $name"
+      printf '%s\n' "$name"
+    done < <(dce_complete_project_networks "$project" "$cur")
+  done < <(printf '%s\n' "$HOME/.config/dc-enclave/projects"/*/config)
+}
+
+# Print snapshot labels recorded for one project, filtered by a prefix. Labels
+# come from the snapshot manifest names (<label>.volumes) under the project dir.
+dce_complete_snapshot_labels() {
+  local project="$1"
+  local cur="${2:-}"
+  local dir="$HOME/.config/dc-enclave/projects/$project/snapshots"
+  local file="" label=""
+
+  [[ -d "$dir" ]] || return 0
+
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    setopt local_options NULL_GLOB
+  fi
+
+  for file in "$dir"/*.volumes; do
+    [[ -f "$file" ]] || continue
+    label="$(basename "$file" .volumes)"
+    if [[ -z "$cur" || "$label" == "$cur"* ]]; then
+      printf '%s\n' "$label"
+    fi
+  done
+}
+
 # Print the writable and read-only friendly key names accepted by `dce config
 # get`. `set` intentionally keeps the smaller writable-only key set.
 dce_complete_config_get_keys() {

@@ -42,9 +42,12 @@ SSH_KEY_PATH="/tmp/alpha-secret/ssh_key"
 TOKEN_FILE="/tmp/alpha-secret/token"
 NPMRC_PATH="/tmp/alpha-secret/.npmrc"
 PORTS=()
-CONTAINER_HIDDEN_PATHS=()
-CONTAINER_NETWORKS=()
+CONTAINER_HIDDEN_PATHS=( web/node_modules )
+CONTAINER_NETWORKS=( appnet dbnet:10.0.0.5 )
 EOF
+mkdir -p "$PROJECTS_ROOT/alpha/snapshots"
+: > "$PROJECTS_ROOT/alpha/snapshots/release-1.volumes"
+: > "$PROJECTS_ROOT/alpha/snapshots/beta.volumes"
 # A dir without a config file must NOT be offered as a project.
 mkdir -p "$PROJECTS_ROOT/incomplete"
 # Legacy flat project dirs are a clean-break miss and must not be discovered.
@@ -202,17 +205,18 @@ drive 3 dce editor alpha "";              assert_reply "editor alpha <TAB>" --ed
 drive 4 dce editor alpha --editor "";     assert_reply "editor alpha --editor <TAB>" vscode vscode-insiders
 drive 5 dce editor alpha --editor vscode ""; assert_empty "editor alpha --editor vscode <TAB> (nothing past flag value)"
 
-# extensions: subactions at slot 2; project + flags after.
+# extensions: subactions at slot 2; project immediately after for project-taking subcommands.
 drive 2 dce extensions ""; assert_reply "extensions <TAB>" \
   available capture diff host list show
 drive 3 dce extensions show ""; assert_reply "extensions show <TAB>" alpha beta gamma
 # Past the project, the output flags are offered (--editor/--format).
 drive 4 dce extensions show alpha ""; assert_reply "extensions show alpha <TAB>" --editor --format
 # --editor / --format / --scope consume a value.
-drive 3 dce extensions --editor ""; assert_reply "extensions --editor <TAB>" vscode
-drive 4 dce extensions list --format ""; assert_reply "extensions list --format <TAB>" ids json manifest
-# capture offers --scope/--user/--team/--all plus project.
+drive 5 dce extensions show alpha --editor ""; assert_reply "extensions show alpha --editor <TAB>" vscode
+drive 5 dce extensions list alpha --format ""; assert_reply "extensions list alpha --format <TAB>" ids json manifest
+# capture offers the project first, then capture-only flags.
 drive 3 dce extensions capture ""; assert_reply "extensions capture <TAB>" alpha beta gamma
+drive 4 dce extensions capture alpha ""; assert_reply "extensions capture alpha <TAB>" --all --editor --format --scope --team --user
 
 # rebuild-container: one project, then the flags.
 drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
@@ -221,6 +225,8 @@ drive 3 dce rebuild-container alpha "--"; assert_reply "rebuild-container alpha 
 
 drive 3 dce rebuild-container alpha ""; assert_reply "rebuild-container alpha <TAB>" \
   --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --yes -y
+drive 4 dce rebuild-container alpha --from-snap ""; assert_reply "rebuild-container alpha --from-snap <TAB>" \
+  beta release-1
 drive 5 dce rebuild-container alpha --from-snap lbl ""; assert_reply "rebuild-container alpha --from-snap lbl <TAB>" \
   --inject-creds --keep-hidden-volumes --rotate-keys --yes -y
 
@@ -245,9 +251,15 @@ drive 2 dce rebuild-image ""; assert_reply "rebuild-image <TAB>" all base
 drive 2 dce provenance "";              assert_reply "provenance <TAB>" alpha beta gamma
 drive 3 dce provenance alpha "--";      assert_reply "provenance alpha --<TAB>" --all --history
 
-# network: subactions at position 2.
+# network: subactions at position 2; names/projects complete after that.
 drive 2 dce network ""; assert_reply "network <TAB>" \
   add create list ls members remove rm
+drive 3 dce network members ""; assert_reply "network members <TAB>" appnet dbnet
+drive 3 dce network rm "";      assert_reply "network rm <TAB>" appnet dbnet
+drive 3 dce network add "";     assert_reply "network add <TAB>" appnet dbnet
+drive 4 dce network add appnet ""; assert_reply "network add appnet <project> <TAB>" alpha beta gamma
+drive 3 dce network remove "";     assert_reply "network remove <TAB>" appnet dbnet
+drive 4 dce network remove appnet ""; assert_reply "network remove appnet <project> <TAB>" alpha beta gamma
 
 # repo: subactions at position 2; project at 3; add/remove arg slots after.
 drive 2 dce repo ""; assert_reply "repo <TAB>" add list remove
@@ -318,8 +330,10 @@ drive 4 dce clean --snapshots alpha "--"; assert_reply "clean --snapshots alpha 
 # snapshot / snapshots: position 1 offers rm/list + projects; labels are free.
 drive 2 dce snapshot ""; assert_reply "snapshot <TAB>" rm alpha beta gamma
 drive 3 dce snapshot rm ""; assert_reply "snapshot rm <project> <TAB>" alpha beta gamma
+drive 4 dce snapshot rm alpha ""; assert_reply "snapshot rm alpha <label> <TAB>" beta release-1
 # --exclude-volumes / --exclude-volume / --yes are offered once a project is present.
 drive 3 dce snapshot alpha "--exc"; assert_reply "snapshot alpha --exc <TAB>" --exclude-volume --exclude-volumes
+drive 4 dce snapshot alpha --exclude-volume ""; assert_reply "snapshot alpha --exclude-volume <TAB>" web/node_modules
 drive 3 dce snapshot alpha "--yes"; assert_reply "snapshot alpha --yes <TAB>" --yes
 # empty prefix offers all create flags, including the -y short form.
 drive 3 dce snapshot alpha ""; assert_reply "snapshot alpha <TAB>" --exclude-volume --exclude-volumes --yes -y
@@ -527,6 +541,8 @@ if command -v zsh >/dev/null 2>&1; then
     # subaction (parity with editor/shell/logs and with the bash front-end).
     words=(extensions show "") CURRENT=3 SPEC=(); _dce_extensions
     [[ "${SPEC[*]}" == *"2:project"* ]] || { print "FAIL: zsh extensions show should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1 }
+    words=(extensions capture "") CURRENT=3 SPEC=(); _dce_extensions
+    [[ "${SPEC[*]}" == *"2:project"* ]] || { print "FAIL: zsh extensions capture should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1 }
     # `host` takes NO project -- the project spec must not appear.
     words=(extensions host "") CURRENT=3 SPEC=(); _dce_extensions
     [[ "${SPEC[*]}" != *"2:project"* ]] || { print "FAIL: zsh extensions host must not offer a project -> [${SPEC[*]}]"; exit 1 }
@@ -567,6 +583,11 @@ if command -v zsh >/dev/null 2>&1; then
     chk new              "-y[skip confirmation prompts for repo paths outside the default repos dir]"
     words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--from-snap+[recreate from snapshot"
+    words=(network members "") CURRENT=3 SPEC=(); _dce_network
+    [[ "${SPEC[*]}" == *"2:network"* ]] || { print "FAIL: zsh network members should complete a network at slot 2 -> [${SPEC[*]}]"; exit 1 }
+    words=(network add "") CURRENT=3 SPEC=(); _dce_network
+    [[ "${SPEC[*]}" == *"2:network"* ]] || { print "FAIL: zsh network add should complete a network at slot 2 -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" == *"3:project"* ]] || { print "FAIL: zsh network add should complete a project at slot 3 -> [${SPEC[*]}]"; exit 1 }
     chk snapshot         "1:project or rm:"
     chk snapshot         "--exclude-volumes[skip ALL hidden-volume capture]"
     chk snapshot         "*--exclude-volume[exclude specific hidden volume"

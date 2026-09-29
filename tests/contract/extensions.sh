@@ -461,10 +461,15 @@ pass "capture: rejects malformed ids, accepts valid publisher.name"
 # ===========================================================================
 # 10. unknown editor -> error.
 # ===========================================================================
-if run_ext --editor zed show alpha >/dev/null 2>&1; then
+if run_ext show alpha --editor zed >/dev/null 2>&1; then
   fail "extensions: unknown editor must error"
 fi
 pass "unknown editor rejected"
+
+if run_ext --editor vscode show alpha >/dev/null 2>&1; then
+  fail "extensions: leading global flags before the subcommand must be rejected"
+fi
+pass "extensions: rejects flag-first ordering before the subcommand"
 
 # ===========================================================================
 # 11. apple backend: container-derived ops now work (experimental attach path),

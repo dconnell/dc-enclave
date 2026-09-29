@@ -255,6 +255,48 @@ _dce_project_repo_names() {
   _wanted repos expl 'repo name' compadd -a all
 }
 
+_dce_project_hidden_paths() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+
+  local project="${words[2]:-}"
+  [[ -n "$project" ]] || return 0
+
+  local -a all
+  all=("${(@f)$(dce_complete_project_hidden_paths "$project")}")
+  _wanted paths expl 'hidden path' compadd -a all
+}
+
+_dce_network_names() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+
+  local -a all
+  all=("${(@f)$(dce_complete_network_names)}")
+  _wanted networks expl 'network' compadd -a all
+}
+
+_dce_snapshot_labels() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+
+  local project="${words[2]:-}"
+  if [[ "${words[2]:-}" == "rm" ]]; then
+    project="${words[3]:-}"
+  fi
+  [[ -n "$project" ]] || return 0
+
+  local -a all
+  all=("${(@f)$(dce_complete_snapshot_labels "$project")}")
+  _wanted labels expl 'snapshot label' compadd -a all
+}
+
 # `dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]`: flags
 # are always offered; a single optional project is offered once a scoping flag is
 # active and no project has been typed yet.
@@ -281,17 +323,19 @@ _dce_clean() {
 # `dce snapshot <project> [<label>] [--exclude-volumes] [--exclude-volume <p>]
 # [--yes|-y]` (create) or `dce snapshot rm <project> <label>` (remove).
 _dce_snapshot() {
-  # `snapshot rm <project> <label>`: complete a project at the next slot; the
-  # label is free-form and no create flags apply on the rm path. After the
+  # `snapshot rm <project> <label>`: complete a project at the next slot and a
+  # snapshot label after that; no create flags apply on the rm path. After the
   # top-level *:: reset, $words[1] is "snapshot", so the rm token is $words[2].
   if [[ "${words[2]}" == "rm" ]]; then
-    _arguments '2:project: _dce_projects_simple'
+    _arguments \
+      '2:project: _dce_projects_simple' \
+      '3:snapshot label:_dce_snapshot_labels'
     return 0
   fi
   _arguments \
     '1:project or rm: _dce_snapshot_first' \
     '--exclude-volumes[skip ALL hidden-volume capture]' \
-    '*--exclude-volume[exclude specific hidden volume(s)]:path:' \
+    '*--exclude-volume[exclude specific hidden volume(s)]:path:_dce_project_hidden_paths' \
     '--yes[skip the confirmation prompt]' \
     '-y[skip the confirmation prompt]'
 }
@@ -347,9 +391,38 @@ _dce_network() {
     return 1
   fi
 
-  local -a subs
-  subs=("${(@f)$(dce_complete_network_subactions)}")
-  _describe 'network subcommand' subs
+  local sub="${words[2]}"
+  case "$sub" in
+    members|rm)
+      _arguments \
+        '1:subcommand: _dce_network_subactions' \
+        '2:network:_dce_network_names' \
+        '--force[remove even when dce members still reference it]' \
+        '-f[remove even when dce members still reference it]'
+      ;;
+    add|remove)
+      _arguments \
+        '1:subcommand: _dce_network_subactions' \
+        '2:network:_dce_network_names' \
+        '3:project:_dce_projects_simple' \
+        '--ip+[static IPv4 address]:addr:'
+      ;;
+    create)
+      _arguments \
+        '1:subcommand: _dce_network_subactions' \
+        '2:network:' \
+        '--subnet+[IPv4 CIDR]:cidr:' \
+        '--subnet-v6+[IPv6 CIDR]:cidr:'
+      ;;
+    ls|list)
+      _arguments '1:subcommand: _dce_network_subactions'
+      ;;
+    *)
+      local -a subs
+      subs=("${(@f)$(dce_complete_network_subactions)}")
+      _describe 'network subcommand' subs
+      ;;
+  esac
 }
 
 # `dce repo <list|add|remove> ...`.
@@ -475,18 +548,15 @@ _dce_editor_ids() {
   _wanted editors expl 'editor id' compadd -a all
 }
 
-# `dce extensions <list|host|available|show|diff|capture> [project] [flags]`.
+# `dce extensions <list|host|available|show|diff|capture> <project> [flags]`.
 # Branches on the subaction so `host` takes no project while the others offer
 # one at slot 2; --editor/--format/--scope consume a value; --user/--team/--all
 # are flags. capture's trailing <id>... is free-form (not completed). Mirrors the
 # per-subaction dispatch pattern used by _dce_config.
 #
 # Grammar assumption: the subaction is the first token after `extensions`
-# ($words[2] after the *:: reset), per the documented
-# `dce extensions <subcommand> [flags] <project>` form. The parser accepts
-# interspersed flags, but completion is positionally rigid: a global flag typed
-# before the subaction falls through to the default branch. Acceptable because
-# usage convention puts the subaction first.
+# ($words[2] after the *:: reset), and project-taking subcommands take the
+# project immediately after that at slot 2.
 _dce_extensions() {
   local sub="${words[2]}"
   case "$sub" in

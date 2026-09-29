@@ -108,8 +108,10 @@ _dce_complete() {
         _dce_reply_projects "$cur"
         return 0
       fi
-      # --from-snap takes a value (a snapshot label), not completed here.
-      [[ "$prev" == "--from-snap" ]] && return 0
+      if [[ "$prev" == "--from-snap" ]]; then
+        _dce_reply_snapshot_labels "${COMP_WORDS[2]:-}" "$cur"
+        return 0
+      fi
 
       local have_from_snap=0 _w
       for _w in "${COMP_WORDS[@]:3:COMP_CWORD-3}"; do
@@ -231,6 +233,39 @@ _dce_reply_project_repos() {
     [[ -z "$name" ]] && continue
     out+=("$name")
   done < <(dce_complete_project_repos "$project" "$cur")
+  COMPREPLY=("${out[@]}")
+}
+
+_dce_reply_project_hidden_paths() {
+  local project="$1" cur="$2"
+  local -a out=()
+  local path
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    out+=("$path")
+  done < <(dce_complete_project_hidden_paths "$project" "$cur")
+  COMPREPLY=("${out[@]}")
+}
+
+_dce_reply_networks() {
+  local cur="$1"
+  local -a out=()
+  local name
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    out+=("$name")
+  done < <(dce_complete_network_names "$cur")
+  COMPREPLY=("${out[@]}")
+}
+
+_dce_reply_snapshot_labels() {
+  local project="$1" cur="$2"
+  local -a out=()
+  local label
+  while IFS= read -r label; do
+    [[ -z "$label" ]] && continue
+    out+=("$label")
+  done < <(dce_complete_snapshot_labels "$project" "$cur")
   COMPREPLY=("${out[@]}")
 }
 
@@ -423,7 +458,7 @@ _dce_complete_clean() {
 # `dce snapshot <project> [<label>] [--exclude-volumes]` (create) or `dce
 # snapshot rm <project> <label>` (remove). Position 2 offers `rm` and project
 # names; --exclude-volumes is offered on the create path; after `rm`, position 3
-# is a project and position 4 a free-form label.
+# is a project and position 4 a snapshot label.
 _dce_complete_snapshot() {
   local cur="$1" prev="$2"
 
@@ -448,10 +483,12 @@ _dce_complete_snapshot() {
     return 0
   fi
 
-  # After `rm`: position 3 is a project; position 4+ is a free-form label.
+  # After `rm`: position 3 is a project; position 4 is a snapshot label.
   if [[ $have_rm -eq 1 ]]; then
     if [[ $positional -eq 0 ]]; then
       _dce_reply_projects "$cur"
+    elif [[ $positional -eq 1 ]]; then
+      _dce_reply_snapshot_labels "${COMP_WORDS[3]:-}" "$cur"
     fi
     return 0
   fi
@@ -462,9 +499,11 @@ _dce_complete_snapshot() {
   [[ -z "$cur" || "--exclude-volume" == "$cur"* ]] && sflags+=("--exclude-volume")
   [[ -z "$cur" || "--yes" == "$cur"* ]] && sflags+=("--yes")
   [[ -z "$cur" || "-y" == "$cur"* ]] && sflags+=("-y")
-  # --exclude-volume consumes a value (a hidden path); don't complete more flags
-  # immediately after it.
-  if [[ "$prev" != "--exclude-volume" ]]; then
+  # --exclude-volume consumes a value (a hidden path); complete that path and do
+  # not offer more flags in the same slot.
+  if [[ "$prev" == "--exclude-volume" ]]; then
+    _dce_reply_project_hidden_paths "${COMP_WORDS[2]:-}" "$cur"
+  else
     COMPREPLY+=("${sflags[@]}")
   fi
   return 0
@@ -570,9 +609,8 @@ _dce_complete_repo() {
   esac
 }
 
-# `dce network <subaction> ...`: subactions at position 2; afterwards a network
-# name or project (free text) is not completed, so only the subaction slot and
-# the --force/--ip flags are offered.
+# `dce network <subaction> ...`: subactions at position 2; afterwards complete
+# known network names and project names from config where appropriate.
 _dce_complete_network() {
   local cur="$1" prev="$2"
 
@@ -581,9 +619,29 @@ _dce_complete_network() {
     return 0
   fi
 
+  local sub="${COMP_WORDS[2]:-}"
+
   case "$prev" in
     --subnet|--subnet-v6|--ip)
       return 0
+      ;;
+  esac
+
+  case "$sub" in
+    members|rm)
+      if [[ $COMP_CWORD -eq 3 ]]; then
+        _dce_reply_networks "$cur"
+        return 0
+      fi
+      ;;
+    add|remove)
+      if [[ $COMP_CWORD -eq 3 ]]; then
+        _dce_reply_networks "$cur"
+        return 0
+      elif [[ $COMP_CWORD -eq 4 ]]; then
+        _dce_reply_projects "$cur"
+        return 0
+      fi
       ;;
   esac
 
@@ -642,17 +700,14 @@ _dce_complete_config() {
   esac
 }
 
-# `dce extensions <list|host|available|show|diff|capture> [project] [flags]`:
+# `dce extensions <list|host|available|show|diff|capture> <project> [flags]`:
 # position 2 is the subaction; project at position 3 (except for `host`);
 # --editor/--format/--scope consume a value; --user/--team/--all are flags.
 # capture takes trailing free-form <id>... which is not completed.
 #
-# Grammar assumption: the subaction sits at slot 2 (COMP_WORDS[2]) per the
-# documented `dce extensions <subcommand> [flags] <project>` form. The parser
-# accepts interspersed flags, but completion is positionally rigid -- a global
-# flag typed BEFORE the subaction (e.g. `dce extensions --editor vscode show`)
-# would mislead this logic. Acceptable: usage convention puts the subaction
-# first, and completion only ever offers it at slot 2.
+# Grammar assumption: the subaction sits at slot 2 and, for project-taking
+# subcommands, the project sits at slot 3. This mirrors the normalized
+# project-first command form used elsewhere in dce.
 _dce_complete_extensions() {
   local cur="$1" prev="$2"
 
@@ -696,7 +751,7 @@ _dce_complete_extensions() {
     return 0
   fi
 
-  # Slot 4+: offer flags (capture's trailing <id>... is free-form, not completed).
+  # Slot 4+: value positions for flags complete above; otherwise offer flags.
   mapfile -t COMPREPLY < <(compgen -W "$flags" -- "$cur")
   return 0
 }

@@ -51,7 +51,7 @@ source "$ROOT_DIR/lib/extensions.sh"
 
 USAGE() {
   cat <<'EOF'
-Usage: dce extensions <subcommand> [flags] [<project>] [ids...]
+Usage: dce extensions <subcommand> [<project>] [flags] [ids...]
 
 Inspect, compare, and capture editor extensions for a project against per-scope
 manifests under $DC_{TEAM,USER}_DIR/extensions/<editor>/<scope>.txt.
@@ -94,8 +94,8 @@ EOF
 
 usage_die() {
   local msg="$1"
-  dce_die "$msg
-Usage: dce extensions <subcommand> [flags] [<project>] [ids...]"
+dce_die "$msg
+Usage: dce extensions <subcommand> [<project>] [flags] [ids...]"
 }
 
 # ---------------------------------------------------------------------------
@@ -115,6 +115,13 @@ WANT_HELP=false
 SET_USER=false
 SET_TEAM=false
 
+case "$SUBACTION" in
+  show|list|available|diff|capture)
+    PROJECT="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    ;;
+esac
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --editor)        [[ $# -ge 2 ]] || dce_die "--editor requires a value"; EDITOR_OPT="$2"; shift 2 ;;
@@ -129,8 +136,12 @@ while [[ $# -gt 0 ]]; do
     -h|--help|help)  WANT_HELP=true; shift ;;
     --*)             usage_die "Unknown option: $1" ;;
     *)
-      if [[ -z "$PROJECT" ]]; then
-        PROJECT="$1"
+      if [[ "$SUBACTION" == "host" ]]; then
+        if [[ -z "$PROJECT" ]]; then
+          PROJECT="$1"
+        else
+          IDS+=("$1")
+        fi
       else
         IDS+=("$1")
       fi
