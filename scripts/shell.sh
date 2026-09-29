@@ -23,6 +23,13 @@ source "$ROOT_DIR/lib/common.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/container-backend.sh"
 
+# `dce shell <project-name> [--repo <name>] [command]`. The project is always the
+# first argument; a short option window follows for shell-scoped flags, then
+# everything after that is the command. `-- <cmd>` is honored so a command
+# beginning with '-' is not mistaken for a dce flag.
+PROJECT="${1:?Usage: shell.sh <project-name> [--repo <name>] [command]}"
+shift
+
 REPO_NAME=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -37,7 +44,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --*)
       dce_die "Unknown option: $1
-Usage: shell.sh [--repo <name>] <project-name> [command]"
+Usage: shell.sh <project-name> [--repo <name>] [command]"
       ;;
     *)
       break
@@ -45,11 +52,6 @@ Usage: shell.sh [--repo <name>] <project-name> [command]"
   esac
 done
 
-# `dce shell [--repo <name>] <project-name> [command]`. The first non-flag token
-# is the project; everything after it is the command. `-- <cmd>` is honored so a
-# command beginning with '-' is not mistaken for a dce flag.
-PROJECT="${1:?Usage: shell.sh [--repo <name>] <project-name> [command]}"
-shift
 [[ "${1:-}" == "--" ]] && shift
 
 HAS_COMMAND=false

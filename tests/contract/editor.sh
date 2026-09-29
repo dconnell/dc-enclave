@@ -505,11 +505,11 @@ grep -Eq '^CALL code --folder-uri' "$CODE_LOG" \
 # Override to vscode-insiders. No code-insiders stub on PATH -> the override
 # must hard-error with the missing-binary guidance, proving the override took
 # effect (default vscode would have found the `code` stub).
-if run_editor --editor vscode-insiders gamma >/dev/null 2>&1; then
+if run_editor gamma --editor vscode-insiders >/dev/null 2>&1; then
   fail "override: vscode-insiders should hard-error (binary absent) but editor exited 0"
 fi
 # Verify it failed at binary discovery, not at backend/editor selection.
-err_out="$(run_editor --editor vscode-insiders gamma 2>&1 >/dev/null || true)"
+err_out="$(run_editor gamma --editor vscode-insiders 2>&1 >/dev/null || true)"
 grep -Fq "Editor binary not found for 'vscode-insiders'" <<<"$err_out" \
   || fail "override: missing-binary guidance not shown (got: $err_out)"
 
@@ -523,7 +523,7 @@ make_project "delta" running
 
 # $DCE_EDITOR=vscode-insiders would hard-error (no code-insiders stub); an
 # explicit --editor vscode must override it and succeed via the `code` stub.
-DCE_EDITOR=vscode-insiders run_editor --editor vscode delta >"$WORK/d.out" 2>"$WORK/err" \
+DCE_EDITOR=vscode-insiders run_editor delta --editor vscode >"$WORK/d.out" 2>"$WORK/err" \
   || fail "precedence: --editor should override \$DCE_EDITOR
 -- stderr:$(cat "$WORK/err")"
 grep -Eq '^CALL code --folder-uri' "$CODE_LOG" \
@@ -535,10 +535,10 @@ pass "Section 4: --editor precedence over \$DCE_EDITOR"
 # Section 5 - unknown explicit editor hard-errors cleanly
 # ===========================================================================
 make_project "epsilon" running
-if run_editor --editor acme epsilon 2>/dev/null; then
+if run_editor epsilon --editor acme 2>/dev/null; then
   fail "unknown editor: --editor acme should hard-error"
 fi
-err_out="$(run_editor --editor acme epsilon 2>&1 || true)"
+err_out="$(run_editor epsilon --editor acme 2>&1 || true)"
 grep -Fq "Unknown editor 'acme'" <<<"$err_out" \
   || fail "unknown editor: missing guidance (got: $err_out)"
 grep -Eq 'Known editors:.*vscode' <<<"$err_out" \

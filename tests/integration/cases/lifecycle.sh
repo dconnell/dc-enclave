@@ -136,11 +136,11 @@ _it_lc_new_repos_multi() {  # <backend> <case_id>
   [[ $rc -eq 0 ]] || { it_case_fail "exec pwd exited $rc (got: $out)"; return 1; }
   printf '%s\n' "$out" | grep -Fxq '/workspace' \
     || { it_case_fail "exec pwd not under /workspace (got: $out)"; return 1; }
-  out="$(it_dce_capture "$b" "$c" exec --repo web "$p" pwd)" && rc=0 || rc=$?
+  out="$(it_dce_capture "$b" "$c" exec "$p" --repo web pwd)" && rc=0 || rc=$?
   [[ $rc -eq 0 ]] || { it_case_fail "exec --repo web pwd exited $rc (got: $out)"; return 1; }
   printf '%s\n' "$out" | grep -Fxq '/workspace/web' \
     || { it_case_fail "exec --repo web pwd not /workspace/web (got: $out)"; return 1; }
-  out="$(it_dce_capture "$b" "$c" exec --repo api "$p" pwd)" && rc=0 || rc=$?
+  out="$(it_dce_capture "$b" "$c" exec "$p" --repo api pwd)" && rc=0 || rc=$?
   [[ $rc -eq 0 ]] || { it_case_fail "exec --repo api pwd exited $rc (got: $out)"; return 1; }
   printf '%s\n' "$out" | grep -Fxq '/workspace/api' \
     || { it_case_fail "exec --repo api pwd not /workspace/api (got: $out)"; return 1; }

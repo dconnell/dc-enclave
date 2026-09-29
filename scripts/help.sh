@@ -33,12 +33,12 @@ _show_summary() {
   echo "  stop [name ...]                                   Stop one or more projects, or all"
   echo "  list                                              List containers and status"
   echo "  status                                            Show overall status and per-project details"
-  echo "  shell [--repo <name>] <project> [command]         Interactive shell/command; seeds git token as provider env var (zsh -ic)"
+  echo "  shell <project> [--repo <name>] [command]         Interactive shell/command; seeds git token as provider env var (zsh -ic)"
   echo "  logs <name> [-f|--follow] [--tail N]              Fetch container log stream"
-  echo "  editor [--editor <id>] <name>                     Launch your editor attached to the running container (/workspace)"
+  echo "  editor <name> [--editor <id>]                     Launch your editor attached to the running container (/workspace)"
   echo "  extensions <list|host|available|show|diff|capture> [<name>] [--scope <s>] [--editor <id>]"
   echo "                                                    Inspect, compare, and capture editor extensions"
-  echo "  exec [--repo <name>] [--root] <name> <command...> Raw one-shot in a running container; no token (docker-exec style)"
+  echo "  exec <name> [--repo <name>] [--root] <command...> Raw one-shot in a running container; no token (docker-exec style)"
   echo "  restart [name ...]                                Restart one or more projects, or all"
   echo "  rm <name> [--yes] [--keep-config] [--keep-volumes]"
   echo "                                                    Remove a project (container, volumes, snapshots, config)"
@@ -321,7 +321,7 @@ EOF
 
 _show_help_shell() {
   cat <<'EOF'
-Usage: dce shell [--repo <name>] <project> [command]
+Usage: dce shell <project> [--repo <name>] [command]
 
 Description:
   Opens an interactive zsh inside a dev container (started automatically if
@@ -351,7 +351,7 @@ Options:
 
 Examples:
   dce shell myapp                         Interactive zsh session
-  dce shell --repo api myapp "git pull"   One command in /workspace/api, then exit
+  dce shell myapp --repo api "git pull"   One command in /workspace/api, then exit
   dce shell myapp "npm install && npm run dev"
 
 Notes:
@@ -366,7 +366,7 @@ EOF
 
 _show_help_editor() {
   cat <<'EOF'
-Usage: dce editor [--editor <id>] <name>
+Usage: dce editor <name> [--editor <id>]
 
 Description:
   Launches your editor attached to a running dev container at /workspace --
@@ -416,7 +416,7 @@ Options:
 
 Examples:
   dce editor myapp                       Default editor, attached to myapp
-  dce editor --editor vscode-insiders myapp
+  dce editor myapp --editor vscode-insiders
   DCE_EDITOR=vscode dce editor myapp     Use VS Code for this shell
 
 Notes:
@@ -557,7 +557,7 @@ EOF
 
 _show_help_exec() {
   cat <<'EOF'
-Usage: dce exec [--repo <name>] [--root] <name> <command...>
+Usage: dce exec <name> [--repo <name>] [--root] <command...>
 
 Description:
   Runs a single command in a running container, docker-exec style: args
@@ -583,14 +583,14 @@ Options:
   --root        Run as uid 0, non-interactively, without a TTY -- for
                 permission debugging (chown, system package installs).
                 Maps to the same root-exec path rebuild-container uses.
-                Must come before the project name.
+                 Must come after the project name and before the command.
 
 Examples:
   dce exec myapp whoami
-  dce exec --repo api myapp pwd
+  dce exec myapp --repo api pwd
   dce exec myapp node -v
   dce exec myapp ls -la /workspace
-  dce exec --root myapp chown -R dev:dev /workspace/build
+  dce exec myapp --root chown -R dev:dev /workspace/build
 
 Notes:
   - No auto-start: the container must be running.

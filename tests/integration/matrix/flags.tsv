@@ -33,9 +33,9 @@ new-git-host-gitlab	all	new	$PROJECT --git-host gitlab	0
 logs-tail	all	logs	$PROJECT --tail 5	0	
 logs-tail-eq	all	logs	$PROJECT --tail=5	0	
 
-# --- dce exec (--root MUST precede the project name: dce exec [--root] <name> <cmd>) ---
+# --- dce exec (<project> first: dce exec <name> [--root] <cmd>) ---
 exec-default	all	exec	$PROJECT id	0	
-exec-root	all	exec	--root $PROJECT id	0	uid=0
+exec-root	all	exec	$PROJECT --root id	0	uid=0
 
 # --- dce rm (independent + combined keep flags) ---
 rm-yes	all	rm	$PROJECT --yes	0	

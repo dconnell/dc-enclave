@@ -25,10 +25,26 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK"
+export DC_REPOS_DIR="$HOME/repos"
 DC_ROOT="$HOME/.config/dc-enclave"
 PROJECTS_ROOT="$DC_ROOT/projects"
 mkdir -p "$PROJECTS_ROOT"/{alpha,beta,gamma}
 touch "$PROJECTS_ROOT"/alpha/config "$PROJECTS_ROOT"/beta/config "$PROJECTS_ROOT"/gamma/config
+cat > "$PROJECTS_ROOT/alpha/config" <<'EOF'
+CONFIG_SCHEMA_VERSION="2"
+CONTAINER_PROJECT="alpha"
+CONTAINER_BACKEND="docker"
+CONTAINER_IMAGE="dce-base:latest"
+REPO_NAMES=( web api )
+REPO_PATHS=( /tmp/web /tmp/api )
+SECRET_DIR="/tmp/alpha-secret"
+SSH_KEY_PATH="/tmp/alpha-secret/ssh_key"
+TOKEN_FILE="/tmp/alpha-secret/token"
+NPMRC_PATH="/tmp/alpha-secret/.npmrc"
+PORTS=()
+CONTAINER_HIDDEN_PATHS=()
+CONTAINER_NETWORKS=()
+EOF
 # A dir without a config file must NOT be offered as a project.
 mkdir -p "$PROJECTS_ROOT/incomplete"
 # Legacy flat project dirs are a clean-break miss and must not be discovered.
@@ -38,6 +54,7 @@ touch "$DC_ROOT/flat-legacy/config"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
+mkdir -p "$HOME/repos"/api "$HOME/repos"/tools "$HOME/repos"/web
 touch "$TEAM_DIR/overlays/Containerfile.node" "$TEAM_DIR/overlays/Containerfile.all"
 touch "$USER_DIR/overlays/Containerfile.node" "$USER_DIR/overlays/Containerfile.golang"
 {
@@ -70,6 +87,9 @@ expect_sorted "projects list" \
 expect_sorted "projects prefix filter (al)" \
   "$(dce_complete_projects al)" alpha
 
+expect_sorted "project repo names (alpha)" \
+  "$(dce_complete_project_repos alpha)" api web
+
 # Scopes dedup node (team+user) and preserve first-seen order; gamma-style
 # whole-line matching prevents partial collisions.
 scopes_out="$(dce_complete_scopes | sort)"
@@ -84,11 +104,13 @@ for c in new start stop status s list ls shell logs editor extensions exec resta
 done
 pass "subcommands list"
 
-# config data layer: subactions + writable keys.
+# config data layer: subactions + writable keys + gettable keys.
 expect_sorted "config subactions" \
   "$(dce_complete_config_subactions)" get ls set show sync-vscode
 expect_sorted "config keys" \
   "$(dce_complete_config_keys)" cpus hide memory networks ports scopes
+expect_sorted "config get keys" \
+  "$(dce_complete_config_get_keys)" backend cpus hide image memory networks ports project repos scopes
 
 # doctor targets: the five backend names plus configured projects.
 expect_sorted "doctor targets" \
@@ -168,16 +190,17 @@ drive 3 dce start alpha "";            assert_reply "start alpha <TAB>" beta gam
 drive 4 dce start alpha beta "";       assert_reply "start alpha beta <TAB>" gamma
 drive 5 dce stop alpha beta gamma "";  assert_empty   "stop all three <TAB>"
 
-# shell: optional --repo <name>, then one project, then free-form command.
-drive 2 dce shell "";       assert_reply "shell <TAB>" --repo alpha beta gamma
-drive 3 dce shell --repo ""; assert_empty "shell --repo <value> (no completion)"
-drive 3 dce shell alpha ""; assert_empty   "shell alpha <TAB>"
+# shell: project first, then optional --repo <name>, then a free-form command.
+drive 2 dce shell "";             assert_reply "shell <TAB>" alpha beta gamma
+drive 3 dce shell alpha "";       assert_reply "shell alpha <TAB>" --repo
+drive 4 dce shell alpha --repo ""; assert_reply "shell alpha --repo <TAB>" api web
+drive 5 dce shell alpha --repo api ""; assert_empty "shell alpha --repo api <cmd> (free-form)"
 
-# editor: optional --editor <id>, then one project.
-drive 2 dce editor "";              assert_reply "editor <TAB>" --editor alpha beta gamma
-drive 3 dce editor alpha "";        assert_empty   "editor alpha <TAB> (nothing past project)"
-drive 3 dce editor --editor "";     assert_reply "editor --editor <TAB>" vscode vscode-insiders
-drive 4 dce editor --editor vscode ""; assert_reply "editor --editor vscode <TAB>" --editor alpha beta gamma
+# editor: project first, then optional --editor <id>.
+drive 2 dce editor "";                    assert_reply "editor <TAB>" alpha beta gamma
+drive 3 dce editor alpha "";              assert_reply "editor alpha <TAB>" --editor
+drive 4 dce editor alpha --editor "";     assert_reply "editor alpha --editor <TAB>" vscode vscode-insiders
+drive 5 dce editor alpha --editor vscode ""; assert_empty "editor alpha --editor vscode <TAB> (nothing past flag value)"
 
 # extensions: subactions at slot 2; project + flags after.
 drive 2 dce extensions ""; assert_reply "extensions <TAB>" \
@@ -231,6 +254,8 @@ drive 2 dce repo ""; assert_reply "repo <TAB>" add list remove
 drive 3 dce repo list ""; assert_reply "repo list <TAB>" alpha beta gamma
 drive 3 dce repo add ""; assert_reply "repo add <TAB>" --yes -y alpha beta gamma
 drive 4 dce repo add --yes ""; assert_reply "repo add --yes <TAB>" alpha beta gamma
+drive 4 dce repo add alpha ""; assert_reply "repo add alpha <spec> <TAB>" \
+  "$HOME/repos/api" "$HOME/repos/tools" "$HOME/repos/web"
 drive 3 dce repo remove ""; assert_reply "repo remove <TAB>" alpha beta gamma
 
 # config: subactions at position 2; project at 3; key at 4 (get/set);
@@ -239,7 +264,7 @@ drive 2 dce config ""; assert_reply "config <TAB>" get ls set show sync-vscode
 drive 3 dce config show ""; assert_reply "config show <TAB>" alpha beta gamma
 drive 3 dce config get "";  assert_reply "config get <project> <TAB>" alpha beta gamma
 drive 4 dce config get alpha ""; assert_reply "config get alpha <key> <TAB>" \
-  cpus hide memory networks ports scopes
+  backend cpus hide image memory networks ports project repos scopes
 drive 4 dce config set alpha ""; assert_reply "config set alpha <key> <TAB>" \
   cpus hide memory networks ports scopes
 # set's value (position 5) is free-form -> no completion.
@@ -261,11 +286,13 @@ drive 3 dce logs alpha "";          assert_reply "logs alpha <TAB>" --follow -f 
 drive 3 dce logs alpha "--";        assert_reply "logs alpha --<TAB>" --follow --tail
 drive 4 dce logs alpha --tail "";   assert_empty "logs alpha --tail <val> (no completion)"
 
-# exec: optional leading --repo/--root, one project, then a free-form command.
-drive 2 dce exec "";                assert_reply "exec <TAB>" --repo --root alpha beta gamma
-drive 3 dce exec --root "";         assert_reply "exec --root <TAB>" --repo alpha beta gamma
-drive 3 dce exec --repo "";         assert_empty "exec --repo <value> (no completion)"
-drive 3 dce exec alpha "";          assert_empty "exec alpha <cmd> (free-form)"
+# exec: project first, then optional --repo/--root, then a free-form command.
+drive 2 dce exec "";                    assert_reply "exec <TAB>" alpha beta gamma
+drive 3 dce exec alpha "";              assert_reply "exec alpha <TAB>" --repo --root
+drive 4 dce exec alpha --root "";       assert_reply "exec alpha --root <TAB>" --repo
+drive 4 dce exec alpha --repo "";       assert_reply "exec alpha --repo <TAB>" api web
+drive 5 dce exec alpha --repo api "";   assert_empty "exec alpha --repo api <cmd> (free-form)"
+drive 4 dce exec alpha -- "";           assert_empty "exec alpha -- <cmd> (free-form)"
 
 # restart: variadic projects (excludes already-typed), like start/stop.
 drive 2 dce restart "";             assert_reply "restart <TAB>" alpha beta gamma
@@ -306,7 +333,8 @@ drive 3 dce new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
 # --network/--ip consume a value (no completion offered for the value).
 drive 4 dce new foo --network ""; assert_empty "new foo --network <val> (no completion)"
 drive 4 dce new foo --git-host ""; assert_reply "new foo --git-host <TAB>" github gitlab
-drive 4 dce new foo --repo "";     assert_empty "new foo --repo <spec> (free-form path/name=path)"
+drive 4 dce new foo --repo "";     assert_reply "new foo --repo <spec> <TAB>" \
+  "$HOME/repos/api" "$HOME/repos/tools" "$HOME/repos/web"
 
 # ---------------------------------------------------------------------------
 # Section 3 - zsh completion (scripts/_dce), gated on zsh being installed
@@ -482,9 +510,9 @@ if command -v zsh >/dev/null 2>&1; then
     chk() { SPEC=(); _dce_dispatch "$1"; [[ "${SPEC[*]}" == *"$2"* ]] || { print "FAIL: zsh $1 spec missing [$2] got [${SPEC[*]}]"; exit 1 }; }
     chk start            "*:project:"
     chk shell            "1:project:"
-    chk shell            "--repo+[repo name]"
+    chk shell            "*--repo+[repo name]"
     chk editor           "1:project:"
-    chk editor           "--editor+[editor id]"
+    chk editor           "*--editor+[editor id]"
     chk extensions       "1:subcommand: _dce_extensions_subactions"
     chk extensions       "--scope+[target scope for capture]"
     # capture-only flags must NOT be offered on non-capture subactions.
@@ -504,9 +532,9 @@ if command -v zsh >/dev/null 2>&1; then
     [[ "${SPEC[*]}" != *"2:project"* ]] || { print "FAIL: zsh extensions host must not offer a project -> [${SPEC[*]}]"; exit 1 }
     chk logs             "1:project:"
     chk logs             "--follow["
-    chk exec             "--root["
-    chk exec             "--repo+[repo name]"
     chk exec             "1:project:"
+    chk exec             "*--root["
+    chk exec             "*--repo+[repo name]"
     chk restart          "*:project:"
     chk rm               "1:project:"
     chk rm               "--keep-config["
@@ -547,7 +575,7 @@ if command -v zsh >/dev/null 2>&1; then
     # config: dispatched subcommand offers its subactions; get/set offer a key.
     chk config           "1:subcommand: _dce_config_subactions"
     words=(config get "") CURRENT=3 SPEC=(); _dce_config
-    [[ "${SPEC[*]}" == *"3:key: _dce_config_keys"* ]] || { print "FAIL: zsh config get should offer a key at slot 3 -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" == *"3:key: _dce_config_get_keys"* ]] || { print "FAIL: zsh config get should offer a key at slot 3 -> [${SPEC[*]}]"; exit 1 }
     print "PASS: zsh config dispatch + key spec"
     # rm subcommand branch: completes a project at slot 2 and offers NO create
     # flags (parity with the bash rm path).

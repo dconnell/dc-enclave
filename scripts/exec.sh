@@ -32,15 +32,22 @@ USE_ROOT=false
 REPO_NAME=""
 PROJECT=""
 
-# Only --root / --repo are consumed as dce options, and only before the project
-# name. The first non-option token is the project; everything after it is the
-# command verbatim (so command args that start with '-' are passed through
-# untouched).
+# `dce exec <project> [--repo <name>] [--root] <command...>`. The project is the
+# first argument; a short option window follows for exec-scoped flags, then the
+# remaining words are passed through as the command verbatim. `--` can be used
+# after the project to force a command beginning with '-'.
+PROJECT="${1:-}"
+if [[ -z "$PROJECT" ]]; then
+  dce_die "Project name is required.
+Usage: dce exec <name> [--repo <name>] [--root] <command...>"
+fi
+shift
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
       [[ $# -ge 2 && "$2" != --* ]] || dce_die "--repo requires a repo name
-Usage: dce exec [--repo <name>] [--root] <name> <command...>"
+Usage: dce exec <name> [--repo <name>] [--root] <command...>"
       REPO_NAME="$2"
       shift 2
       ;;
@@ -58,22 +65,15 @@ Usage: dce exec [--repo <name>] [--root] <name> <command...>"
       ;;
     -* )
       dce_die "Unknown option: $1
-Usage: dce exec [--repo <name>] [--root] <name> <command...>"
+Usage: dce exec <name> [--repo <name>] [--root] <command...>"
       ;;
     *)
-      PROJECT="$1"
-      shift
       break
       ;;
   esac
 done
 
 CMD=("$@")
-
-if [[ -z "$PROJECT" ]]; then
-  dce_die "Project name is required.
-Usage: dce exec [--repo <name>] [--root] <name> <command...>"
-fi
 
 if [[ ${#CMD[@]} -eq 0 ]]; then
   dce_die "No command specified.

@@ -136,7 +136,7 @@ Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never 
 | Flag / arg | Description |
 |---|---|
 | `<name>` *(required)* | Project/container name. |
-| `--repo <name>` | Run from `/workspace/<name>` instead of the default shell cwd. Without it, an interactive shell defaults to `/workspace/<repo>` for single-repo projects and `/workspace` for multi-repo projects. |
+| `--repo <name>` | Run from `/workspace/<name>` instead of the default shell cwd. Without it, an interactive shell defaults to `/workspace/<repo>` for single-repo projects and `/workspace` for multi-repo projects. Must come after the project name. |
 | `[command]` | Optional command to run non-interactively (`zsh -ic`) instead of opening an interactive shell. If it begins with `-`, separate it with `--`. |
 
 ## `dce editor` — launch an editor attached to the container
@@ -144,7 +144,7 @@ Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never 
 | Flag / arg | Description |
 |---|---|
 | `<name>` *(required)* | Project/container name. |
-| `--editor <id>` | Override the resolved editor for this invocation only. Known ids: `vscode`, `vscode-insiders`. |
+| `--editor <id>` | Override the resolved editor for this invocation only. Known ids: `vscode`, `vscode-insiders`. Must come after the project name. |
 
 ## Commands taking only positional arguments
 

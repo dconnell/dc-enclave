@@ -60,6 +60,68 @@ dce_complete_subcommands() {
     "-h"
 }
 
+# Echo the default host repos root (`${DC_REPOS_DIR:-$HOME/repos}`) with a
+# leading `~` expanded. Kept local to completion so bash/zsh can discover repo
+# candidates without sourcing the full runtime lib chain.
+_dce_complete_default_repos_root() {
+  local val="${DC_REPOS_DIR:-$HOME/repos}"
+  # shellcheck disable=SC2088
+  # ~ is a literal char being matched against user input, not an expansion.
+  if [[ "$val" == "~" || "$val" == "~/"* ]]; then
+    val="$HOME${val#\~}"
+  fi
+  printf '%s' "$val"
+}
+
+# Parse one simple shell-style array assignment from a project config WITHOUT
+# sourcing it. Accepts the exact `printf %q`-style form emitted by dce's config
+# writers: KEY=( elem ... ). Echoes one decoded element per line.
+_dce_complete_extract_array() {
+  local file="$1" key="$2"
+  local line="" raw=""
+
+  [[ -f "$file" ]] || return 1
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == "$key="* ]] || continue
+    raw="${line#*=}"
+    [[ "${raw:0:1}" == "(" && "${raw: -1}" == ")" ]] || return 1
+    raw="${raw#(}"
+    raw="${raw%)}"
+    raw="${raw# }"
+    raw="${raw% }"
+    [[ -n "$raw" ]] || return 0
+
+    local token="" out="" ch="" i=0 escaped=0
+    for ((i = 0; i < ${#raw}; i++)); do
+      ch="${raw:i:1}"
+      if (( escaped )); then
+        token+="$ch"
+        escaped=0
+        continue
+      fi
+      # shellcheck disable=SC1003
+      # '\\' is a literal single-backslash comparison.
+      if [[ "$ch" == '\\' ]]; then
+        escaped=1
+        continue
+      fi
+      if [[ "$ch" == ' ' ]]; then
+        if [[ -n "$token" ]]; then
+          printf '%s\n' "$token"
+          token=""
+        fi
+        continue
+      fi
+      token+="$ch"
+    done
+    [[ -n "$token" ]] && printf '%s\n' "$token"
+    return 0
+  done < "$file"
+
+  return 1
+}
+
 # Print the subactions of `dce repo` (list/add/remove). Mirrors the dispatch
 # table in scripts/repo.sh.
 dce_complete_repo_subactions() {
@@ -129,6 +191,64 @@ dce_complete_projects() {
       printf '%s\n' "$name"
     fi
   done
+}
+
+# Print the configured repo names for one project (REPO_NAMES), optionally
+# filtered by a prefix. Parsed directly from the project config so completion
+# does not need to source project config files.
+dce_complete_project_repos() {
+  local project="$1"
+  local cur="${2:-}"
+  local config="$HOME/.config/dc-enclave/projects/$project/config"
+  local name=""
+
+  [[ -f "$config" ]] || return 0
+
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    if [[ -z "$cur" || "$name" == "$cur"* ]]; then
+      printf '%s\n' "$name"
+    fi
+  done < <(_dce_complete_extract_array "$config" REPO_NAMES)
+}
+
+# Print directories under the default repos root, optionally filtered by a
+# prefix. Used for `shell` / `exec` `--repo <name>` completion.
+dce_complete_repo_root_names() {
+  local cur="${1:-}"
+  local root=""
+  local d name
+
+  root="$(_dce_complete_default_repos_root)"
+  [[ -d "$root" ]] || return 0
+
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    setopt local_options NULL_GLOB
+  fi
+
+  for d in "$root"/*; do
+    [[ -d "$d" ]] || continue
+    name="$(basename "$d")"
+    if [[ -z "$cur" || "$name" == "$cur"* ]]; then
+      printf '%s\n' "$name"
+    fi
+  done
+}
+
+# Print the writable and read-only friendly key names accepted by `dce config
+# get`. `set` intentionally keeps the smaller writable-only key set.
+dce_complete_config_get_keys() {
+  printf '%s\n' \
+    "cpus" \
+    "memory" \
+    "scopes" \
+    "ports" \
+    "hide" \
+    "networks" \
+    "project" \
+    "backend" \
+    "image" \
+    "repos"
 }
 
 # Print available overlay scope names discovered from the team and user

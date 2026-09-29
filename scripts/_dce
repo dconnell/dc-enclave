@@ -88,16 +88,16 @@ _dce_dispatch() {
       _arguments '*:project: _dce_projects $words[2,CURRENT-1]'
       ;;
     shell)
-      # One project, then a free-form command (no completion past it).
+      # One project, then optional --repo <name>, then a free-form command.
       _arguments \
-        '--repo+[repo name]:repo name:' \
-        '1:project:_dce_projects_simple'
+        '1:project:_dce_projects_simple' \
+        '*--repo+[repo name]:repo name:_dce_project_repo_names'
       ;;
     editor)
-      # Optional --editor <id>, then one project.
+      # One project, then optional --editor <id>.
       _arguments \
-        '--editor+[editor id]:editor id:_dce_editor_ids' \
-        '1:project:_dce_projects_simple'
+        '1:project:_dce_projects_simple' \
+        '*--editor+[editor id]:editor id:_dce_editor_ids'
       ;;
     logs)
       _arguments \
@@ -107,11 +107,11 @@ _dce_dispatch() {
         '--tail+[last N lines]:N:'
       ;;
     exec)
-      # Optional --root, then one project, then a free-form command.
+      # One project, then optional --repo/--root, then a free-form command.
       _arguments \
-        '--repo+[repo name]:repo name:' \
-        '--root[run as uid 0 (non-interactive)]' \
-        '1:project:_dce_projects_simple'
+        '1:project:_dce_projects_simple' \
+        '*--repo+[repo name]:repo name:_dce_project_repo_names' \
+        '*--root[run as uid 0 (non-interactive)]'
       ;;
     rm)
       _arguments \
@@ -239,6 +239,20 @@ _dce_projects_simple() {
   local -a all
   all=("${(@f)$(dce_complete_projects)}")
   _wanted projects expl 'project' compadd -a all
+}
+
+_dce_project_repo_names() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+
+  local project="${words[2]:-}"
+  [[ -n "$project" ]] || return 0
+
+  local -a all
+  all=("${(@f)$(dce_complete_project_repos "$project")}")
+  _wanted repos expl 'repo name' compadd -a all
 }
 
 # `dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]`: flags
@@ -393,7 +407,7 @@ _dce_config() {
       _arguments \
         '1:subcommand: _dce_config_subactions' \
         '2:project:_dce_projects_simple' \
-        '3:key: _dce_config_keys'
+        '3:key: _dce_config_get_keys'
       ;;
     set)
       _arguments \
@@ -420,6 +434,11 @@ _dce_config_subactions() {
 _dce_config_keys() {
   local -a keys
   keys=("${(@f)$(dce_complete_config_keys)}")
+  _wanted keys expl 'key' compadd -a keys
+}
+_dce_config_get_keys() {
+  local -a keys
+  keys=("${(@f)$(dce_complete_config_get_keys)}")
   _wanted keys expl 'key' compadd -a keys
 }
 

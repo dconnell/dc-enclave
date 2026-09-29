@@ -32,8 +32,8 @@ unset _dce_scripts_dir
 #
 # Per-subcommand grammar mirrors the real argument parsing in scripts/*.sh:
 #   start|stop              : variadic project names (0 args == all)
-#   shell                   : [--repo <name>] one project, then free-form command
-#   editor                  : [--editor <id>] one project
+#   shell                   : one project, then [--repo <name>], then free-form command
+#   editor                  : one project, then [--editor <id>]
 #   rebuild-container       : one project + --rotate-keys / --inject-creds /
 #                             --keep-hidden-volumes / --from-snap
 #   install                 : one project + one dotfiles directory
@@ -73,61 +73,11 @@ _dce_complete() {
       return 0
       ;;
     shell)
-      # [--repo <name>] <name> [free-form command]. Project at slot 2 unless a
-      # leading --repo consumes it first; free-form after the project.
-      if [[ "$prev" == "--repo" ]]; then
-        return 0
-      fi
-      if [[ $COMP_CWORD -eq 2 ]]; then
-        _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
-        return 0
-      fi
-      # Past slot 2: only complete if no project positional has been typed yet.
-      local _typed_proj=0 _w _skip_next=0
-      for _w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
-        if (( _skip_next )); then _skip_next=0; continue; fi
-        case "$_w" in
-          --repo) _skip_next=1 ;;
-          -*) : ;;
-          *) _typed_proj=1 ;;
-        esac
-      done
-      if [[ $_typed_proj -eq 0 ]]; then
-        _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
-      fi
+      _dce_complete_shell "$cur" "$prev"
       return 0
       ;;
     editor)
-      # Optional --editor <id>, then/at one project.
-      # If we're completing --editor's value, offer editor ids; otherwise offer
-      # the project (and the flag at slot 2 if no project typed yet).
-      if [[ "$prev" == "--editor" ]]; then
-        mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_editor_ids)" -- "$cur")
-        return 0
-      fi
-      if [[ $COMP_CWORD -eq 2 ]]; then
-        _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--editor" == "$cur"* ]] && COMPREPLY+=("--editor")
-        return 0
-      fi
-      # Past slot 2: walk prior words to see if a project positional is already
-      # present. --editor consumes the NEXT word as its value, so skip that pair.
-      local _typed_proj=0 _w _skip_next=0
-      for _w in "${COMP_WORDS[@]:2:COMP_CWORD-2}"; do
-        if (( _skip_next )); then _skip_next=0; continue; fi
-        case "$_w" in
-          --editor) _skip_next=1 ;;
-          --editor=*) : ;;
-          -*) : ;;
-          *) _typed_proj=1 ;;
-        esac
-      done
-      if [[ "$_typed_proj" -eq 0 ]]; then
-        _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--editor" == "$cur"* ]] && COMPREPLY+=("--editor")
-      fi
+      _dce_complete_editor "$cur" "$prev"
       return 0
       ;;
     logs)
@@ -141,19 +91,7 @@ _dce_complete() {
       return 0
       ;;
     exec)
-      # Optional leading --repo/--root, then one project, then a free-form command.
-      if [[ $COMP_CWORD -eq 2 ]]; then
-        _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--root" == "$cur"* ]] && COMPREPLY+=("--root")
-        [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
-        return 0
-      fi
-      if [[ "$prev" == "--root" ]]; then
-        _dce_reply_projects "$cur"
-        [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
-      elif [[ "$prev" == "--repo" ]]; then
-        return 0
-      fi
+      _dce_complete_exec "$cur" "$prev"
       return 0
       ;;
     rm)
@@ -250,6 +188,10 @@ _dce_complete() {
       _dce_complete_extensions "$cur" "$prev"
       return 0
       ;;
+    help)
+      _dce_complete_help "$cur"
+      return 0
+      ;;
   esac
 }
 
@@ -279,6 +221,158 @@ _dce_reply_projects_excluding() {
   done < <(dce_complete_projects "$cur")
 
   COMPREPLY=("${out[@]}")
+}
+
+_dce_reply_project_repos() {
+  local project="$1" cur="$2"
+  local -a out=()
+  local name
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    out+=("$name")
+  done < <(dce_complete_project_repos "$project" "$cur")
+  COMPREPLY=("${out[@]}")
+}
+
+_dce_reply_repo_specs() {
+  local cur="$1"
+  local prefix=""
+  local path_cur="$cur"
+  local search="$path_cur"
+  local home_prefix=""
+
+  if [[ "$cur" == *=* ]]; then
+    prefix="${cur%%=*}="
+    path_cur="${cur#*=}"
+  fi
+
+  case "$path_cur" in
+    ""|[^./~]*)
+      search="$(_dce_complete_default_repos_root)/$path_cur"
+      ;;
+    ~|~/*)
+      search="$HOME${path_cur#\~}"
+      home_prefix="$HOME"
+      ;;
+    *)
+      search="$path_cur"
+      ;;
+  esac
+
+  mapfile -t COMPREPLY < <(compgen -d -- "$search")
+  if [[ -n "$home_prefix" ]]; then
+    local i
+    for ((i=0; i<${#COMPREPLY[@]}; i++)); do
+      COMPREPLY[$i]="~${COMPREPLY[$i]#"$home_prefix"}"
+    done
+  fi
+  if [[ -n "$prefix" ]]; then
+    local i
+    for ((i=0; i<${#COMPREPLY[@]}; i++)); do
+      COMPREPLY[$i]="${prefix}${COMPREPLY[$i]}"
+    done
+  fi
+}
+
+_dce_complete_shell() {
+  local cur="$1" prev="$2"
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    _dce_reply_projects "$cur"
+    return 0
+  fi
+  if [[ "$prev" == "--repo" ]]; then
+    _dce_reply_project_repos "${COMP_WORDS[2]:-}" "$cur"
+    return 0
+  fi
+
+  local skip_next=0 command_started=0 repo_done=0 w
+  for w in "${COMP_WORDS[@]:3:COMP_CWORD-3}"; do
+    if (( skip_next )); then
+      skip_next=0
+      repo_done=1
+      continue
+    fi
+    case "$w" in
+      --) command_started=1 ;;
+      --repo) skip_next=1 ;;
+      -*) : ;;
+      *) command_started=1 ;;
+    esac
+    (( command_started )) && break
+  done
+  if (( !command_started && !repo_done )); then
+    [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
+  fi
+}
+
+_dce_complete_editor() {
+  local cur="$1" prev="$2"
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    _dce_reply_projects "$cur"
+    return 0
+  fi
+  if [[ "$prev" == "--editor" ]]; then
+    mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_editor_ids)" -- "$cur")
+    return 0
+  fi
+
+  local skip_next=0 done=0 w
+  for w in "${COMP_WORDS[@]:3:COMP_CWORD-3}"; do
+    if (( skip_next )); then
+      skip_next=0
+      done=1
+      continue
+    fi
+    case "$w" in
+      --editor) skip_next=1 ;;
+      -*) : ;;
+      *) done=1 ;;
+    esac
+    (( done )) && break
+  done
+  if (( !done )); then
+    [[ -z "$cur" || "--editor" == "$cur"* ]] && COMPREPLY+=("--editor")
+  fi
+}
+
+_dce_complete_exec() {
+  local cur="$1" prev="$2"
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    _dce_reply_projects "$cur"
+    return 0
+  fi
+  if [[ "$prev" == "--repo" ]]; then
+    _dce_reply_project_repos "${COMP_WORDS[2]:-}" "$cur"
+    return 0
+  fi
+
+  local skip_next=0 command_started=0 seen_root=0 seen_repo=0 repo_done=0 w
+  for w in "${COMP_WORDS[@]:3:COMP_CWORD-3}"; do
+    if (( skip_next )); then
+      skip_next=0
+      seen_repo=1
+      repo_done=1
+      continue
+    fi
+    case "$w" in
+      --) command_started=1 ;;
+      --repo) skip_next=1 ;;
+      --repo=*) seen_repo=1 ;;
+      --root|--root=*) seen_root=1 ;;
+      -*) : ;;
+      *) command_started=1 ;;
+    esac
+    (( command_started )) && break
+  done
+  if (( command_started || repo_done )); then
+    return 0
+  fi
+  if (( !seen_repo )); then
+    [[ -z "$cur" || "--repo" == "$cur"* ]] && COMPREPLY+=("--repo")
+  fi
+  if (( !seen_root )); then
+    [[ -z "$cur" || "--root" == "$cur"* ]] && COMPREPLY+=("--root")
+  fi
 }
 
 # `dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]`: flags
@@ -410,7 +504,11 @@ _dce_complete_new() {
       mapfile -t COMPREPLY < <(compgen -f -- "$cur")
       return 0
       ;;
-    --repo|--cpus|--memory|--hide|--network|--ip)
+    --repo)
+      _dce_reply_repo_specs "$cur"
+      return 0
+      ;;
+    --cpus|--memory|--hide|--network|--ip)
       return 0
       ;;
     --git-host)
@@ -449,6 +547,14 @@ _dce_complete_repo() {
     fi
     if [[ ( "${COMP_WORDS[3]:-}" == "--yes" || "${COMP_WORDS[3]:-}" == "-y" ) && $COMP_CWORD -eq 4 ]]; then
       _dce_reply_projects "$cur"
+      return 0
+    fi
+    if [[ $COMP_CWORD -eq 4 && "${COMP_WORDS[3]:-}" != "--yes" && "${COMP_WORDS[3]:-}" != "-y" ]]; then
+      _dce_reply_repo_specs "$cur"
+      return 0
+    fi
+    if [[ ( "${COMP_WORDS[3]:-}" == "--yes" || "${COMP_WORDS[3]:-}" == "-y" ) && $COMP_CWORD -eq 5 ]]; then
+      _dce_reply_repo_specs "$cur"
       return 0
     fi
     return 0
@@ -512,7 +618,7 @@ _dce_complete_config() {
       if [[ $COMP_CWORD -eq 3 ]]; then
         _dce_reply_projects "$cur"
       elif [[ $COMP_CWORD -eq 4 ]]; then
-        mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_config_keys)" -- "$cur")
+        mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_config_get_keys)" -- "$cur")
       fi
       return 0
       ;;
@@ -593,6 +699,13 @@ _dce_complete_extensions() {
   # Slot 4+: offer flags (capture's trailing <id>... is free-form, not completed).
   mapfile -t COMPREPLY < <(compgen -W "$flags" -- "$cur")
   return 0
+}
+
+_dce_complete_help() {
+  local cur="$1"
+  if [[ $COMP_CWORD -eq 2 ]]; then
+    mapfile -t COMPREPLY < <(compgen -W "$(dce_complete_subcommands)" -- "$cur")
+  fi
 }
 
 complete -F _dce_complete dce

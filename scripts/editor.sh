@@ -42,6 +42,13 @@ source "$ROOT_DIR/lib/extensions.sh"
 EXPLICIT_EDITOR=""
 PROJECT=""
 
+PROJECT="${1:-}"
+if [[ -n "$PROJECT" && "$PROJECT" != -* ]]; then
+  shift
+else
+  PROJECT=""
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --editor)
@@ -61,18 +68,14 @@ while [[ $# -gt 0 ]]; do
       dce_die "Unknown option: $1"
       ;;
     *)
-      if [[ -z "$PROJECT" ]]; then
-        PROJECT="$1"
-      else
-        dce_die "Unexpected argument: $1"
-      fi
+      dce_die "Unexpected argument: $1"
       shift
       ;;
   esac
 done
 
 if [[ -z "$PROJECT" ]]; then
-  echo "Usage: dce editor [--editor <id>] <project>" >&2
+  echo "Usage: dce editor <project> [--editor <id>]" >&2
   echo "" >&2
   echo "Launch your editor attached to a running dev container at /workspace." >&2
   echo "Works on all backends (docker/orbstack/colima/podman/apple/container);" >&2

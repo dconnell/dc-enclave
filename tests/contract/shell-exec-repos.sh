@@ -5,8 +5,8 @@
 # Stubbed-backend coverage for stage-5 ergonomics:
 #   - single-repo interactive shell defaults to /workspace/<repo>
 #   - multi-repo interactive shell defaults to /workspace
-#   - `dce shell --repo <name>` targets /workspace/<repo>
-#   - `dce exec --repo <name>` runs from /workspace/<repo>
+#   - `dce shell <project> --repo <name>` targets /workspace/<repo>
+#   - `dce exec <project> --repo <name>` runs from /workspace/<repo>
 # =============================================================================
 set -euo pipefail
 
@@ -115,13 +115,13 @@ pass "multi-repo shell defaults to project root"
 
 # Explicit shell --repo targets the selected repo.
 : > "$LOG"
-run_shell --repo api multi </dev/null >/dev/null 2>&1 || fail "shell --repo exited non-zero"
+run_shell multi --repo api </dev/null >/dev/null 2>&1 || fail "shell --repo exited non-zero"
 grep -Fq "cd /workspace/api" "$LOG" || fail "shell --repo should cd to /workspace/api"
 pass "shell --repo targets the selected repo"
 
 # Explicit exec --repo targets the selected repo.
 : > "$LOG"
-run_exec --repo web multi pwd >/dev/null 2>&1 || fail "exec --repo exited non-zero"
+run_exec multi --repo web pwd >/dev/null 2>&1 || fail "exec --repo exited non-zero"
 grep -Fq "cd /workspace/web && exec pwd" "$LOG" || fail "exec --repo should run from /workspace/web"
 pass "exec --repo targets the selected repo"
 
