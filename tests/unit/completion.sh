@@ -409,10 +409,15 @@ if command -v zsh >/dev/null 2>&1; then
 
     # _arguments stub: detect the top-level router call by its ->state specs
     # and emulate the state transition + the *:: word re-slice. Per-subcommand
-    # spec calls (no ->) are just recorded for later assertion.
+    # spec calls are just recorded for later assertion. Router detection must
+    # match the two router specs exactly: hint slots now also use ->state form
+    # (real-widget rendering), so a broad "->" test would misroute those calls
+    # and leave SPEC empty.
     _arguments() {
       local spec is_router=0
-      for spec in "$@"; do [[ "$spec" == *"->"* ]] && is_router=1; done
+      for spec in "$@"; do
+        [[ "$spec" == "1: :->subcmd" || "$spec" == "*:: :->args" ]] && is_router=1
+      done
       if (( is_router )); then
         if (( CURRENT == 2 )); then
           state=subcmd
@@ -548,6 +553,7 @@ if command -v zsh >/dev/null 2>&1; then
     [[ "${SPEC[*]}" != *"2:project"* ]] || { print "FAIL: zsh extensions host must not offer a project -> [${SPEC[*]}]"; exit 1 }
     chk logs             "1:project:"
     chk logs             "--follow["
+    chk logs             "--tail+[last N lines]:line count:->hint_tail"
     chk exec             "1:project:"
     chk exec             "*--root["
     chk exec             "*--repo+[repo name]"
@@ -574,17 +580,24 @@ if command -v zsh >/dev/null 2>&1; then
     [[ "${SPEC[*]}" == *"2:project"* ]] \
       || { print "FAIL: zsh repo add should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1; }
     chk new              "2:scope:_dce_scopes"
+    chk new              "1:project name:->hint_project"
     chk new              "*--hide["
     chk new              "--git-host+[git host provider (github/gitlab)]"
     chk new              "*--repo+[repo spec"
     chk new              "*--network["
-    chk new              "--ip+["
+    chk new              "--cpus+[cpu limit (e.g. 2, 1.5)]:cpu limit:->hint_cpus"
+    chk new              "--memory+[memory limit (e.g. 4g, 512m)]:memory limit:->hint_memory"
+    chk new              "--ip+[static IPv4 for the primary network]:IPv4 address:->hint_ip"
     chk new              "--yes[skip confirmation prompts for repo paths outside the default repos dir]"
     chk new              "-y[skip confirmation prompts for repo paths outside the default repos dir]"
     words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--from-snap+[recreate from snapshot"
     words=(network members "") CURRENT=3 SPEC=(); _dce_network
     [[ "${SPEC[*]}" == *"2:network"* ]] || { print "FAIL: zsh network members should complete a network at slot 2 -> [${SPEC[*]}]"; exit 1 }
+    words=(network create "") CURRENT=3 SPEC=(); _dce_network
+    [[ "${SPEC[*]}" == *"2:network:->hint_netname"* ]] || { print "FAIL: zsh network create should hint for the network name -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" == *"--subnet+[IPv4 CIDR]:IPv4 CIDR:->hint_subnet"* ]] || { print "FAIL: zsh network create should hint for --subnet -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" == *"--subnet-v6+[IPv6 CIDR]:IPv6 CIDR:->hint_subnet6"* ]] || { print "FAIL: zsh network create should hint for --subnet-v6 -> [${SPEC[*]}]"; exit 1 }
     words=(network add "") CURRENT=3 SPEC=(); _dce_network
     [[ "${SPEC[*]}" == *"2:network"* ]] || { print "FAIL: zsh network add should complete a network at slot 2 -> [${SPEC[*]}]"; exit 1 }
     [[ "${SPEC[*]}" == *"3:project"* ]] || { print "FAIL: zsh network add should complete a project at slot 3 -> [${SPEC[*]}]"; exit 1 }
@@ -598,6 +611,12 @@ if command -v zsh >/dev/null 2>&1; then
     words=(config get "") CURRENT=3 SPEC=(); _dce_config
     [[ "${SPEC[*]}" == *"3:key: _dce_config_get_keys"* ]] || { print "FAIL: zsh config get should offer a key at slot 3 -> [${SPEC[*]}]"; exit 1 }
     print "PASS: zsh config dispatch + key spec"
+    words=(config set alpha cpus "") CURRENT=5 SPEC=(); _dce_config
+    [[ "${SPEC[*]}" == *"4:value:->hint_value"* ]] || { print "FAIL: zsh config set should hint for the value slot -> [${SPEC[*]}]"; exit 1 }
+    words=(shell alpha "") CURRENT=3 SPEC=(); _dce_dispatch shell
+    [[ "${SPEC[*]}" == *"*:command:->hint_command"* ]] || { print "FAIL: zsh shell should hint for trailing commands -> [${SPEC[*]}]"; exit 1 }
+    words=(exec alpha "") CURRENT=3 SPEC=(); _dce_dispatch exec
+    [[ "${SPEC[*]}" == *"*:command:->hint_command"* ]] || { print "FAIL: zsh exec should hint for trailing commands -> [${SPEC[*]}]"; exit 1 }
     # rm subcommand branch: completes a project at slot 2 and offers NO create
     # flags (parity with the bash rm path).
     words=(snapshot rm "") CURRENT=3 SPEC=(); _dce_snapshot
@@ -606,6 +625,12 @@ if command -v zsh >/dev/null 2>&1; then
     print "PASS: zsh snapshot rm completes a project, no create flags"
     print "PASS: zsh per-subcommand dispatch specs"
   ' || fail "zsh completion logic/spec test failed"
+
+  # Real-widget render test: spec-string assertions above cannot detect an
+  # action that never renders (three broken hint attempts shipped that way).
+  # Drives a clean `zsh -f` under zpty and asserts on the actual screen.
+  zsh "$ROOT_DIR/tests/unit/completion-widget.zsh" \
+    || fail "zsh completion widget render test failed"
 else
   echo "SKIP: zsh completion tests (zsh not installed)"
 fi

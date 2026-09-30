@@ -89,9 +89,18 @@ _dce_dispatch() {
       ;;
     shell)
       # One project, then optional --repo <name>, then a free-form command.
+      # Free-text hints render only via ->state + _message; plain message-only
+      # actions are inert in a real widget (proven by the zpty bake-off in
+      # tests/unit/completion-widget.zsh).
+      local state
       _arguments \
         '1:project:_dce_projects_simple' \
-        '*--repo+[repo name]:repo name:_dce_project_repo_names'
+        '*--repo+[repo name]:repo name:_dce_project_repo_names' \
+        '*:command:->hint_command'
+      case $state in
+        # Only hint an EMPTY slot: once typing starts, or at a later slot, the hint must vanish (widget lifecycle checks).
+        hint_command) [[ -z "${PREFIX:-}" ]] && _message -r "enter command" ;;
+      esac
       ;;
     editor)
       # One project, then optional --editor <id>.
@@ -100,18 +109,27 @@ _dce_dispatch() {
         '*--editor+[editor id]:editor id:_dce_editor_ids'
       ;;
     logs)
+      local state
       _arguments \
         '1:project:_dce_projects_simple' \
         '--follow[follow log output]' \
         '-f[follow log output]' \
-        '--tail+[last N lines]:N:'
+        '--tail+[last N lines]:line count:->hint_tail'
+      case $state in
+        hint_tail) [[ -z "${PREFIX:-}" ]] && _message -r "enter line count" ;;
+      esac
       ;;
     exec)
       # One project, then optional --repo/--root, then a free-form command.
+      local state
       _arguments \
         '1:project:_dce_projects_simple' \
         '*--repo+[repo name]:repo name:_dce_project_repo_names' \
-        '*--root[run as uid 0 (non-interactive)]'
+        '*--root[run as uid 0 (non-interactive)]' \
+        '*:command:->hint_command'
+      case $state in
+        hint_command) [[ -z "${PREFIX:-}" ]] && _message -r "enter command" ;;
+      esac
       ;;
     rm)
       _arguments \
@@ -367,21 +385,28 @@ _dce_doctor() {
 
 # `dce new <name> [scope] [--config <file>] [--save-team] [--save-user] [--repo <spec>] [--cpus N] [--memory V] [--hide <p>] [--network <n>[,...]] [--ip <addr>] [--yes|-y] [ports]`.
 _dce_new() {
+  local state
   _arguments \
-    '1:project name:' \
+    '1:project name:->hint_project' \
     '2:scope:_dce_scopes' \
     '--config+[load an explicit recipe file]:recipe file:_files' \
     '--save-team[save CLI-supplied recipe keys to team container-recipes/<name>]' \
     '--save-user[save CLI-supplied recipe keys to user container-recipes/<name>]' \
     '--git-host+[git host provider (github/gitlab)]:provider:(github gitlab)' \
     '*--repo+[repo spec (<path> or <name>=<path>)]:repo spec:' \
-    '--cpus+[cpu limit (e.g. 2, 1.5)]:value:' \
-    '--memory+[memory limit (e.g. 4g, 512m)]:value:' \
+    '--cpus+[cpu limit (e.g. 2, 1.5)]:cpu limit:->hint_cpus' \
+    '--memory+[memory limit (e.g. 4g, 512m)]:memory limit:->hint_memory' \
     '*--hide[workspace path(s) to keep in a named volume]:path:' \
     '*--network[network(s) to attach (name\[,name...\] or name:ip)]:network:' \
-    '--ip+[static IPv4 for the primary network]:addr:' \
+    '--ip+[static IPv4 for the primary network]:IPv4 address:->hint_ip' \
     '--yes[skip confirmation prompts for repo paths outside the default repos dir]' \
     '-y[skip confirmation prompts for repo paths outside the default repos dir]'
+  case $state in
+    hint_project) [[ -z "${PREFIX:-}" ]] && _message -r "enter project name" ;;
+    hint_cpus)    [[ -z "${PREFIX:-}" ]] && _message -r "enter cpu limit" ;;
+    hint_memory)  [[ -z "${PREFIX:-}" ]] && _message -r "enter memory limit" ;;
+    hint_ip)      [[ -z "${PREFIX:-}" ]] && _message -r "enter IPv4 address" ;;
+  esac
 }
 
 # `dce network <subaction> [args]`.
@@ -408,11 +433,17 @@ _dce_network() {
         '--ip+[static IPv4 address]:addr:'
       ;;
     create)
+      local state
       _arguments \
         '1:subcommand: _dce_network_subactions' \
-        '2:network:' \
-        '--subnet+[IPv4 CIDR]:cidr:' \
-        '--subnet-v6+[IPv6 CIDR]:cidr:'
+        '2:network:->hint_netname' \
+        '--subnet+[IPv4 CIDR]:IPv4 CIDR:->hint_subnet' \
+        '--subnet-v6+[IPv6 CIDR]:IPv6 CIDR:->hint_subnet6'
+      case $state in
+        hint_netname) [[ -z "${PREFIX:-}" ]] && _message -r "enter network name" ;;
+        hint_subnet)  [[ -z "${PREFIX:-}" ]] && _message -r "enter IPv4 CIDR" ;;
+        hint_subnet6) [[ -z "${PREFIX:-}" ]] && _message -r "enter IPv6 CIDR" ;;
+      esac
       ;;
     ls|list)
       _arguments '1:subcommand: _dce_network_subactions'
@@ -483,10 +514,15 @@ _dce_config() {
         '3:key: _dce_config_get_keys'
       ;;
     set)
+      local state
       _arguments \
         '1:subcommand: _dce_config_subactions' \
         '2:project:_dce_projects_simple' \
-        '3:key: _dce_config_keys'
+        '3:key: _dce_config_keys' \
+        '4:value:->hint_value'
+      case $state in
+        hint_value) [[ -z "${PREFIX:-}" ]] && _message -r "enter value" ;;
+      esac
       ;;
     sync-vscode)
       _arguments \
