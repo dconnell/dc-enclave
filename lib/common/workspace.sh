@@ -44,6 +44,26 @@ dce_default_repos_root() {
   dce_expand_tilde "${DC_REPOS_DIR:-$HOME/repos}"
 }
 
+# Canonicalize the path half of a repo spec for the user-facing repo surfaces
+# (`new --repo`, `repo add`). A bare NAME (no slash, not "." or "..") resolves
+# against the default repos root: `--repo api` means the `api` checkout in the
+# repos warehouse regardless of the caller's cwd. Path-shaped values (./x,
+# a/b, ~/x, /x) keep filesystem semantics: tilde-expanded, then absolute
+# as-is or relative to $PWD.
+dce_repo_path_resolve() {
+  local path="$1"
+  path="$(dce_expand_tilde "$path")"
+  if [[ "$path" != /* ]]; then
+    if [[ "$path" != */* && "$path" != "." && "$path" != ".." ]]; then
+      path="$(dce_default_repos_root)/$path"
+    else
+      # Drop a leading ./ so the join stays canonical: ./x -> $PWD/x.
+      path="$PWD/${path#./}"
+    fi
+  fi
+  printf '%s\n' "$path"
+}
+
 # Echo the canonical in-container target directory for a repo name.
 dce_repo_target() {
   local name="$1"
@@ -157,10 +177,10 @@ dce_project_repo_workdir() {
   return 1
 }
 
-# Resolve one repo spec into "<name><TAB><absolute-host-path>". The bare-path
-# form derives the repo name from basename(path); the explicit form keeps the
-# given name. Relative paths resolve against $PWD after tilde expansion. The
-# result is validated with the shared repo-name/path validators.
+# Resolve one repo spec into "<name><TAB><absolute-host-path>". A bare NAME
+# resolves against the default repos root (dce_repo_path_resolve); path-shaped
+# relatives resolve against $PWD. The result is validated with the shared
+# repo-name/path validators.
 dce_repo_spec_resolve() {
   local spec="$1"
   local line="" name="" path=""
@@ -168,10 +188,7 @@ dce_repo_spec_resolve() {
   name="${line%%$'\t'*}"
   path="${line#*$'\t'}"
 
-  path="$(dce_expand_tilde "$path")"
-  if [[ "$path" != /* ]]; then
-    path="$PWD/$path"
-  fi
+  path="$(dce_repo_path_resolve "$path")"
 
   local resolved=""
   resolved="$(dce_resolve_path "$path")" || return 1

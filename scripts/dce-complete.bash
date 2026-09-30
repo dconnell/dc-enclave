@@ -269,44 +269,54 @@ _dce_reply_snapshot_labels() {
   COMPREPLY=("${out[@]}")
 }
 
+# Repo-spec candidates: bare/empty prefix -> just the repo names under the
+# default repos root (no path, no trailing slash). ~ and path-shaped
+# prefixes -> directory completion; `name=` prefixes are re-attached.
 _dce_reply_repo_specs() {
   local cur="$1"
   local prefix=""
   local path_cur="$cur"
-  local search="$path_cur"
-  local home_prefix=""
 
   if [[ "$cur" == *=* ]]; then
     prefix="${cur%%=*}="
     path_cur="${cur#*=}"
   fi
 
+  local -a reply=()
+
   case "$path_cur" in
     ""|[^./~]*)
-      search="$(_dce_complete_default_repos_root)/$path_cur"
+      local root d
+      root="$(_dce_complete_default_repos_root)"
+      if [[ -d "$root" ]]; then
+        local -a names=()
+        for d in "$root"/*; do
+          [[ -d "$d" ]] && names+=("${d##*/}")
+        done
+        if (( ${#names[@]} )); then
+          mapfile -t reply < <(compgen -W "${names[*]}" -- "$path_cur")
+        fi
+      fi
       ;;
     ~|~/*)
-      search="$HOME${path_cur#\~}"
-      home_prefix="$HOME"
+      mapfile -t reply < <(compgen -d -- "$HOME${path_cur#\~}")
+      local i
+      for ((i=0; i<${#reply[@]}; i++)); do
+        reply[$i]="~${reply[$i]#"$HOME"}"
+      done
       ;;
     *)
-      search="$path_cur"
+      mapfile -t reply < <(compgen -d -- "$path_cur")
       ;;
   esac
 
-  mapfile -t COMPREPLY < <(compgen -d -- "$search")
-  if [[ -n "$home_prefix" ]]; then
-    local i
-    for ((i=0; i<${#COMPREPLY[@]}; i++)); do
-      COMPREPLY[$i]="~${COMPREPLY[$i]#"$home_prefix"}"
-    done
-  fi
   if [[ -n "$prefix" ]]; then
     local i
-    for ((i=0; i<${#COMPREPLY[@]}; i++)); do
-      COMPREPLY[$i]="${prefix}${COMPREPLY[$i]}"
+    for ((i=0; i<${#reply[@]}; i++)); do
+      reply[$i]="${prefix}${reply[$i]}"
     done
   fi
+  COMPREPLY=("${reply[@]}")
 }
 
 _dce_complete_shell() {

@@ -10,7 +10,7 @@ Every flag each `dce` command accepts, derived from the command help (`dce help 
 | `[scope[,scope...]]` | Overlay scope(s) matching `Containerfile.<scope>` in team/user overlays. Omit for a base-only project. |
 | `[host:container ...]` | Port mapping(s) to publish. A bare port (e.g. `5173`) maps the same port on both sides; `8080:3000` maps different ports. Repeatable. |
 | `--config <path>` | Load one explicit container recipe file as defaults; skips name-based recipe lookup. CLI flags still override. |
-| `--repo <path\|name=path>` | Add one repo to the project. Repeatable. With no `--repo`, `dce new <name>` creates a single repo at `$DC_REPOS_DIR/<name>` named `<name>`. Bare paths derive the repo name from `basename(path)`; `name=path` keeps the explicit name. |
+| `--repo <name\|path\|name=path>` | Add one repo to the project. Repeatable. With no `--repo`, `dce new <name>` creates a single repo at `$DC_REPOS_DIR/<name>` named `<name>`. Bare paths derive the repo name from `basename(path)`; `name=path` keeps the explicit name. A bare `<name>` resolves against the default repos directory. |
 | `--save-team` | Save the CLI-supplied recipe keys from this run to `$DC_TEAM_DIR/container-recipes/<name>`. |
 | `--save-user` | Save the CLI-supplied recipe keys from this run to `$DC_USER_DIR/container-recipes/<name>`. Pass both to write both. |
 | `--cpus <N>` | CPU limit (e.g. `2`, `1.5`). Empty = backend default. See [manage resources](../how-to/manage-resources.md). |

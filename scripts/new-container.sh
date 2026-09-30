@@ -475,10 +475,9 @@ for repo_spec in "${REPO_SPECS[@]}"; do
   if [[ -z "$_repo_path_value" ]]; then
     dce_die "repo spec must include a non-empty path: $repo_spec"
   fi
-  _repo_path_value="$(_dce_new_repo_path_expand_tilde "$_repo_path_value")"
-  if [[ "$_repo_path_value" != /* ]]; then
-    _repo_path_value="$PWD/$_repo_path_value"
-  fi
+  # Bare names resolve against the default repos root; path-shaped relatives
+  # stay $PWD-relative (dce_repo_path_resolve -- same rule as the resolver).
+  _repo_path_value="$(dce_repo_path_resolve "$_repo_path_value")"
 
   if ! dce_validate_repo_path "$_repo_path_value" >&2; then
     dce_die "Refusing to use '$_repo_path_value' as a repo path for project '$PROJECT'."

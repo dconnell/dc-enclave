@@ -165,7 +165,11 @@ print "bake-off winners: ${RENDERED[*]}"
 # mirrors tests/unit/completion.sh) and host-independent. Must run before the
 # first dce completion, which caches the data library for the shell session.
 zpty -w wtest "export HOME='$WORK/home'"
-zpty -w wtest "mkdir -p '$WORK/home/.config/dc-enclave/team/overlays' '$WORK/home/.config/dc-enclave/user/overlays' '$WORK/home/repos'"
+# _dce_complete_default_repos_root prefers DC_REPOS_DIR over $HOME/repos, so a
+# value leaking in from the invoking shell would redirect the repo-spec checks
+# away from the fixture. Isolate it like HOME above.
+zpty -w wtest 'unset DC_REPOS_DIR'
+zpty -w wtest "mkdir -p '$WORK/home/.config/dc-enclave/team/overlays' '$WORK/home/.config/dc-enclave/user/overlays' '$WORK/home/repos/api' '$WORK/home/repos/web' '$WORK/home/repos/tools'"
 zpty -w wtest "touch '$WORK/home/.config/dc-enclave/team/overlays/Containerfile.node' '$WORK/home/.config/dc-enclave/team/overlays/Containerfile.all' '$WORK/home/.config/dc-enclave/user/overlays/Containerfile.node' '$WORK/home/.config/dc-enclave/user/overlays/Containerfile.golang'"
 zpty -w wtest 'HS=SET; print -r -- HOME-$HS'
 _pty_wait_for 'HOME-SET' 6 || fail "isolated HOME setup failed"
@@ -214,5 +218,17 @@ _dce_absent() {                # _dce_absent <line> <unwanted> <label>
 _dce_absent "dce new te"          "enter project name" "dce new <partial> <TAB> suppresses the hint"
 _dce_absent "dce shell alpha run" "enter command"      "dce shell <partial cmd> <TAB> suppresses the hint"
 _dce_pair   "dce new test "       "golang" "enter project name" "dce new <name> <TAB> shows scopes without the project hint"
+
+# Default-repos completion parity: `new --repo` and `repo add` offer bare
+# repo names from the default repos root -- no path prefix inserted, no
+# trailing slash -- so zsh lists plain names and appends a space on insert.
+_pty_capture "dce new test nodejs,shellcheck --repo "
+if [[ "$PTY_SCREEN" == *"api"* && "$PTY_SCREEN" != *"home/repos"* && "$PTY_SCREEN" != *"enter project name"* ]]; then
+  pass "widget render: dce new ... --repo <TAB> lists repo names, no path, no hint"
+else
+  fail "widget render: dce new ... --repo <TAB> lists repo names, no path, no hint"
+fi
+_dce_slot "dce new test nodejs --repo web=" "api" "dce new --repo name= <TAB> completes the name half"
+_dce_slot "dce repo add alpha "             "api" "dce repo add <proj> <TAB> lists repo names"
 
 print "PASS: all widget render checks passed"

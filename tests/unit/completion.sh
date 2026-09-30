@@ -267,7 +267,7 @@ drive 3 dce repo list ""; assert_reply "repo list <TAB>" alpha beta gamma
 drive 3 dce repo add ""; assert_reply "repo add <TAB>" --yes -y alpha beta gamma
 drive 4 dce repo add --yes ""; assert_reply "repo add --yes <TAB>" alpha beta gamma
 drive 4 dce repo add alpha ""; assert_reply "repo add alpha <spec> <TAB>" \
-  "$HOME/repos/api" "$HOME/repos/tools" "$HOME/repos/web"
+  api tools web
 drive 3 dce repo remove ""; assert_reply "repo remove <TAB>" alpha beta gamma
 
 # config: subactions at position 2; project at 3; key at 4 (get/set);
@@ -348,7 +348,7 @@ drive 3 dce new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
 drive 4 dce new foo --network ""; assert_empty "new foo --network <val> (no completion)"
 drive 4 dce new foo --git-host ""; assert_reply "new foo --git-host <TAB>" github gitlab
 drive 4 dce new foo --repo "";     assert_reply "new foo --repo <spec> <TAB>" \
-  "$HOME/repos/api" "$HOME/repos/tools" "$HOME/repos/web"
+  api tools web
 
 # ---------------------------------------------------------------------------
 # Section 3 - zsh completion (scripts/_dce), gated on zsh being installed
@@ -579,11 +579,13 @@ if command -v zsh >/dev/null 2>&1; then
       || { print "FAIL: zsh repo add should offer --yes -> [${SPEC[*]}]"; exit 1; }
     [[ "${SPEC[*]}" == *"2:project"* ]] \
       || { print "FAIL: zsh repo add should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1; }
+    words=(repo add alpha "") CURRENT=4 SPEC=(); _dce_repo
+    [[ "${SPEC[*]}" == *"3:repo spec:_dce_repo_specs"* ]] || { print "FAIL: zsh repo add should complete a repo spec at slot 3 -> [${SPEC[*]}]"; exit 1 }
     chk new              "2:scope:_dce_scopes"
     chk new              "1:project name:->hint_project"
     chk new              "*--hide["
     chk new              "--git-host+[git host provider (github/gitlab)]"
-    chk new              "*--repo+[repo spec"
+    chk new              "*--repo[repo spec (<name>, <path> or <name>=<path>)]:repo spec:_dce_repo_specs"
     chk new              "*--network["
     chk new              "--cpus+[cpu limit (e.g. 2, 1.5)]:cpu limit:->hint_cpus"
     chk new              "--memory+[memory limit (e.g. 4g, 512m)]:memory limit:->hint_memory"

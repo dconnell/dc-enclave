@@ -12,6 +12,7 @@
 #   - dce_workspace_mount_args      : full create-argv mount set (live + snap)
 #   - dce_managed_volume_paths      : user hidden paths + the managed .cache
 #   - dce_hidden_paths_for_project  : single-repo shorthand -> repo-prefixed
+#   - dce_repo_path_resolve         : repo-spec path half (bare name -> root)
 # =============================================================================
 set -euo pipefail
 
@@ -157,5 +158,53 @@ REPO_PATHS=("$WORK/repos/only")
 if dce_hidden_paths_for_project ".cache" >/dev/null 2>&1; then
   fail "the managed .cache path must never be claimable as a hidden path"
 fi
+
+# --- repo-spec path resolution -------------------------------------------------
+# dce_repo_path_resolve maps a bare NAME (no slash, not "."/"..") to the default
+# repos root and keeps filesystem semantics for path-shaped values; the repo
+# specs (`dce_repo_spec_resolve`) go through it for both the bare-path and
+# name=path forms. Fixture mirrors the completion suite: a dedicated
+# DC_REPOS_DIR holding one `api` checkout.
+DC_REPOS_DIR="$WORK/repos-root"
+export DC_REPOS_DIR
+mkdir -p "$DC_REPOS_DIR/api"
+
+[[ "$(dce_repo_path_resolve "api")" == "$DC_REPOS_DIR/api" ]] \
+  || fail "repo path resolve: bare name should hit the repos root (got $(dce_repo_path_resolve "api"))"
+[[ "$(dce_repo_path_resolve "./rel")" == "$PWD/rel" ]] \
+  || fail "repo path resolve: ./rel should stay PWD-relative (got $(dce_repo_path_resolve "./rel"))"
+[[ "$(dce_repo_path_resolve "a/b")" == "$PWD/a/b" ]] \
+  || fail "repo path resolve: a/b should stay PWD-relative (got $(dce_repo_path_resolve "a/b"))"
+[[ "$(dce_repo_path_resolve "sub/dir")" == "$PWD/sub/dir" ]] \
+  || fail "repo path resolve: sub/dir should stay PWD-relative (got $(dce_repo_path_resolve "sub/dir"))"
+[[ "$(dce_repo_path_resolve "..")" == "$PWD/.." ]] \
+  || fail "repo path resolve: .. should stay PWD-relative (got $(dce_repo_path_resolve ".."))"
+[[ "$(dce_repo_path_resolve "/abs/x")" == "/abs/x" ]] \
+  || fail "repo path resolve: absolute path must pass through unchanged (got $(dce_repo_path_resolve "/abs/x"))"
+[[ "$(dce_repo_path_resolve "~/x")" == "$HOME/x" ]] \
+  || fail "repo path resolve: ~ must expand to HOME (got $(dce_repo_path_resolve "~/x"))"
+
+# dce_repo_spec_resolve canonicalizes through dce_resolve_path, so compare
+# against the symlink-resolved fixture path.
+api_phys="$(dce_resolve_path "$DC_REPOS_DIR/api")"
+spec_out="$(dce_repo_spec_resolve "api")"
+[[ "$spec_out" == $'api\t'"$api_phys" ]] \
+  || fail "repo spec resolve: bare name api -> api + repos-root path (got: $spec_out)"
+
+spec_out="$(dce_repo_spec_resolve "web=api")"
+[[ "$spec_out" == $'web\t'"$api_phys" ]] \
+  || fail "repo spec resolve: web=api -> name web + repos-root path (got: $spec_out)"
+
+# Path-shaped relatives still resolve against $PWD: run from a controlled dir
+# so the fixture does not depend on (or pollute) the invoking cwd.
+_prev_pwd="$PWD"
+mkdir -p "$WORK/spec-cwd"
+cd "$WORK/spec-cwd"
+mkdir -p local
+spec_out="$(dce_repo_spec_resolve "./local")"
+local_phys="$(dce_resolve_path "$PWD/local")"
+[[ "$spec_out" == $'local\t'"$local_phys" ]] \
+  || fail "repo spec resolve: ./local must stay PWD-relative (got: $spec_out)"
+cd "$_prev_pwd"
 
 pass "workspace/mount-planning helpers"

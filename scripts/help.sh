@@ -107,13 +107,14 @@ Options:
   --memory <val>
              Memory limit (e.g. 4g, 512m).
 
-  --repo <path|name=path>
-               Add one repo to the project. Repeatable. With no --repo, `dce new`
-               creates a single repo at $DC_REPOS_DIR/<name> (~/repos/<name>) and
-               names it <name>. A path outside the default repos dir prompts for
-               confirmation unless --yes/-y is given. The repos root itself
-               ($DC_REPOS_DIR or ~/repos) and any parent of it are rejected
-               outright because they are too broad to expose as one repo.
+  --repo <name|path|name=path>
+                Add one repo to the project. Repeatable. With no --repo, `dce new`
+                creates a single repo at $DC_REPOS_DIR/<name> (~/repos/<name>) and
+                names it <name>. A bare <name> resolves against the default repos
+                directory. A path outside the default repos dir prompts for
+                confirmation unless --yes/-y is given. The repos root itself
+                ($DC_REPOS_DIR or ~/repos) and any parent of it are rejected
+                outright because they are too broad to expose as one repo.
               Examples:
                 --repo ~/code/api
                 --repo web=~/code/frontend

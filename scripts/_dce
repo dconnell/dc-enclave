@@ -273,6 +273,44 @@ _dce_project_repo_names() {
   _wanted repos expl 'repo name' compadd -a all
 }
 
+# Bare-name candidates: just the directory names under the default repos
+# root -- no path prefix, no trailing slash -- so zsh lists plain names and
+# appends a space on insert. Path-shaped prefixes (/, ~, .) fall back to
+# real path completion.
+_dce_repo_spec_paths() {
+  local root
+  local -a names
+  case "$PREFIX" in
+    ''|[^./~]*)
+      root="$(_dce_complete_default_repos_root)"
+      if [[ -d "$root" ]]; then
+        names=("$root"/*(N-/))
+        names=("${(@)names##*/}")
+        if (( ${#names} )); then
+          _wanted repo-dirs expl 'repo name' compadd -a names
+        else
+          _message -r "no repos under $root"
+        fi
+      else
+        _message -r "no default repos dir at $root"
+      fi
+      ;;
+    *)
+      _files -/
+      ;;
+  esac
+}
+
+_dce_repo_specs() {
+  if ! _dce_load_complete_data; then
+    _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
+    return 1
+  fi
+  # `name=path` spec: keep the name= half on the line, complete the path half.
+  compset -P '*='
+  _dce_repo_spec_paths
+}
+
 _dce_project_hidden_paths() {
   if ! _dce_load_complete_data; then
     _message "dce completion unavailable (cannot locate lib/complete-data.sh)"
@@ -393,7 +431,7 @@ _dce_new() {
     '--save-team[save CLI-supplied recipe keys to team container-recipes/<name>]' \
     '--save-user[save CLI-supplied recipe keys to user container-recipes/<name>]' \
     '--git-host+[git host provider (github/gitlab)]:provider:(github gitlab)' \
-    '*--repo+[repo spec (<path> or <name>=<path>)]:repo spec:' \
+    '*--repo[repo spec (<name>, <path> or <name>=<path>)]:repo spec:_dce_repo_specs' \
     '--cpus+[cpu limit (e.g. 2, 1.5)]:cpu limit:->hint_cpus' \
     '--memory+[memory limit (e.g. 4g, 512m)]:memory limit:->hint_memory' \
     '*--hide[workspace path(s) to keep in a named volume]:path:' \
@@ -474,6 +512,7 @@ _dce_repo() {
       _arguments \
         '1:subcommand: _dce_repo_subactions' \
         '2:project:_dce_projects_simple' \
+        '3:repo spec:_dce_repo_specs' \
         '--yes[skip confirmation prompts for repo paths outside the default repos dir]' \
         '-y[skip confirmation prompts for repo paths outside the default repos dir]'
       ;;
