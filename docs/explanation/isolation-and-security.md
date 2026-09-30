@@ -23,7 +23,7 @@ If a container's state is ever suspect, `dce rebuild-container` replaces the con
 
 Repo paths must be unique and non-overlapping **within** a project, but the same canonical host repo path is allowed in **different** projects — by design, with no locking, reservation, or coordination. Both containers bind-mount the same directory, so they operate on one checkout: tracked files, untracked files, branch state, and `.git` metadata are shared, and an edit or commit made from one project is immediately visible in the other.
 
-What stays project-scoped even when a repo is shared: credentials (SSH deploy key, git token, `.npmrc`), hidden volumes created by `--hide`, and the managed `/workspace/.cache` volume. Those belong to each project's container, so two projects sharing a repo remain independent trust zones for everything outside that repo's bind mount.
+Even when a repo is shared, credentials (SSH deploy key, git token, `.npmrc`), hidden volumes created by `--hide`, and the managed `/workspace/.cache` volume stay project-scoped. They belong to each project's container, so two projects sharing a repo remain independent trust zones for everything outside that repo's bind mount.
 
 ### VS Code remote development can reach your host
 

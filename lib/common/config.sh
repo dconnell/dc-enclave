@@ -182,7 +182,7 @@ dce_validate_subnet_value() {
 }
 
 # --- schema-v2 repo validation helpers -----------------------------------------
-# Shared by the config loader and (later) the repo-facing CLI surfaces. Repo
+# Shared by the config loader and the repo-facing CLI surfaces. Repo
 # names follow the same conservative identifier grammar as project names;
 # repo paths are host bind-mount sources, so they must be absolute and free of
 # control characters, unique canonically, and non-overlapping within a project.
@@ -320,8 +320,8 @@ dce_validate_repo_path() {
 }
 
 # Return 0 (true) when CANON is equal to the default repos root or one of its
-# ancestors. A schema-v2 repo entry must point at one checkout, not at the whole
-# repo warehouse or one of its parents.
+# ancestors. A schema-v2 repo entry must point at one checkout, not at the repos
+# root or one of its parents.
 dce_repo_path_is_repos_root_or_ancestor() {
   local canon="$1"
   local default_root=""

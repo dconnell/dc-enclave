@@ -73,8 +73,8 @@ cannot silently widen the host bind mount:
 - A repo path that resolves to `/`, your home directory, the repos root, or a
   parent of it is **rejected** outright for every repo-entry surface (`dce new`,
   recipe `repo=`, `dce repo add`, or a persisted config). Those paths are too
-  broad for the schema-v2 explicit-repo model: they would expose the whole repo
-  warehouse or one of its parents instead of one declared checkout. Values with
+  broad for the schema-v2 explicit-repo model: they would expose the repos root
+  or one of its parents instead of a single declared checkout. Values with
   characters unsafe in a bind-mount source are also rejected.
 - A repo path **inside** the default repos dir needs no confirmation.
 
@@ -118,6 +118,6 @@ projects. See [isolation and security](../explanation/isolation-and-security.md#
 ### Legacy single-repo configs
 
 Configs written for the original single-repo schema (`REPOS_DIR`) are rejected
-by the loader, which prints a pointer to the `legacy-single-repo` branch — it
-preserves the old single-repo model unchanged. `main` carries no dual-schema
-runtime and no migration tooling.
+by the loader with a pointer to the `legacy-single-repo` branch, which
+preserves the old single-repo model unchanged. There is no dual-schema runtime
+and no migration tooling on `main`.

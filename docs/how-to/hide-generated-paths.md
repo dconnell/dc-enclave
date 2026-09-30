@@ -1,6 +1,6 @@
 # Hide generated paths from the host
 
-By default, `/workspace` is the project root assembled from one read-write bind mount per repo at `/workspace/<repo-name>` plus the managed `/workspace/.cache` cache volume — each repo inside the container is a live view of its host repo directory. That works well for source code, but generated paths such as `node_modules`, build caches, and compiled output don't belong on the host. They can contain thousands of files, platform-specific binaries, and large caches that are meaningless or even harmful on the host filesystem.
+By default, `/workspace` is the project root: one read-write bind mount per repo at `/workspace/<repo-name>`, plus the managed `/workspace/.cache` cache volume. Each repo inside the container is a live view of its host repo directory. That works well for source code, but generated paths such as `node_modules`, build caches, and compiled output don't belong on the host. They can contain thousands of files, platform-specific binaries, and large caches that are meaningless or even harmful on the host filesystem.
 
 The `--hide` flag solves this by mounting a named container volume over a `/workspace`-relative path so its contents live inside the container's volume store instead of on the host.
 

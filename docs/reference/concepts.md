@@ -6,7 +6,7 @@ Short definitions for the terms used across these docs. Follow the links for ful
 
 - **Project** — one isolated dev container plus its host-side config and secrets. Created by `dce new <name>`; lives under `~/.config/dc-enclave/projects/<name>/`. Each project gets its own container, SSH key, optional PAT, and optional `.npmrc`.
 - **Backend** — the container runtime `dce` drives: `apple` (apple/container), `docker`, `orbstack`, `colima`, or `podman`. Auto-detected or forced with `CONTAINER_BACKEND`. Details in [backends](backends.md).
-- **Workspace** — the project root mounted at `/workspace` inside the container. Repo binds live under `/workspace/<repo-name>` and the managed cache volume lives at `/workspace/.cache`.
+- **Workspace** — the project root at `/workspace` inside the container. Repo binds live under `/workspace/<repo-name>` and the managed cache volume lives at `/workspace/.cache`.
 
 ## Images and overlays
 

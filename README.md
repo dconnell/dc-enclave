@@ -6,7 +6,7 @@ You bring the runtime — apple/container, Docker Desktop, OrbStack, Colima, or 
 
 > **\* Platform support:** I develop and manually test on macOS. Linux and WSL2 are covered by the integration suite in CI (Ubuntu 24.04 and Windows/WSL2 runners, against real Docker, Podman, and Colima backends). If you hit something on Linux or Windows that looks platform-specific, please open an issue.
 
-> **Multi-repo projects on `main`:** `main` now treats every project as a set of one or more repos (`REPO_NAMES` / `REPO_PATHS` in the project config). Configs written for the original single-repo schema (`REPOS_DIR`) are rejected on `main`. If you need the old single-repo behavior, use the [`legacy-single-repo`](https://github.com/dconnell/dc-enclave/tree/legacy-single-repo) branch — it preserves the previous model unchanged.
+> **Multi-repo projects on `main`:** every project is a set of one or more repos (`REPO_NAMES` / `REPO_PATHS` in the project config). Configs written for the original single-repo schema (`REPOS_DIR`) are rejected. For the old behavior, use the [`legacy-single-repo`](https://github.com/dconnell/dc-enclave/tree/legacy-single-repo) branch, which preserves the single-repo model unchanged.
 
 ## Why
 

@@ -51,7 +51,7 @@ bind mount. `--hide` values are `/workspace`-relative; in single-repo projects
 an unprefixed value is auto-prefixed with the repo name (multi-repo projects
 require repo-prefixed values). `/workspace/.cache` is reserved — it is the
 dce-managed persistent cache volume and is rejected as a `--hide` target
-(e.g. toolchain caches redirected there need no hiding).
+(toolchain caches redirected there need no hiding).
 
 | Scope | Toolchain (install method) | Package manager | Install command | `--hide` paths | Strict env | Safe-mode env |
 |---|---|---|---|---|---|---|

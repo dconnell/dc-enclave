@@ -46,8 +46,8 @@ dce_default_repos_root() {
 
 # Canonicalize the path half of a repo spec for the user-facing repo surfaces
 # (`new --repo`, `repo add`). A bare NAME (no slash, not "." or "..") resolves
-# against the default repos root: `--repo api` means the `api` checkout in the
-# repos warehouse regardless of the caller's cwd. Path-shaped values (./x,
+# against the default repos root: `--repo api` means the `api` checkout under
+# the repos root regardless of the caller's cwd. Path-shaped values (./x,
 # a/b, ~/x, /x) keep filesystem semantics: tilde-expanded, then absolute
 # as-is or relative to $PWD.
 dce_repo_path_resolve() {
