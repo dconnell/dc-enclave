@@ -181,6 +181,7 @@ mkdir -p "$DC_REPOS_DIR/api"
   || fail "repo path resolve: .. should stay PWD-relative (got $(dce_repo_path_resolve ".."))"
 [[ "$(dce_repo_path_resolve "/abs/x")" == "/abs/x" ]] \
   || fail "repo path resolve: absolute path must pass through unchanged (got $(dce_repo_path_resolve "/abs/x"))"
+# shellcheck disable=SC2088  # literal "~" is the input under test; the resolve call must expand it
 [[ "$(dce_repo_path_resolve "~/x")" == "$HOME/x" ]] \
   || fail "repo path resolve: ~ must expand to HOME (got $(dce_repo_path_resolve "~/x"))"
 

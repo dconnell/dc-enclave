@@ -92,7 +92,7 @@ _dce_complete_extract_array() {
     raw="${raw% }"
     [[ -n "$raw" ]] || return 0
 
-    local token="" out="" ch="" i=0 escaped=0
+    local token="" ch="" i=0 escaped=0
     for ((i = 0; i < ${#raw}; i++)); do
       ch="${raw:i:1}"
       if (( escaped )); then

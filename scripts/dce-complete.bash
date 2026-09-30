@@ -302,7 +302,7 @@ _dce_reply_repo_specs() {
       mapfile -t reply < <(compgen -d -- "$HOME${path_cur#\~}")
       local i
       for ((i=0; i<${#reply[@]}; i++)); do
-        reply[$i]="~${reply[$i]#"$HOME"}"
+        reply[i]="~${reply[i]#"$HOME"}"
       done
       ;;
     *)
@@ -313,7 +313,7 @@ _dce_reply_repo_specs() {
   if [[ -n "$prefix" ]]; then
     local i
     for ((i=0; i<${#reply[@]}; i++)); do
-      reply[$i]="${prefix}${reply[$i]}"
+      reply[i]="${prefix}${reply[i]}"
     done
   fi
   COMPREPLY=("${reply[@]}")
