@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
 # tests/contract/security-token-argv.sh - The git token must NOT appear in host
-# process argv during `dce shell` (one-shot or interactive), for EVERY provider.
+# process argv during `dce shell` (one-shot or interactive) or `dce install`,
+# for EVERY provider.
 #
 # Host process args are readable via `ps` and /proc/<pid>/cmdline while a shell
 # session is active, so the token must cross the host/container boundary through
@@ -15,7 +16,9 @@
 #   - the token file is created via mktemp, consumed, deleted, and cleaned up,
 #   - the provider's env-var NAME is exported from the seeded file (not inline),
 #   - PS1 propagation is unchanged,
-#   - placeholder / comment-only token files still behave as unset.
+#   - placeholder / comment-only token files still behave as unset,
+#   - `dce install` wires git credentials BEFORE running install.sh and exports
+#     the env var to install.sh via the same stdin-seeded temp-file pattern.
 #
 # End-to-end token availability inside a real container shell is covered by the
 # backend-dependent verification checklist, not here.
@@ -247,6 +250,91 @@ CFG
   pass "$provider rotate-token: token absent from host argv"
   grep -Fq "$real_token" "$capx" || fail "$provider rotate-token: token did not cross via stdin pipe"
   pass "$provider rotate-token: token force-pushed via stdin"
+
+  # --- dce install: creds wired BEFORE install.sh; token crosses via stdin ---
+  # Drives scripts/install-dotfiles.sh through the same stubbed backend. The
+  # fixture dotfiles dir holds a no-op install.sh; the assertions pin the
+  # token-handling CONTRACT of the install path (argv hygiene, credential
+  # ordering, wrapper shape) -- not the dotfile contents.
+  local dotfiles_dir="$WORK/dotfiles-$provider"
+  mkdir -p "$dotfiles_dir"
+  printf '#!/usr/bin/env sh\nexit 0\n' > "$dotfiles_dir/install.sh"
+  chmod +x "$dotfiles_dir/install.sh"
+
+  run_install() {
+    DC_STUB_LOG="$logx" \
+    DC_STUB_CAP="$capx" \
+    DC_STUB_PROJECT="$PROJECT" \
+    HOME="$fake_home" \
+    PATH="$STUB_DIR:$PATH" \
+    CONTAINER_BACKEND="docker" \
+    DEV_CONTAINERS_BACKEND="" \
+    "$ROOT_DIR/scripts/install-dotfiles.sh" "$PROJECT" "$dotfiles_dir"
+  }
+
+  # Real-token run: install must exit 0, the token must never touch argv, git
+  # credentials must be wired BEFORE the install.sh exec, and the install exec
+  # must export the env-var NAME from the stdin-seeded temp file.
+  printf '%s\n' "$real_token" > "$token_path"
+  : > "$logx"; : > "$capx"
+  if ! run_install < /dev/null; then
+    fail "$provider install: install-dotfiles.sh exited non-zero against the stub backend"
+  fi
+
+  grep -Fq "$real_token" "$logx" && fail "$provider install: token leaked into host argv"
+  pass "$provider install: token absent from host argv"
+
+  # Ordering: the first `git config --global` exec (dce_ensure_git_credentials)
+  # must precede the exec that RUNS install.sh (a `sh -c`/`zsh -c` wrapper whose
+  # argv mentions install.sh; the chmod exec mentions install.sh too but carries
+  # no `-c`). While install.sh runs there is no PAT yet otherwise, so a
+  # dotfiles install.sh doing git clone/pull fails auth.
+  local git_line="" install_line="" install_exec=""
+  git_line="$(awk '/git config --global/ { print NR; exit }' "$logx")"
+  install_line="$(awk '/install\.sh/ && /-c / { print NR; exit }' "$logx")"
+  [[ -n "$git_line" && -n "$install_line" ]] \
+    || fail "$provider install: expected both a git config exec and an install.sh exec in the backend log (git@$git_line install@$install_line)"
+  [[ "$git_line" -lt "$install_line" ]] \
+    || fail "$provider install: git credentials wired AFTER install.sh (log line $git_line vs $install_line); dce_ensure_git_credentials must run BEFORE the install exec"
+  pass "$provider install: git credentials wired before install.sh"
+
+  # Wrapper shape: the install exec must be an sh -c wrapper that exports the
+  # provider's env-var NAME reading the value from the seeded temp file via a
+  # positional cat (mirroring shell.sh's `_ "$file" "$ENV_VAR"` pattern) -- the
+  # token VALUE must never appear inline.
+  install_exec="$(awk '/install\.sh/ && /-c / { print; exit }' "$logx")"
+  grep -Fq "$env_var" <<< "$install_exec" \
+    || fail "$provider install: install.sh exec does not export $env_var (env-var NAME absent from exec argv)"
+  grep -Eq 'export[[:space:]]' <<< "$install_exec" \
+    || fail "$provider install: install.sh exec wrapper does not export the provider env var"
+  # shellcheck disable=SC2016  # literal $ in the grep pattern under test
+  grep -Eq 'cat "\$\{?[0-9]+\}?"' <<< "$install_exec" \
+    || fail "$provider install: install.sh exec must read the token from the seeded temp file via positional cat (cat \"\$N\"), not inline"
+  # The wrapper must delete the seeded token file in-consumption (rm of the
+  # positional token-file arg) BEFORE exec'ing install.sh, mirroring shell.sh's
+  # consumption pattern -- not just rely on the host-side EXIT-trap cleanup.
+  # shellcheck disable=SC2016  # literal $ in the grep pattern under test
+  grep -Fq 'rm -f "$1"' <<< "$install_exec" \
+    || fail "$provider install: install.sh exec wrapper does not delete the seeded token file before exec'ing install.sh (in-consumption rm of the positional token-file arg absent)"
+  grep -Fq "$real_token" <<< "$install_exec" && fail "$provider install: token value inline in install.sh exec argv"
+  pass "$provider install: install.sh exec exports $env_var from seeded file (never inline)"
+  pass "$provider install: install exec deletes the seeded token file in-consumption (rm -f positional arg)"
+
+  # The token still must cross the host/container boundary through a stdin pipe
+  # (the token-file seed), captured by the stub's stdin buffer.
+  grep -Fq "$real_token" "$capx" || fail "$provider install: token did not cross via stdin pipe"
+  pass "$provider install: token delivered via stdin"
+
+  # Placeholder token: no seeding at all, but the install itself must still run.
+  printf '%s\n' "$sentinel" > "$token_path"
+  : > "$logx"; : > "$capx"
+  if ! run_install < /dev/null; then
+    fail "$provider install placeholder: install must still succeed with an unfilled token file"
+  fi
+  grep -Fq "mktemp" "$logx" && fail "$provider install placeholder: token file should not be created"
+  grep -Fq "$env_var" "$logx" && fail "$provider install placeholder: $env_var must not appear in argv"
+  grep -Fq "$real_token" "$logx" && fail "$provider install placeholder: stale token leaked into argv"
+  pass "$provider install placeholder: treated as unset (no seeding), install still runs"
 }
 
 for provider in $(dce_git_host_known_providers); do

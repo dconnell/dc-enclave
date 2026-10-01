@@ -1153,9 +1153,10 @@ Usage: dce install <name> <path>
 
 Description:
   Applies personal config inside a container: copies a dotfiles directory
-  into the container, runs its install.sh as the dev user, then removes
-  the temporary copy. Afterwards git credentials are re-wired and the
-  hosts fragment reconciled.
+  into the container, wires git credentials (only-if-missing), runs its
+  install.sh as the dev user with the provider's token env var exported
+  when set (GITHUB_TOKEN / GITLAB_TOKEN), then removes the temporary copy
+  and reconciles the hosts fragment.
 
 Arguments:
   <name>   Project name. Must already exist and be running

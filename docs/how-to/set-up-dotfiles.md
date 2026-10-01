@@ -34,7 +34,7 @@ The Dev Containers extension clones or copies your dotfiles and runs the install
 dce install myapp ~/.dotfiles
 ```
 
-Copies the dotfiles directory into the running container and executes its `install.sh`. Safe to re-run — idempotent if your install script is. This works with all backends and is useful on apple/container, where VS Code Dev Containers attach is experimental and the dotfiles repo setting may not apply.
+Copies the dotfiles directory into the running container, wires git credentials, then executes its `install.sh` with the provider token env var (GITHUB_TOKEN/GITLAB_TOKEN) exported, so scripts that clone private repos or call `gh`/provider CLIs work on the first run. Safe to re-run — idempotent if your install script is. This works with all backends and is useful on apple/container, where VS Code Dev Containers attach is experimental and the dotfiles repo setting may not apply.
 
 ### What goes where
 
