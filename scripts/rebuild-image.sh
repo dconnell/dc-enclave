@@ -148,6 +148,16 @@ while IFS= read -r config_file; do
     BUILT_REPOS["$image_repo"]=1
   fi
 
+  # Refresh this project's per-project alias (dce-<project>:latest) on EVERY
+  # run, not only when this project rebuilt the canonical image: a rebuild by
+  # another project repoints the shared tag, which would leave this alias
+  # dangling against the old image ID. Non-aliasable project names silently
+  # skip. This script never rewrites project configs; the alias reaches a
+  # container's CONTAINER_IMAGE via `dce rebuild-container`.
+  if alias_ref="$(dce_project_alias_ref "$project_name")"; then
+    backend_tag_image "$image_ref" "$alias_ref"
+  fi
+
   # Record provenance per project (deduped). Shared images get an entry in each
   # project's log so `dce provenance <project>` is populated.
   dce_log_provenance "$project_name" "$image_ref" "rebuild" "$DC_TEAM_DIR" "$DC_USER_DIR" "$scope_csv" "$PROV_BASE_ID"

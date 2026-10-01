@@ -121,7 +121,9 @@ dce snapshot myapp before-rust-upgrade   # give it a meaningful label
 
 This stops the container, commits its filesystem to
 `dce-snap-myapp-before-rust-upgrade:latest`, and restarts it. (A clean commit
-requires a stopped container on every backend.) Labels use the charset
+requires a stopped container on every backend.) The snapshot family stays
+`dce-snap-*` — distinct from the per-project `dce-<project>` image aliases.
+Labels use the charset
 `[A-Za-z0-9_.-]` and cannot be reused — re-running the same label refuses to
 overwrite (reclaim it first with `dce snapshot rm`).
 

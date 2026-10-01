@@ -218,6 +218,9 @@ if $BACKEND_OK; then
   # reclaimed, all three go together so no dangling manifest references a swept
   # image/volume.
   if ! $KEEP_VOLUMES; then
+    # The dce-snap-*/dce-snapvol-* prefixes can never match a per-project
+    # dce-<project> image alias ("snap-"/"snapvol-" are reserved alias
+    # prefixes), so this sweep cannot reclaim a live alias.
     proj_slug="$(dce_project_slug "$PROJECT")"
     snapvol_prefix="dce-snapvol-$proj_slug-"
     snapimg_prefix="dce-snap-$proj_slug-"

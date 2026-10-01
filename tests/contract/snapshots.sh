@@ -519,6 +519,12 @@ ci_after="$(dce_config_extract_scalar "$CONFIG" CONTAINER_IMAGE)" || ci_after=""
   || fail "rebuild --from-snap: must NOT rewrite CONTAINER_IMAGE (before=[$ci_before] after=[$ci_after])"
 # Restore summary notes the stale-read signal.
 grep -Fqi 'stale' "$WORK/rbfs.stdout" || fail "rebuild --from-snap: should note the stale-detection signal"
+# A from-snap restore never retags anything: the restore path uses the
+# snapshot image directly and skips the scope-derivation/alias branch entirely.
+if grep -qE 'CALL docker tag ' "$LOG"; then
+  fail "rebuild --from-snap: must not issue a tag call
+$(grep 'tag' "$LOG")"
+fi
 pass "rebuild-container --from-snap: bypasses scope derivation, no CONTAINER_IMAGE rewrite, recreates from snapshot"
 
 # --from-snap fail-fast when the snapshot label is absent.

@@ -13,7 +13,8 @@ Short definitions for the terms used across these docs. Follow the links for ful
 - **Base image** (`dce-base:latest`) — the minimal shared image all projects start from. Built by `scripts/setup.sh`. Read more: [overlays](overlays.md#base-image-tools).
 - **Overlay** — a Dockerfile fragment (`Containerfile.<scope>`) layered on top of `dce-base` to add a toolchain or capability. Lives in team or user overlay dirs. Read more: [overlay model](../explanation/overlay-model.md).
 - **Scope** — a label that selects one or more overlays to compose into a derived image (e.g. `nodejs`, `golang`, `nodejs,golang`). The special `all` scope is auto-layered when present.
-- **Derived image** (`dce-img-<hash>:latest`) — the composed image built from `dce-base` plus the project's effective overlay scopes. Identified by a deterministic content hash of the layered files.
+- **Derived image** (`dce-img-<hash>:latest`) — the composed image built from `dce-base` plus the project's effective overlay scopes. Identified by a deterministic hash of the effective scope LIST (scope names, order-sensitive); overlay file contents are recorded by provenance, not reflected in the name.
+- **Project image alias** (`dce-<project>:latest`) — a per-project tag on the shared derived image, used as the project's `CONTAINER_IMAGE` so tooling (docker, VS Code, `dce status`) displays a friendly name. Created/refreshed by `dce new`/`rebuild-image`/`rebuild-container`. Aliasable names follow docker repository name grammar (lowercase alnum runs separated by single `.`/`_`, double `__`, or dashes) and exclude the reserved names `base`, `img-*`, `snap-*`, `snapvol-*`; non-aliasable names keep the canonical hash ref everywhere. Aliases of deleted projects are reclaimed by `dce clean`.
 
 ## Configuration and roots
 

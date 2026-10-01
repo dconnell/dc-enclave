@@ -591,6 +591,18 @@ if [[ "$IMAGE" != "dce-base:latest" ]]; then
   # Record this image's provenance in the project log (deduped). A reused image
   # still gets an entry so `dce provenance <project>` is populated.
   dce_log_provenance "$PROJECT" "$IMAGE" "new" "$DC_TEAM_DIR" "$DC_USER_DIR" "$SCOPE_CSV" "$PROV_BASE_ID"
+
+  # Adopt the per-project alias (dce-<project>:latest): tag the canonical image
+  # post-build and switch the working ref so the create banner, the persisted
+  # CONTAINER_IMAGE, and the created container all show the friendly name.
+  # Provenance above deliberately recorded the canonical dce-img-<hash> ref --
+  # it describes the built image, not this project's view of it. Names that
+  # cannot carry an alias silently keep the canonical ref everywhere, exactly
+  # as before (see dce_project_alias_ref).
+  if alias_ref="$(dce_project_alias_ref "$PROJECT")"; then
+    backend_tag_image "$IMAGE" "$alias_ref"
+    IMAGE="$alias_ref"
+  fi
 fi
 
 # Detect the host timezone once so the container mirrors the developer's local

@@ -177,8 +177,23 @@ else
 Run: dce rebuild-image all"
   fi
 
-  if [[ "${CONTAINER_IMAGE:-}" != "$DERIVED_IMAGE" ]]; then
-    CONTAINER_IMAGE="$DERIVED_IMAGE"
+  # When the project name can carry a per-project alias (dce-<project>:latest),
+  # retag the canonical image and adopt the alias as the desired CONTAINER_IMAGE
+  # so VS Code / `docker images` / `dce status` show the friendly name. A config
+  # still holding the legacy canonical ref (or any stale ref) is rewritten below.
+  # dce-base-only (no-scope) projects are excluded, mirroring `dce new`: the
+  # alias must never be cut from the SHARED base image, and new/rebuild create
+  # argv stay in parity for the no-scope path.
+  desired_image="$DERIVED_IMAGE"
+  if [[ "$DERIVED_IMAGE" != "dce-base:latest" ]]; then
+    if alias="$(dce_project_alias_ref "$PROJECT")"; then
+      backend_tag_image "$DERIVED_IMAGE" "$alias"
+      desired_image="$alias"
+    fi
+  fi
+
+  if [[ "${CONTAINER_IMAGE:-}" != "$desired_image" ]]; then
+    CONTAINER_IMAGE="$desired_image"
     dce_set_config_key "$CONFIG" "CONTAINER_IMAGE" "$CONTAINER_IMAGE"
   fi
 fi

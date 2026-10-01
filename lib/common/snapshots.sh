@@ -5,8 +5,9 @@
 # Sourced (never executed directly) via lib/common.sh. Pure naming/path helpers
 # for the snapshot subsystem. Snapshot image repos (dce-snap-<slug>-<label>) and
 # snapshot volumes (dce-snapvol-<slug>-<label>-<12hex>) are visually grouped with
-# their project and kept distinct from dce-base / dce-img-* / dce-hide-* so the
-# default image and hidden-volume sweeps ignore them. The volumes manifest is
+# their project and kept distinct from dce-base / dce-img-* / per-project
+# dce-<project> aliases / dce-hide-* so the default image and hidden-volume
+# sweeps ignore them. The volumes manifest is
 # the COMPLETE mapping a restore trusts exclusively. Depends on core.sh
 # (dce_project_slug, dce_sha256_hex).
 # =============================================================================
@@ -28,7 +29,9 @@ dce_validate_snapshot_label() {
 # Build the snapshot image reference: dce-snap-<project-slug>-<label>:latest.
 # Mirrors dce-hide-<slug>-<hash> hidden-volume naming so snapshot repos are
 # visually grouped with their project and excluded from the default image sweep
-# (is_managed_repo only matches dce-base / dce-img-<16hex>).
+# (is_managed_repo checks the canonical families dce-base / dce-img-<16hex>
+# first, then dce-<project> aliases; dce-snap-* matches neither because
+# "snap-" is a reserved alias prefix).
 dce_snapshot_ref() {
   local project="$1"
   local label="$2"

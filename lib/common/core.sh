@@ -211,3 +211,76 @@ dce_project_slug() {
 
   printf '%s\n' "$project_slug"
 }
+
+# ---------------------------------------------------------------------------
+# Per-project image-alias naming (dce-<project>:latest)
+#
+# Canonical derived images stay dce-img-<16hex>:latest (scope-set-addressed,
+# shared across projects); each project may additionally carry a
+# dce-<project>:latest tag on that same image. The two families below are the
+# single source of truth for what may live in that alias namespace.
+# ---------------------------------------------------------------------------
+
+# Validate a per-project alias image REPOSITORY name (no tag): return 0 iff
+# <repo> is exactly "dce-<X>" where <X> matches docker's distribution/reference
+# name-component rule ^[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*$ -- lowercase alnum
+# runs separated by a single '.' or '_', exactly-double '__', or one-or-more
+# '-' (so trailing separators and doubled/mixed '.'/'_' are rejected) -- and is
+# not "base" and does not start with "img-", "snap-", or "snapvol-". This is
+# the single regex/reservation table for the alias namespace;
+# dce_project_alias_ref is a thin wrapper over it (no duplicated grammar).
+#
+# WHY docker's exact grammar (not merely lowercase + allowed chars): the alias
+# is applied with a real `docker tag`/`container image tag` call, and a name
+# docker rejects would make backend_tag_image fail -- under set -e aborting
+# `dce new` after the build but BEFORE the config write. Names failing this
+# grammar silently keep the canonical ref (same degradation as uppercase
+# names). The ERE relies on backtracking (e.g. "a__b" tries the single-'_'
+# separator, fails, then retries with '__'); bash's [[ =~ ]] does backtrack
+# here, pinned by tests/unit/image-alias.sh (dce-a__b must pass).
+#
+# WHY lowercase is mandatory: docker repos are lowercase-only, and a lossy slug
+# transform could map two distinct projects onto ONE tag -- project A's alias
+# pointing at project B's image. Reject rather than mangle.
+#
+# The alias family is disjoint from the canonical derived-image family BY
+# CONSTRUCTION: "img-" is a reserved alias prefix, so dce-img-<16hex> can
+# never match here -- no separate canonical-family check is needed (or
+# permitted).
+#
+# WHY the reservations exist (each collides with a real dce-managed family):
+#   - "base"    -> the shared dce-base image (would be retagged over).
+#   - "img-*"   -> the canonical dce-img-<16hex> derived-image family.
+#   - "snap-*"  -> snapshot image repos (dce-snap-<slug>-<label>), which
+#                  `dce rm` / `dce clean --snapshots` sweep by prefix.
+#   - "snapvol-*" -> snapshot volume names (dce-snapvol-<slug>-<label>-<12hex>),
+#                  also swept by prefix.
+dce_is_alias_repo_name() {
+  local repo="$1"
+
+  [[ "$repo" =~ ^dce-[a-z0-9]+(([._]|__|-+)[a-z0-9]+)*$ ]] || return 1
+
+  local name="${repo#dce-}"
+  case "$name" in
+    base|img-*|snap-*|snapvol-*)
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+# Echo the per-project alias image reference for <project>:
+# "dce-<project>:latest". Returns 0 ONLY IF dce-<project> passes
+# dce_is_alias_repo_name (docker repo-name grammar, reserved names excluded);
+# any other input returns 1 SILENTLY -- callers decide whether/how to notify.
+# See dce_is_alias_repo_name for the grammar, the reservation table, and why
+# non-aliasable names keep the canonical ref.
+dce_project_alias_ref() {
+  local project="$1"
+
+  if ! dce_is_alias_repo_name "dce-$project"; then
+    return 1
+  fi
+
+  printf 'dce-%s:latest\n' "$project"
+}

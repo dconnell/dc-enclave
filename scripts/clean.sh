@@ -4,13 +4,17 @@
 #
 # Two modes:
 #   default             Remove old/orphan managed *image* tags. Expected repos
-#                       (dce-base + currently-configured dce-img-*) keep
-#                       :latest and shed other tags; orphan repos lose all tags.
+#                       (dce-base + currently-configured dce-img-* + per-project
+#                       dce-<project> aliases) keep :latest and shed other
+#                       tags; orphan repos lose all tags.
 #   --hidden-volumes    Remove orphan managed *hidden volumes* (dce-hide-* no
 #                       longer referenced by an active project config). An
 #                       optional project name scopes it to one project.
 #
-# Unrelated images/volumes are never touched. --dry-run previews only.
+# dce claims the dce- image namespace for its own families (dce-base,
+# dce-img-*, dce-snap-*, dce-snapvol-*, dce-<project> aliases); an unrecognized
+# repo in that namespace is treated as an orphan and reclaimed. Images/volumes
+# outside the dce- namespace are never touched. --dry-run previews only.
 # =============================================================================
 set -euo pipefail
 shopt -s nullglob
@@ -219,9 +223,10 @@ fi
 
 # --- Snapshot cleanup mode ----------------------------------------------------
 # Reclaim dce-snap-* images (one-off container-FS snapshots). The default sweep
-# above already ignores them (is_managed_repo only matches dce-base /
-# dce-img-<16hex>), so snapshots are NEVER reclaimed without this flag. An
-# optional project name scopes to dce-snap-<slug>-*. --dry-run previews only.
+# above already ignores them (is_managed_repo matches only dce-base /
+# dce-img-<16hex> / dce-<project> aliases), so snapshots are NEVER reclaimed
+# without this flag. An optional project name scopes to dce-snap-<slug>-*.
+# --dry-run previews only.
 if $CLEAN_SNAPSHOTS; then
   snap_prefix="dce-snap-"
   if [[ -n "$TARGET_PROJECT" ]]; then
@@ -318,11 +323,15 @@ if $CLEAN_SNAPSHOTS; then
   exit 0
 fi
 
-# A repo is "managed" by DC Enclave if it's dce-base or a dce-img-<16hex>.
-# Only these are ever candidates for cleanup; everything else is left alone.
+# A repo is "managed" by DC Enclave if it's dce-base, a dce-img-<16hex>, or a
+# per-project alias dce-<project> (dce-<project>:latest). Only these are ever
+# candidates for cleanup; everything else is left alone. The canonical and
+# alias families are disjoint BY CONSTRUCTION: "img-" is a reserved alias
+# prefix, so dce-img-<16hex> can never match the alias grammar.
 is_managed_repo() {
   local repo="$1"
-  [[ "$repo" == "dce-base" || "$repo" =~ ^dce-img-[0-9a-f]{16}$ ]]
+  [[ "$repo" == "dce-base" || "$repo" =~ ^dce-img-[0-9a-f]{16}$ ]] && return 0
+  dce_is_alias_repo_name "$repo"
 }
 
 # --- Image-tag cleanup mode --------------------------------------------------
@@ -347,6 +356,22 @@ while IFS= read -r config_file; do
     continue
   fi
   EXPECTED_REPOS["${image_ref%%:*}"]=1
+
+  # A live project's per-project alias (dce-<project>:latest) is expected too:
+  # it is another tag on the same canonical image, so `dce clean` must never
+  # reclaim it. Non-aliasable names contribute no alias. No-scope
+  # (dce-base:latest) projects must NOT contribute one either: no tagging path
+  # creates an alias for them (new-container/rebuild-container guard on
+  # image_ref != dce-base:latest; rebuild-image skips base-only projects --
+  # the alias must never be cut from the SHARED base image). Expecting an
+  # alias anyway would keep a stale one "expected" forever after a project
+  # drops its scopes, pinning the retired image's bytes.
+  if [[ "$image_ref" != "dce-base:latest" ]]; then
+    clean_project="$(basename "$(dirname "$config_file")")"
+    if clean_alias="$(dce_project_alias_ref "$clean_project")"; then
+      EXPECTED_REPOS["${clean_alias%%:*}"]=1
+    fi
+  fi
 done < <(dce_project_config_paths)
 
 declare -A MANAGED_REPOS=()

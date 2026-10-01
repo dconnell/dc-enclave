@@ -33,7 +33,8 @@
 # which always isolates hidden volumes (populated where captured, empty
 # otherwise) without rewriting CONTAINER_IMAGE. Reclamation is
 # manual via `dce clean --snapshots [<project>]`; the default `dce clean` sweep
-# already ignores dce-snap-* repos.
+# already ignores dce-snap-* repos (which can never collide with per-project
+# dce-<project> image aliases, "snap-" being a reserved alias prefix).
 # =============================================================================
 set -euo pipefail
 

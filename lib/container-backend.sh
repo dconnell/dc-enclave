@@ -917,8 +917,9 @@ backend_list_images() {
     docker|orbstack|colima|podman)
       # podman lists unqualified builds as "localhost/<repo>"; strip the prefix
       # so consumers (clean/snapshot/rm/provenance) that match on short repo
-      # names like "dce-base" / "dce-img-<hash>" / "dce-snap-<...>" see the same
-      # short repo as docker/orbstack/colima. sed is not an early-exit reader, so
+      # names like "dce-base", "dce-img-<hash>", "dce-<project>", or
+      # "dce-snap-<...>" see the same short repo as docker/orbstack/colima.
+      # sed is not an early-exit reader, so
       # it cannot SIGPIPE the producer under pipefail.
       "$(backend_cli)" image ls --format '{{.Repository}}\t{{.Tag}}\t{{.ID}}' \
         | sed -E 's|^localhost/||'
@@ -936,6 +937,28 @@ backend_remove_image() {
       ;;
     docker|orbstack|colima|podman)
       "$(backend_cli)" image rm "$image_ref" >/dev/null
+      ;;
+  esac
+}
+
+# Apply an additional tag <dst_ref> to an existing image <src_ref>.
+#
+# Tags are applied POST-build only, never as extra build-time `--tag` flags:
+# apple/container's peer-fallback build path (docker/podman build -> save ->
+# `container image load`) silently drops extra build-time tags, so additional
+# names (e.g. per-project dce-<project>:latest aliases) must be attached after
+# the canonical image already exists in the backend's store. The backend CLI's
+# exit code propagates; callers surface failures.
+backend_tag_image() {
+  local src_ref="$1"
+  local dst_ref="$2"
+
+  case "$(backend_name)" in
+    apple)
+      container image tag "$src_ref" "$dst_ref"
+      ;;
+    docker|orbstack|colima|podman)
+      "$(backend_cli)" tag "$src_ref" "$dst_ref"
       ;;
   esac
 }
