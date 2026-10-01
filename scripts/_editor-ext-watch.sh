@@ -93,7 +93,7 @@ watch_main() {
 
   # Project config supplies CONTAINER_BACKEND + CONTAINER_OVERLAY_SCOPES; a
   # missing config means there is nothing declared for this project to converge.
-  CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+  CONFIG="$(dce_project_config_path "$PROJECT")"
   if [[ ! -f "$CONFIG" ]]; then
     wlog "no config for '$PROJECT'; nothing to watch"
     return 0

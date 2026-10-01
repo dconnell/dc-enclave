@@ -47,20 +47,24 @@ Supported auto-layer filenames in team/user namespaces:
 Each language overlay installs a toolchain, its de-facto package manager, and a
 dependency-install hook that mirrors `Containerfile.nodejs`. Pair the overlay
 with the listed `--hide` paths so generated/native artifacts stay off the host
-bind mount.
+bind mount. `--hide` values are `/workspace`-relative; in single-repo projects
+an unprefixed value is auto-prefixed with the repo name (multi-repo projects
+require repo-prefixed values). `/workspace/.cache` is reserved — it is the
+dce-managed persistent cache volume and is rejected as a `--hide` target
+(toolchain caches redirected there need no hiding).
 
 | Scope | Toolchain (install method) | Package manager | Install command | `--hide` paths | Strict env | Safe-mode env |
 |---|---|---|---|---|---|---|
 | `nodejs` | apt (Ubuntu archive) | npm | `npm ci` / `npm install` | `node_modules` | `DC_NODE_INSTALL_STRICT=1` | `DC_NODE_IGNORE_SCRIPTS=1` |
-| `golang` | tarball + SHA256 verify | Go modules | `go mod download` | `.cache/go/mod,.cache/go/build` | `DC_GO_INSTALL_STRICT=1` | n/a (fetch runs no code) |
+| `golang` | tarball + SHA256 verify | Go modules | `go mod download` | none (`GOMODCACHE`/`GOCACHE` live in the managed `.cache` volume) | `DC_GO_INSTALL_STRICT=1` | n/a (fetch runs no code) |
 | `rust` | rustup-init + SHA256 verify | cargo | `cargo fetch` / `--locked` | `target` | `DC_RUST_INSTALL_STRICT=1` | n/a (fetch runs no code) |
-| `dotnet` | apt (Ubuntu `main`) | NuGet (`dotnet`) | `dotnet restore` / `--locked-mode` | `.nuget` | `DC_DOTNET_INSTALL_STRICT=1` | n/a (restore runs no code) |
-| `python` | apt + uv tarball (SHA256 verify) | uv | `uv sync` / `--frozen` | `.venv,.cache/uv` | `DC_PYTHON_INSTALL_STRICT=1` | `DC_PYTHON_IGNORE_SCRIPTS=1` |
+| `dotnet` | apt (Ubuntu `main`) | NuGet (`dotnet`) | `dotnet restore` / `--locked-mode` | none (`NUGET_PACKAGES` lives in the managed `.cache` volume) | `DC_DOTNET_INSTALL_STRICT=1` | n/a (restore runs no code) |
+| `python` | apt + uv tarball (SHA256 verify) | uv | `uv sync` / `--frozen` | `.venv` | `DC_PYTHON_INSTALL_STRICT=1` | `DC_PYTHON_IGNORE_SCRIPTS=1` |
 
 Example:
 
 ```
-dce new myapp python --hide .venv,.cache/uv 8000:8000
+dce new myapp python --hide .venv 8000:8000
 dce new svc rust --hide target 8080:8080
 ```
 
@@ -156,7 +160,7 @@ dce new myapp nodejs --hide node_modules 3000:3000
 DC_NODE_IGNORE_SCRIPTS=1 dce start myapp
 
 # python: uv sync runs with --no-build (wheel-only)
-dce new myapp python --hide .venv,.cache/uv 8000:8000
+dce new myapp python --hide .venv 8000:8000
 DC_PYTHON_IGNORE_SCRIPTS=1 dce start myapp
 ```
 

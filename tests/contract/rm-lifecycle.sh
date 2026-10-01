@@ -27,7 +27,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 mkdir -p "$DC_ROOT"
 
 STUB_DIR="$WORK/bin"
@@ -87,7 +87,7 @@ export PATH="$STUB_DIR:$ORIG_PATH"
 
 PROJECT="rmproj"
 REPOS_DIR="$WORK/home/repos/$PROJECT"
-SECRET_DIR="$DC_ROOT/$PROJECT"
+SECRET_DIR="$DC_ROOT/projects/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 # Write a valid project config (strict loader format) + secrets, and plant the
@@ -100,18 +100,20 @@ setup_project() {
 
   {
     printf 'CONTAINER_PROJECT="%s"\n' "$PROJECT"
+    printf 'CONFIG_SCHEMA_VERSION="2"\n'
     printf 'CONTAINER_OVERLAY_SCOPES=""\n'
     printf 'CONTAINER_IMAGE="dce-base:latest"\n'
     printf 'CONTAINER_BACKEND="docker"\n'
     printf 'CONTAINER_CPUS=""\n'
     printf 'CONTAINER_MEMORY=""\n'
-    printf 'REPOS_DIR="%s"\n' "$REPOS_DIR"
     printf 'SECRET_DIR="%s"\n' "$SECRET_DIR"
     printf 'SSH_KEY_PATH="%s/ssh_key"\n' "$SECRET_DIR"
     printf 'TOKEN_FILE="%s/github-token"\n' "$SECRET_DIR"
     printf 'NPMRC_PATH="%s/.npmrc"\n' "$SECRET_DIR"
+    printf 'REPO_NAMES=(%s)\n' "$PROJECT"
+    printf 'REPO_PATHS=(%s)\n' "$REPOS_DIR"
     printf 'PORTS=()\n'
-    printf 'CONTAINER_HIDDEN_PATHS=(node_modules)\n'
+    printf 'CONTAINER_HIDDEN_PATHS=(%s/node_modules)\n' "$PROJECT"
   } > "$CONFIG"
   chmod 600 "$CONFIG"
 
@@ -138,7 +140,8 @@ run_rm() {
   bash "$ROOT_DIR/scripts/rm.sh" "$@"
 }
 
-hidden_vol="$(dce_hidden_volume_name "$PROJECT" "node_modules")"
+hidden_vol="$(dce_hidden_volume_name "$PROJECT" "$PROJECT/node_modules")"
+cache_vol="$(dce_cache_volume_name "$PROJECT")"
 
 destructive_logged() {
   grep -E "stop $PROJECT|rm -f $PROJECT|volume rm" "$LOG"
@@ -163,10 +166,14 @@ $(grep '^CALL' "$LOG")"
 grep -Fq "CALL docker volume rm $hidden_vol" "$LOG" \
   || fail "dce rm: missing hidden volume removal [$hidden_vol]
 $(grep '^CALL' "$LOG")"
+# The managed /workspace/.cache volume is dce-owned state: `dce rm` removes it.
+grep -Fq "CALL docker volume rm $cache_vol" "$LOG" \
+  || fail "dce rm: missing managed cache volume removal [$cache_vol]
+$(grep '^CALL' "$LOG")"
 [[ ! -d "$SECRET_DIR" ]] || fail "dce rm: config+secrets dir should be removed"
 [[ -d "$REPOS_DIR" ]] || fail "dce rm: REPOS_DIR must be preserved"
 [[ -f "$REPOS_DIR/source.txt" ]] || fail "dce rm: host code file must survive"
-pass "dce rm (default): stop<delete<volume-rm, config removed, code preserved"
+pass "dce rm (default): stop<delete<volume-rm (hidden + .cache), config removed, code preserved"
 
 # ===========================================================================
 # B. confirmation gate: a non-'yes' answer aborts with exit 0 and removes

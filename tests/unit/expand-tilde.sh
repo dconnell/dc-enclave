@@ -6,9 +6,9 @@
 # results the previously duplicated inline copies did:
 #   - "~" and "~/..." -> $HOME / $HOME/...
 #   - absolute paths -> untouched
-#   - relative path + base="config" -> $HOME/.config/dce-enclave/<path>
+#   - relative path + base="config" -> $HOME/.config/dc-enclave/<path>
 #   - relative path + base empty (or omitted) -> untouched
-#   - empty value -> empty (never becomes .../dce-enclave/)
+#   - empty value -> empty (never becomes .../dc-enclave/)
 #
 # Pure string handling, no I/O. Sourced from core.sh so the same helper is
 # reachable by every runtime script that sources lib/common.sh.
@@ -51,11 +51,11 @@ pass "tilde: ~ and ~/... expand to \$HOME under every base"
 pass "absolute: untouched under every base"
 
 # --- relative path + config base -> config dir -------------------------------
-[[ "$(dce_expand_tilde 'myroot' config)" == "$HOME/.config/dce-enclave/myroot" ]] \
+[[ "$(dce_expand_tilde 'myroot' config)" == "$HOME/.config/dc-enclave/myroot" ]] \
   || fail "config-relative: 'myroot' + config must resolve under the config dir"
-[[ "$(dce_expand_tilde 'team/sub' config)" == "$HOME/.config/dce-enclave/team/sub" ]] \
+[[ "$(dce_expand_tilde 'team/sub' config)" == "$HOME/.config/dc-enclave/team/sub" ]] \
   || fail "config-relative: nested relative must resolve under the config dir"
-pass "config-relative: resolves against ~/.config/dce-enclave"
+pass "config-relative: resolves against ~/.config/dc-enclave"
 
 # --- relative path + empty/omitted base -> untouched -------------------------
 [[ "$(dce_expand_tilde 'myroot')" == "myroot" ]] \
@@ -67,11 +67,11 @@ pass "config-relative: resolves against ~/.config/dce-enclave"
   || fail "unknown base: relative must be left untouched for any non-config base"
 pass "empty/unknown base: relative paths untouched"
 
-# --- empty value -> empty (never .../dce-enclave/) ---------------------------
+# --- empty value -> empty (never .../dc-enclave/) ---------------------------
 [[ -z "$(dce_expand_tilde '')" ]] \
   || fail "empty: '' must stay empty (default base)"
 [[ -z "$(dce_expand_tilde '' config)" ]] \
-  || fail "empty: '' + config must stay empty, not become .../dce-enclave/"
+  || fail "empty: '' + config must stay empty, not become .../dc-enclave/"
 pass "empty: preserved under every base"
 
 echo ""

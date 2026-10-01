@@ -12,7 +12,7 @@ case_id	backend_scope	command	args	expected_exit	assertions
 #             prefix with ! to assert absence. Empty = exit-code-only.
 #
 # Fixture-heavy / interactive / prompt-gated flows (snapshot restore, --rotate-
-# keys, --config recipe, --repo-path, --network/--ip, network subcommands,
+# keys, --config recipe, --repo, --network/--ip, network subcommands,
 # `logs --follow`, rebuild-image, install) live in cases/*.sh (the coverage
 # guard scans BOTH this file and cases/*.sh). --save-team / --save-user are
 # deferred to phase 2 (DCE_CONFIG_ROOT isolation); see cases/flag-coverage.sh.
@@ -33,9 +33,9 @@ new-git-host-gitlab	all	new	$PROJECT --git-host gitlab	0
 logs-tail	all	logs	$PROJECT --tail 5	0	
 logs-tail-eq	all	logs	$PROJECT --tail=5	0	
 
-# --- dce exec (--root MUST precede the project name: dce exec [--root] <name> <cmd>) ---
+# --- dce exec (<project> first: dce exec <name> [--root] <cmd>) ---
 exec-default	all	exec	$PROJECT id	0	
-exec-root	all	exec	--root $PROJECT id	0	uid=0
+exec-root	all	exec	$PROJECT --root id	0	uid=0
 
 # --- dce rm (independent + combined keep flags) ---
 rm-yes	all	rm	$PROJECT --yes	0	

@@ -73,7 +73,7 @@ if [[ -n "$TAIL" ]] && [[ ! "$TAIL" =~ ^[0-9]+$ ]]; then
   dce_die "--tail requires a non-negative integer (got: $TAIL)"
 fi
 
-CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG="$(dce_project_config_path "$PROJECT")"
 if [[ ! -f "$CONFIG" ]]; then
   dce_die "No config for '$PROJECT'. Run: dce new $PROJECT"
 fi

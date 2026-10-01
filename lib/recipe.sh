@@ -12,14 +12,14 @@
 # files; it performs pure key=value parsing, rejects malformed/unknown keys, and
 # validates every value with the same validators/normalizers used by CLI flags.
 #
-# `repo-path` policy: unlike other keys, `repo-path` is NOT applied verbatim.
-# An auto-loaded recipe cannot silently widen the host bind mount — when a
-# recipe-sourced `repo-path` resolves OUTSIDE the default repos dir, the merge
-# consumer (scripts/new-container.sh) gates it behind an operator confirmation
-# (--yes/-y honors it with a visible notice), and hard-rejects values that
-# resolve to a sensitive root (/, $HOME, the repos root, or a parent of it) or
-# that contain non-path-safe characters. CLI `--repo-path` is the documented
-# power-user escape hatch and skips the confirmation gate.
+# `repo` policy: repo entries are gated, not applied verbatim. When a repo path
+# resolves OUTSIDE the default repos dir -- recipe-sourced or CLI --repo alike
+# -- the merge consumer (scripts/new-container.sh) gates it behind an operator
+# confirmation (--yes/-y honors it with a visible notice). Recipe-sourced
+# values additionally hard-reject sensitive roots (/, $HOME, the repos root, or
+# a parent of it) and non-path-safe characters. Removed legacy inputs
+# (`repo-path` / `--repo-path`) fail with replacement guidance and a pointer to
+# the legacy-single-repo branch.
 #
 # Merge model (plans/container-recipe.md):
 #   1) Recipe-internal merge: user overrides team per key; list keys replace.
@@ -49,12 +49,12 @@ declare -g _DC_RECIPE_MERGED_CONTAINER_CPUS=""
 declare -g _DC_RECIPE_MERGED_CONTAINER_MEMORY=""
 declare -g _DC_RECIPE_MERGED_NETWORK_INPUT=""
 declare -g _DC_RECIPE_MERGED_NETWORK_IP=""
-declare -g _DC_RECIPE_MERGED_REPO_PATH_OVERRIDE=""
+declare -ga _DC_RECIPE_MERGED_REPO_SPECS=()
 declare -ga _DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS=()
 declare -ga _DC_RECIPE_MERGED_PORTS=()
 
-declare -gra _DC_RECIPE_SCALAR_KEYS=(scopes cpus memory ip repo-path)
-declare -gra _DC_RECIPE_LIST_KEYS=(hide network port)
+declare -gra _DC_RECIPE_SCALAR_KEYS=(scopes cpus memory ip)
+declare -gra _DC_RECIPE_LIST_KEYS=(hide network port repo)
 
 # Write a recipe file atomically from already-normalized key=value lines.
 # Existing content is replaced; an empty line list writes an empty file.
@@ -108,7 +108,7 @@ _dce_recipe_reset_state() {
   _DC_RECIPE_MERGED_CONTAINER_MEMORY=""
   _DC_RECIPE_MERGED_NETWORK_INPUT=""
   _DC_RECIPE_MERGED_NETWORK_IP=""
-  _DC_RECIPE_MERGED_REPO_PATH_OVERRIDE=""
+  declare -ga _DC_RECIPE_MERGED_REPO_SPECS=()
   declare -ga _DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS=()
   declare -ga _DC_RECIPE_MERGED_PORTS=()
 }
@@ -243,12 +243,13 @@ dce_recipe_parse_file() {
         _DC_RECIPE_HAS["$side:$key"]=1
         _DC_RECIPE_SCALAR["$side:$key"]="$value"
         ;;
-      repo-path)
-        # Stored verbatim here; the consumer (new-container.sh) gates recipe-
-        # sourced values so an untrusted recipe cannot silently widen the host
-        # bind mount. See the security-posture note at the top of this file.
+      repo)
         _DC_RECIPE_HAS["$side:$key"]=1
-        _DC_RECIPE_SCALAR["$side:$key"]="$value"
+        _dce_recipe_append_list "$side" "$key" "$value"
+        ;;
+      repo-path)
+        _dce_recipe_parse_error "$file" "$lineno" "key 'repo-path' was removed; use repeatable repo=<path> or repo=<name>=<path>, or check out the legacy-single-repo branch for the old single-repo model"
+        return 1
         ;;
       port)
         if ! _dce_recipe_validate_port_value "$value"; then
@@ -311,7 +312,7 @@ _dce_recipe_materialize_merged_inputs() {
   _DC_RECIPE_MERGED_CONTAINER_CPUS="${_DC_RECIPE_MERGED_SCALAR[cpus]-}"
   _DC_RECIPE_MERGED_CONTAINER_MEMORY="${_DC_RECIPE_MERGED_SCALAR[memory]-}"
   _DC_RECIPE_MERGED_NETWORK_IP="${_DC_RECIPE_MERGED_SCALAR[ip]-}"
-  _DC_RECIPE_MERGED_REPO_PATH_OVERRIDE="${_DC_RECIPE_MERGED_SCALAR[repo-path]-}"
+  declare -ga _DC_RECIPE_MERGED_REPO_SPECS=()
 
   declare -ga _DC_RECIPE_MERGED_HIDDEN_PATH_INPUTS=()
   if [[ -n "${_DC_RECIPE_MERGED_HAS[hide]-}" ]]; then
@@ -358,6 +359,16 @@ _dce_recipe_materialize_merged_inputs() {
       while IFS= read -r item; do
         [[ -n "$item" ]] || continue
         _DC_RECIPE_MERGED_PORTS+=("$item")
+      done <<< "$list_blob"
+    fi
+  fi
+
+  if [[ -n "${_DC_RECIPE_MERGED_HAS[repo]-}" ]]; then
+    list_blob="${_DC_RECIPE_MERGED_LIST[repo]-}"
+    if [[ -n "$list_blob" ]]; then
+      while IFS= read -r item; do
+        [[ -n "$item" ]] || continue
+        _DC_RECIPE_MERGED_REPO_SPECS+=("$item")
       done <<< "$list_blob"
     fi
   fi

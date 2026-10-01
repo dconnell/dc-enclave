@@ -29,13 +29,28 @@ source "$ROOT_DIR/lib/common.sh"
 source "$ROOT_DIR/lib/container-backend.sh"
 
 USE_ROOT=false
+REPO_NAME=""
 PROJECT=""
 
-# Only --root is consumed as a dce option, and only before the project name.
-# The first non-option token is the project; everything after it is the command
-# verbatim (so command args that start with '-' are passed through untouched).
+# `dce exec <project> [--repo <name>] [--root] <command...>`. The project is the
+# first argument; a short option window follows for exec-scoped flags, then the
+# remaining words are passed through as the command verbatim. `--` can be used
+# after the project to force a command beginning with '-'.
+PROJECT="${1:-}"
+if [[ -z "$PROJECT" ]]; then
+  dce_die "Project name is required.
+Usage: dce exec <name> [--repo <name>] [--root] <command...>"
+fi
+shift
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --repo)
+      [[ $# -ge 2 && "$2" != --* ]] || dce_die "--repo requires a repo name
+Usage: dce exec <name> [--repo <name>] [--root] <command...>"
+      REPO_NAME="$2"
+      shift 2
+      ;;
     --root)
       USE_ROOT=true
       shift
@@ -48,13 +63,11 @@ while [[ $# -gt 0 ]]; do
       shift
       break
       ;;
-    -*)
+    -* )
       dce_die "Unknown option: $1
-Usage: dce exec [--root] <name> <command...>"
+Usage: dce exec <name> [--repo <name>] [--root] <command...>"
       ;;
     *)
-      PROJECT="$1"
-      shift
       break
       ;;
   esac
@@ -62,17 +75,12 @@ done
 
 CMD=("$@")
 
-if [[ -z "$PROJECT" ]]; then
-  dce_die "Project name is required.
-Usage: dce exec [--root] <name> <command...>"
-fi
-
 if [[ ${#CMD[@]} -eq 0 ]]; then
   dce_die "No command specified.
   For an interactive shell, use: dce shell $PROJECT"
 fi
 
-CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG="$(dce_project_config_path "$PROJECT")"
 if [[ ! -f "$CONFIG" ]]; then
   dce_die "No config for '$PROJECT'. Run: dce new $PROJECT"
 fi
@@ -80,12 +88,28 @@ fi
 dce_load_project_config "$CONFIG"
 backend_use "${CONTAINER_BACKEND:-}"
 
+WORKDIR=""
+if [[ -n "$REPO_NAME" ]]; then
+  WORKDIR="$(dce_project_repo_workdir "$REPO_NAME" 2>/dev/null)" \
+    || dce_die "Unknown repo '$REPO_NAME' in project '$PROJECT'."
+fi
+
 if ! backend_is_running "$PROJECT"; then
   dce_die "Container '$PROJECT' is not running.
   Start it first: dce start $PROJECT"
 fi
 
-if $USE_ROOT; then
+if [[ -n "$WORKDIR" ]]; then
+  cmd_joined="$(printf '%q ' "${CMD[@]}")"
+  cmd_joined="${cmd_joined% }"
+  if $USE_ROOT; then
+    backend_exec_as_root "$PROJECT" sh -lc "cd $WORKDIR && exec $cmd_joined"
+  elif [[ -t 0 && -t 1 ]]; then
+    backend_exec_interactive "$PROJECT" -- sh -lc "cd $WORKDIR && exec $cmd_joined"
+  else
+    backend_exec "$PROJECT" sh -lc "cd $WORKDIR && exec $cmd_joined"
+  fi
+elif $USE_ROOT; then
   backend_exec_as_root "$PROJECT" "${CMD[@]}"
 elif [[ -t 0 && -t 1 ]]; then
   backend_exec_interactive "$PROJECT" -- "${CMD[@]}"

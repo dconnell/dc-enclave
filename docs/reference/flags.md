@@ -10,7 +10,7 @@ Every flag each `dce` command accepts, derived from the command help (`dce help 
 | `[scope[,scope...]]` | Overlay scope(s) matching `Containerfile.<scope>` in team/user overlays. Omit for a base-only project. |
 | `[host:container ...]` | Port mapping(s) to publish. A bare port (e.g. `5173`) maps the same port on both sides; `8080:3000` maps different ports. Repeatable. |
 | `--config <path>` | Load one explicit container recipe file as defaults; skips name-based recipe lookup. CLI flags still override. |
-| `--repo-path <path>` | Override the repo mount location. Default `$DC_REPOS_DIR/<name>` or `~/repos/<name>`. |
+| `--repo <name\|path\|name=path>` | Add one repo to the project. Repeatable. With no `--repo`, `dce new <name>` creates a single repo at `$DC_REPOS_DIR/<name>` named `<name>`. Bare paths derive the repo name from `basename(path)`; `name=path` keeps the explicit name. A bare `<name>` resolves against the default repos directory. |
 | `--save-team` | Save the CLI-supplied recipe keys from this run to `$DC_TEAM_DIR/container-recipes/<name>`. |
 | `--save-user` | Save the CLI-supplied recipe keys from this run to `$DC_USER_DIR/container-recipes/<name>`. Pass both to write both. |
 | `--cpus <N>` | CPU limit (e.g. `2`, `1.5`). Empty = backend default. See [manage resources](../how-to/manage-resources.md). |
@@ -19,15 +19,15 @@ Every flag each `dce` command accepts, derived from the command help (`dce help 
 | `--network <name[,name...]>` | Attach to private dce network(s) so the container can reach peers by name without publishing ports. `name:ip` pins a static IPv4. Repeatable. See [private networks](../how-to/connect-private-networks.md). |
 | `--ip <addr>` | Static IPv4 for the primary (first) network; equivalent to `name:ip` on the first `--network` entry. Not supported on apple/container. |
 | `--git-host <provider>` | Git host for authentication (default `github`; supported: `github`, `gitlab`). Determines token file name, credential format, and environment variable. Read-only after create. See [add a git host](../how-to/add-git-host.md). |
-| `--yes`, `-y` | Skip the recipe-`repo-path` confirmation prompt (see below). Non-interactive runs without `--yes` abort instead of mounting. |
+| `--yes`, `-y` | Skip confirmation prompts for `--repo` or recipe-sourced repo paths that resolve outside the default repos dir (see below). Non-interactive runs without `--yes` abort instead of mounting. Does not override the hard rejection for the repos root or a parent of it. |
 
-> **Recipe `repo-path` is gated.** An auto-loaded recipe cannot silently widen the
-> host bind mount: a recipe-sourced `repo-path` that resolves outside the default
-> repos dir (`$DC_REPOS_DIR` or `~/repos`) asks for confirmation (`--yes`/`-y`
-> honors it); values resolving to `/`, your home, the repos root, or a parent of
-> it are rejected, as are values with characters unsafe in a bind-mount source.
-> A recipe `repo-path` inside the default repos dir needs no confirmation, and
-> CLI `--repo-path` is never gated (escape hatch). See [configuration: recipes](configuration.md).
+> **Outside-root repo mounts are gated.** A `--repo <path>` / `--repo <name>=<path>`
+> flag or recipe-sourced `repo=<path>` / `repo=<name>=<path>` entry that resolves
+> outside the default repos dir (`$DC_REPOS_DIR` or `~/repos`) asks for
+> confirmation (`--yes`/`-y` honors it). Any repo-entry value resolving to `/`,
+> your home, the repos root, or a parent of it is rejected outright, as are
+> repo-path values with characters unsafe in a bind-mount source. See
+> [configuration: recipes](configuration.md).
 
 ## `dce logs` — container log stream
 
@@ -43,6 +43,7 @@ Every flag each `dce` command accepts, derived from the command help (`dce help 
 |---|---|
 | `<name>` *(required)* | Project/container name. Must already be running. |
 | `<command...>` *(required)* | Command and args, passed through verbatim (args beginning with `-` reach the command untouched). |
+| `--repo <name>` | Run the command from `/workspace/<name>`. Without it, exec starts in the image workdir `/workspace` (repos bind at `/workspace/<name>`). |
 | `--root` | Run as uid 0, non-interactively. Never allocates a TTY (for a root interactive session, use `dce shell` then `sudo`). |
 
 A TTY is allocated automatically only when both stdin and stdout are interactive.
@@ -81,7 +82,7 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 | `get <name> <key>` | Print one value (`cpus`, `memory`, `scopes`, `ports`, `hide`, `networks`, and read-only `project`, `backend`, `image`, `repos`). |
 | `set <name> <key>=<value>` | Validate + atomically write one mutable key (`cpus`, `memory`, `scopes`, `ports`, `hide`, `networks`). Empty clears a key back to default. |
 | `set <name> <key> <value>` | Space-separated equivalent of `key=value`. |
-| `sync-vscode <name>` | Rewrite MANAGED fields in `<repos>/.devcontainer/devcontainer.json` to match current config while preserving user keys/mounts. Includes `customizations.vscode.extensions` when extension manifests are adopted (migration guard preserves hand-curated arrays pre-adoption). Docker-compatible projects only. Requires `jq`. |
+| `sync-vscode <name>` | Rewrite MANAGED fields in `~/.config/dc-enclave/projects/<name>/devcontainer.json` to match current config while preserving user keys/mounts. Includes `customizations.vscode.extensions` when extension manifests are adopted (migration guard preserves hand-curated arrays pre-adoption). Docker-compatible projects only. Requires `jq`. |
 | `--dry-run` *(with `sync-vscode`)* | Preview drift + planned managed-field rewrites without writing the file. |
 | `ls` | List projects that have a config file. |
 
@@ -135,6 +136,7 @@ Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never 
 | Flag / arg | Description |
 |---|---|
 | `<name>` *(required)* | Project/container name. |
+| `--repo <name>` | Run from `/workspace/<name>` instead of the default shell cwd. Without it, an interactive shell defaults to `/workspace/<repo>` for single-repo projects and `/workspace` for multi-repo projects. Must come after the project name. |
 | `[command]` | Optional command to run non-interactively (`zsh -ic`) instead of opening an interactive shell. If it begins with `-`, separate it with `--`. |
 
 ## `dce editor` — launch an editor attached to the container
@@ -142,7 +144,7 @@ Restore with `dce rebuild-container <name> --from-snap <label>` (one-off; never 
 | Flag / arg | Description |
 |---|---|
 | `<name>` *(required)* | Project/container name. |
-| `--editor <id>` | Override the resolved editor for this invocation only. Known ids: `vscode`, `vscode-insiders`. |
+| `--editor <id>` | Override the resolved editor for this invocation only. Known ids: `vscode`, `vscode-insiders`. Must come after the project name. |
 
 ## Commands taking only positional arguments
 
@@ -160,4 +162,4 @@ These take only positional arguments (or none):
 | `CONTAINER_BACKEND` | Force a backend (`apple`, `colima`, `docker`, `orbstack`, `podman`) instead of auto-detection. See [backends](backends.md). |
 | `DCE_DNS` | Comma-separated DNS nameserver IPs passed to `container create` / `docker create` as `--dns`. Default empty on Docker-family backends (their embedded DNS works); the apple/container backend defaults to `1.1.1.1,8.8.8.8` because its auto-configured resolver does not forward external DNS. Set empty to opt out of the apple default. Set at create time only (`dce new` / `dce rebuild-container`). See [backends](backends.md). |
 | `DC_REPOS_DIR` | Override the host repos root (default `~/repos`). |
-| `DC_TEAM_DIR` / `DC_USER_DIR` | Team and user overlay/recipe roots, set by `setup.sh` in `~/.config/dce-enclave/config`. |
+| `DC_TEAM_DIR` / `DC_USER_DIR` | Team and user overlay/recipe roots, set by `setup.sh` in `~/.config/dc-enclave/config`. |

@@ -98,7 +98,7 @@ if [[ -z "$PROJECT" ]]; then
 Usage: rebuild-container.sh <project-name> [--rotate-keys] [--inject-creds] [--keep-hidden-volumes] [--yes|-y] [--from-snap <label>]"
 fi
 
-CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG="$(dce_project_config_path "$PROJECT")"
 if [[ ! -f "$CONFIG" ]]; then
   dce_die "No config for '$PROJECT'."
 fi
@@ -121,6 +121,10 @@ if ! declare -p CONTAINER_HIDDEN_PATHS >/dev/null 2>&1; then
 fi
 
 HIDDEN_PATHS_CSV="$(dce_normalize_hidden_paths_values "${CONTAINER_HIDDEN_PATHS[@]:-}")" || exit 1
+if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
+  IFS=',' read -r -a _rb_hidden_list <<< "$HIDDEN_PATHS_CSV"
+  HIDDEN_PATHS_CSV="$(dce_hidden_paths_for_project "${_rb_hidden_list[@]}")" || exit 1
+fi
 CONTAINER_HIDDEN_PATHS=()
 if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
   IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
@@ -226,7 +230,15 @@ else
   echo "  Overlay scope(s): ${OVERLAY_SCOPES_CSV:-(none)}"
 fi
 echo "  Backend:    $ACTIVE_BACKEND"
-echo "  Repos:      ${REPOS_DIR:-unknown} (PRESERVED - verify your commits separately)"
+_rb_repo_count=0
+if declare -p REPO_NAMES >/dev/null 2>&1; then _rb_repo_count=${#REPO_NAMES[@]}; fi
+echo "  Repos:      $_rb_repo_count repo(s) bind-mounted under /workspace (PRESERVED -"
+echo "              verify your commits separately):"
+while IFS= read -r _rb_repo_line; do
+  [[ -z "$_rb_repo_line" ]] && continue
+  echo "    $_rb_repo_line"
+done < <(dce_repo_entries_lines)
+echo "  Cache:      /workspace/.cache managed volume (PRESERVED on normal rebuilds)"
 if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   echo "  Hidden paths: ${CONTAINER_HIDDEN_PATHS[*]}"
   if [[ -n "$FROM_SNAP" ]]; then
@@ -234,7 +246,7 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   elif $KEEP_HIDDEN_VOLUMES; then
     echo "  Hidden volumes: PRESERVED (--keep-hidden-volumes)"
   else
-    echo "  Hidden volumes: REMOVED (clean rebuild)"
+    echo "  Hidden volumes: REMOVED (clean rebuild; the .cache volume is kept)"
   fi
 fi
 if [[ -n "$FROM_SNAP" ]] && $KEEP_HIDDEN_VOLUMES; then
@@ -310,7 +322,8 @@ if $DOCKER_COMPATIBLE && backend_is_running "$PROJECT" 2>/dev/null; then
 fi
 
 echo "This will DESTROY the container '$PROJECT' and recreate it."
-echo "Your code in ${REPOS_DIR:-unknown} is safe."
+echo "Your repos under /workspace (host bind mounts) are safe; the"
+echo "/workspace/.cache volume also survives a normal rebuild."
 if ! $ASSUME_YES; then
   echo ""
   read -r -p "Type 'yes' to continue: " confirm
@@ -348,6 +361,10 @@ if [[ -n "$FROM_SNAP" ]]; then
   # operator's pre-restore state to keep. Dispositions are reported after create.
   echo "  -> Snapshot restore: preserving original hidden volumes."
 elif [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+  # Clean-slate removal covers USER hidden volumes only. The managed
+  # /workspace/.cache volume is deliberately NOT in this loop: generated cache
+  # content survives normal rebuilds (pass --from-snap to restore an isolated
+  # copy, or dce rm to remove it entirely).
   if ! dce_rebuild_handle_hidden_volumes "$PROJECT" "$KEEP_HIDDEN_VOLUMES" "${CONTAINER_HIDDEN_PATHS[@]}"; then
     exit 1
   fi
@@ -384,22 +401,15 @@ fi
 echo ""
 echo "==> Step 4: Recreating container from $CONTAINER_IMAGE..."
 
-VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
-if [[ -n "${NPMRC_PATH:-}" ]]; then
-  VOLUME_ARGS+=(--volume "$NPMRC_PATH:/home/dev/.npmrc:ro")
-fi
-for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]:-}"; do
-  [[ -z "$hidden_path" ]] && continue
-  if [[ -n "$FROM_SNAP" ]]; then
-    # Snapshot restore: mount the deterministic snapshot volume (populated if
-    # captured; auto-created empty otherwise). Never the live original, never a
-    # hard failure -- dispositions are reported after create.
-    hidden_volume="$(dce_snapshot_volume_name "$PROJECT" "$FROM_SNAP" "$hidden_path")"
-  else
-    hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
-  fi
-  VOLUME_ARGS+=(--volume "$hidden_volume:/workspace/$hidden_path")
-done
+# Mount flags via the SHARED planner (same source of truth as `dce new`): one
+# bind per repo at /workspace/<repo-name>, the managed /workspace/.cache
+# volume, the read-only .npmrc secret bind, and one volume per hidden path.
+# No root /workspace bind exists anymore. Under --from-snap, managed volumes
+# (hidden AND .cache) mount from the snapshot's isolated copies, never the
+# live originals.
+RB_MOUNT_MODE="live"
+[[ -n "$FROM_SNAP" ]] && RB_MOUNT_MODE="snap:$FROM_SNAP"
+mapfile -t VOLUME_ARGS < <(dce_workspace_mount_args "$PROJECT" "${NPMRC_PATH:-}" "$RB_MOUNT_MODE" "${CONTAINER_HIDDEN_PATHS[@]:-}")
 
 PORT_ARGS=()
 if declare -p PORTS >/dev/null 2>&1; then
@@ -428,12 +438,13 @@ fi
 backend_create "$PROJECT" "$CONTAINER_IMAGE" "${TZ_ARGS[@]}" "${VOLUME_ARGS[@]}" "${PORT_ARGS[@]}" "${RESOURCE_ARGS[@]}" "${NETWORK_ARGS[@]}"
 echo "  ✓ Container created"
 
-# Under a snapshot restore, report each hidden volume's disposition so the
+# Under a snapshot restore, report each managed volume's disposition so the
 # operator knows which are populated vs empty (excluded / copy failed / added
 # after the snapshot). All come from snapshot volumes, never the live originals.
-if [[ -n "$FROM_SNAP" ]] && [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
-  echo "  -> Hidden volume dispositions:"
-  for _hp in "${CONTAINER_HIDDEN_PATHS[@]}"; do
+if [[ -n "$FROM_SNAP" ]]; then
+  mapfile -t RB_MANAGED_PATHS < <(dce_managed_volume_paths "${CONTAINER_HIDDEN_PATHS[@]:-}")
+  echo "  -> Managed volume dispositions:"
+  for _hp in "${RB_MANAGED_PATHS[@]}"; do
     [[ -z "$_hp" ]] && continue
     _state="$(dce_snapshot_volume_state "$PROJECT" "$FROM_SNAP" "$_hp")"
     case "$_state" in
@@ -459,22 +470,24 @@ echo "==> Step 5: Starting container and injecting credentials..."
 backend_start "$PROJECT"
 sleep 2
 
-if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
-  echo "  -> Verifying hidden volume mounts..."
-  if ! dce_ensure_hidden_mounts "$PROJECT" "${CONTAINER_HIDDEN_PATHS[@]}"; then
-    exit 1
-  fi
-  echo "     ✓ Hidden volume mounts active"
+# All managed volumes (user hidden paths + the managed .cache volume) are
+# verified and ownership-normalized after recreate.
+mapfile -t RB_MANAGED_VOLUME_PATHS < <(dce_managed_volume_paths "${CONTAINER_HIDDEN_PATHS[@]:-}")
 
-  echo "  -> Normalizing hidden-path ownership..."
-  for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
-    target="/workspace/$hidden_path"
-    backend_exec_as_root "$PROJECT" sh -lc "mkdir -p '$target' && chown -R dev:dev '$target'"
-    if ! backend_exec "$PROJECT" sh -lc "test -w '$target'"; then
-      dce_die "Hidden path is not writable by dev: $target"
-    fi
-  done
+echo "  -> Verifying managed volume mounts..."
+if ! dce_ensure_hidden_mounts "$PROJECT" "${RB_MANAGED_VOLUME_PATHS[@]}"; then
+  exit 1
 fi
+echo "     ✓ Managed volume mounts active (incl. /workspace/.cache)"
+
+echo "  -> Normalizing volume ownership..."
+for volume_path in "${RB_MANAGED_VOLUME_PATHS[@]}"; do
+  target="/workspace/$volume_path"
+  backend_exec_as_root "$PROJECT" sh -lc "mkdir -p '$target' && chown -R dev:dev '$target'"
+  if ! backend_exec "$PROJECT" sh -lc "test -w '$target'"; then
+    dce_die "Managed volume path is not writable by dev: $target"
+  fi
+done
 
 # Inject current credentials only when explicitly requested. A normal (non
 # --from-snap) rebuild always injects (the container is freshly recreated, so
@@ -513,14 +526,14 @@ if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
   echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
 fi
 
-# Drift notice: the seeded .devcontainer/devcontainer.json is never rewritten by
-# a rebuild, so a prior `dce config set` (scopes/hide/networks/ports) can leave
-# VS Code desynced from the freshly-rebuilt container. Detection is read-only
-# and non-fatal (safe under --yes); it just points at the diff + sync-vscode.
-# Runs on every backend (apple/container now seeds a devcontainer.json too).
-if [[ -n "${REPOS_DIR:-}" ]]; then
-  _rb_dc_file="$REPOS_DIR/.devcontainer/devcontainer.json"
-  if [[ -f "$_rb_dc_file" ]]; then
+# Drift notice: the managed devcontainer.json (project config dir) is never
+# rewritten by a rebuild, so a prior `dce config set` (scopes/hide/networks/
+# ports) can leave VS Code desynced from the freshly-rebuilt container.
+# Detection is read-only and non-fatal (safe under --yes); it just points at
+# the diff + sync-vscode. Runs on every backend (apple/container seeds a
+# devcontainer.json too).
+_rb_dc_file="$(dce_managed_devcontainer_file "$PROJECT")"
+if [[ -f "$_rb_dc_file" ]]; then
     _rb_nets_csv=""
     if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
       _rb_nets_csv="$(dce_join_by ',' "${CONTAINER_NETWORKS[@]}")"
@@ -561,8 +574,7 @@ if [[ -n "${REPOS_DIR:-}" ]]; then
     esac
     dce_devcontainer_detect_drift "$PROJECT" "$_rb_dc_file" "$_rb_build_df" \
       "$HIDDEN_PATHS_CSV" "$_rb_nets_csv" "$_rb_ports_csv" \
-      "vscode" "$_rb_ext_csv" "$_rb_ext_adopted" >&2 || true
-  fi
+      "vscode" "$_rb_ext_csv" "$_rb_ext_adopted" "$(dce_repo_entries_lines)" >&2 || true
 fi
 
 echo ""
@@ -584,11 +596,15 @@ if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
   elif $KEEP_HIDDEN_VOLUMES; then
     echo "  Hidden volumes: preserved (--keep-hidden-volumes)"
   else
-    echo "  Hidden volumes: removed (clean rebuild)"
+    echo "  Hidden volumes: removed (clean rebuild; the .cache volume was kept)"
   fi
 fi
 echo ""
-echo "Host repos ($REPOS_DIR) are untouched — container state was wiped."
+echo "Host repos are untouched — container state was wiped:"
+while IFS= read -r _rb_repo_line; do
+  [[ -z "$_rb_repo_line" ]] && continue
+  echo "  $_rb_repo_line"
+done < <(dce_repo_entries_lines)
 if $ROTATE_KEYS; then
   echo "SSH deploy key rotated — confirm new key is on GitHub and old key is removed."
 fi
@@ -612,6 +628,6 @@ echo "  [ ] dce install $PROJECT <path-to-dotfiles>   # reapply personal config"
 echo "  [ ] dce shell $PROJECT                        # re-enter container"
 echo ""
 echo "Good habits after any rebuild:"
-echo "  [ ] Quick sanity check: git log and git diff in $REPOS_DIR look right"
+echo "  [ ] Quick sanity check: git log and git diff under /workspace look right"
 echo "  [ ] Rotate your ${RB_GIT_DISPLAY} token if it's due: $TOKEN_FILE"
 echo "  [ ] Keep dotfiles current so customizations survive the next rebuild"

@@ -269,12 +269,9 @@ dce_networks_attach_extras() {
 # the hardened loader inside a subshell so a single bad config cannot abort the
 # scan. Used by `dce network ls` / `dce network members`.
 dce_network_scan_membership() {
-  local base="$HOME/.config/dce-enclave"
   local config_file="" project="" ip=""
 
-  [[ -d "$base" ]] || return 0
-
-  for config_file in "$base"/*/config; do
+  while IFS= read -r config_file; do
     [[ -f "$config_file" ]] || continue
     project="$(basename "$(dirname "$config_file")")"
     # Subshell isolates a failing load and scopes the sourced globals.
@@ -298,7 +295,7 @@ dce_network_scan_membership() {
         done
       fi
     )
-  done
+  done < <(dce_project_config_paths)
 }
 
 # Print membership for a single network: "<project>\t<ip>" lines (ip "-" if none).

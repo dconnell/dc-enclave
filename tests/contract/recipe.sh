@@ -25,7 +25,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 TEAM_OD="$TEAM_DIR/overlays"
@@ -101,17 +101,27 @@ run_new() {
 
 load_cfg() {
   local project="$1"
-  local cfg="$HOME/.config/dce-enclave/$project/config"
+  local cfg="$HOME/.config/dc-enclave/projects/$project/config"
   [[ -f "$cfg" ]] || fail "missing config for $project"
   # shellcheck disable=SC2034
   # Reset before dce_load_project_config repopulates them from the sourced cfg.
-  PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=()
+  PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=() REPO_NAMES=() REPO_PATHS=()
   dce_load_project_config "$cfg"
+}
+
+# The schema-v2 config has no REPOS_DIR scalar; the repo set is
+# REPO_NAMES/REPO_PATHS. Single-repo helpers use index 0.
+repo_path_of() {
+  printf '%s\n' "${REPO_PATHS[0]:-}"
+}
+
+repo_name_of() {
+  printf '%s\n' "${REPO_NAMES[0]:-}"
 }
 
 assert_no_config() {
   local project="$1"
-  [[ ! -f "$HOME/.config/dce-enclave/$project/config" ]] \
+  [[ ! -f "$HOME/.config/dc-enclave/projects/$project/config" ]] \
     || fail "unexpected config created for failing recipe: $project"
 }
 
@@ -132,7 +142,7 @@ load_cfg api
 [[ "${CONTAINER_OVERLAY_SCOPES:-}" == "nodejs" ]] || fail "team-only: scopes"
 [[ "${CONTAINER_CPUS:-}" == "2" ]] || fail "team-only: cpus"
 [[ "${CONTAINER_MEMORY:-}" == "4g" ]] || fail "team-only: memory"
-[[ "${CONTAINER_HIDDEN_PATHS[*]:-}" == "node_modules" ]] || fail "team-only: hide"
+[[ "${CONTAINER_HIDDEN_PATHS[*]:-}" == "api/node_modules" ]] || fail "team-only: hide (persisted repo-prefixed)"
 [[ "${PORTS[*]:-}" == "3000:3000" ]] || fail "team-only: port"
 pass "team recipe auto-load"
 
@@ -147,7 +157,7 @@ port=3000:3000
 EOF
 cat > "$USER_REC/svc" <<'EOF'
 cpus=3
-hide=.cache
+hide=dist
 port=8080
 EOF
 
@@ -156,7 +166,7 @@ run_new svc >"$WORK/svc.out" 2>"$WORK/svc.err" || fail "user-over-team create fa
 load_cfg svc
 [[ "${CONTAINER_OVERLAY_SCOPES:-}" == "nodejs,golang" ]] || fail "user-over-team: inherited scopes"
 [[ "${CONTAINER_CPUS:-}" == "3" ]] || fail "user-over-team: cpus override"
-[[ "${CONTAINER_HIDDEN_PATHS[*]:-}" == ".cache" ]] || fail "user-over-team: hide replace"
+[[ "${CONTAINER_HIDDEN_PATHS[*]:-}" == "svc/dist" ]] || fail "user-over-team: hide replace"
 [[ "${PORTS[*]:-}" == "8080" ]] || fail "user-over-team: port replace"
 pass "user recipe overrides team per key"
 
@@ -199,13 +209,13 @@ port=3000:3000
 EOF
 
 : > "$LOG"
-run_new cliovr --cpus 6 --hide .cache 8080 >"$WORK/cliovr.out" 2>"$WORK/cliovr.err" \
+run_new cliovr --cpus 6 --hide dist 8080 >"$WORK/cliovr.out" 2>"$WORK/cliovr.err" \
   || fail "cli-over-recipe create failed"
 load_cfg cliovr
 [[ "${CONTAINER_OVERLAY_SCOPES:-}" == "nodejs" ]] || fail "cli-over-recipe: scopes from recipe"
 [[ "${CONTAINER_CPUS:-}" == "6" ]] || fail "cli-over-recipe: cpus from CLI"
 [[ "${CONTAINER_MEMORY:-}" == "4g" ]] || fail "cli-over-recipe: memory from recipe"
-[[ "${CONTAINER_HIDDEN_PATHS[*]:-}" == ".cache" ]] || fail "cli-over-recipe: hide list from CLI"
+[[ "${CONTAINER_HIDDEN_PATHS[*]:-}" == "cliovr/dist" ]] || fail "cli-over-recipe: hide list from CLI"
 [[ "${PORTS[*]:-}" == "8080" ]] || fail "cli-over-recipe: ports list from CLI"
 pass "CLI flags override recipe values"
 
@@ -213,13 +223,15 @@ pass "CLI flags override recipe values"
 # --save-team / --save-user persist CLI-supplied recipe inputs
 # ---------------------------------------------------------------------------
 : > "$LOG"
+# --yes: the relative --repo path resolves outside the default repos root, which
+# now gates CLI entries too (plans/projects-2.md section 8).
 run_new saveteam nodejs,golang \
   --cpus 4 --memory 8g \
-  --hide ./node_modules --hide .cache \
+  --hide ./node_modules --hide build-cache \
   --network app,obs --ip 10.0.0.8 \
-  --repo-path ./repos/saveteam \
+  --repo ./repos/saveteam \
   3000:3000 8080 \
-  --save-team \
+  --save-team --yes \
   >"$WORK/saveteam.out" 2>"$WORK/saveteam.err" || fail "--save-team create failed"
 
 [[ -f "$TEAM_REC/saveteam" ]] || fail "--save-team: missing team recipe file"
@@ -229,10 +241,10 @@ scopes=nodejs,golang
 cpus=4
 memory=8g
 hide=node_modules
-hide=.cache
+hide=build-cache
 network=app,obs
 ip=10.0.0.8
-repo-path=./repos/saveteam
+repo=./repos/saveteam
 port=3000:3000
 port=8080
 EOF
@@ -248,14 +260,14 @@ port=3000
 EOF
 
 : > "$LOG"
-run_new saveuser --cpus 6 --hide .cache --save-user \
+run_new saveuser --cpus 6 --hide build-cache --save-user \
   >"$WORK/saveuser.out" 2>"$WORK/saveuser.err" || fail "--save-user create failed"
 
 [[ -f "$USER_REC/saveuser" ]] || fail "--save-user: missing user recipe file"
 expected_saveuser="$WORK/expected.saveuser"
 cat > "$expected_saveuser" <<'EOF'
 cpus=6
-hide=.cache
+hide=build-cache
 EOF
 if ! cmp -s "$expected_saveuser" "$USER_REC/saveuser"; then
   fail "--save-user: recipe content mismatch"
@@ -339,103 +351,149 @@ assert_no_config badscope
 pass "invalid recipes fail closed and create nothing"
 
 # ---------------------------------------------------------------------------
-# Recipe-sourced repo-path gating
+# Recipe-sourced repo= gating
 #
 # An auto-loaded recipe is untrusted input, so it must not silently widen the
 # host bind mount. Outside the default repos dir => confirm (or --yes); a path
 # that resolves to a sensitive root (/ , $HOME, the repos root or a parent) is
-# hard-rejected even with --yes. CLI --repo-path is the documented escape hatch
-# and is never gated.
+# hard-rejected even with --yes. CLI `--repo` supports the same host-path inputs,
+# but removed surfaces (`repo-path`, `--repo-path`) must fail with replacement
+# guidance.
 # ---------------------------------------------------------------------------
 CUSTOM_REPOS="$WORK/custom-team-repos"
 
-# (a) recipe repo-path OUTSIDE default + --yes => honored with an explicit msg.
+# (a) recipe repo OUTSIDE default + --yes => honored with an explicit msg.
 cat > "$TEAM_REC/rp-yes" <<EOF
-repo-path=$CUSTOM_REPOS/rp-yes
+repo=$CUSTOM_REPOS/rp-yes
 EOF
 : > "$LOG"
-run_new rp-yes --yes >"$WORK/rp-yes.out" 2>"$WORK/rp-yes.err" || fail "recipe repo-path + --yes should honor the path"
+run_new rp-yes --yes >"$WORK/rp-yes.out" 2>"$WORK/rp-yes.err" || fail "recipe repo + --yes should honor the path"
 load_cfg rp-yes
 exp_yes="$(dce_resolve_path "$CUSTOM_REPOS/rp-yes")"
-[[ "$REPOS_DIR" == "$exp_yes" ]] || fail "recipe repo-path --yes: REPOS_DIR should be the recipe path (got '${REPOS_DIR:-}')"
-grep -q "honoring recipe repo-path" "$WORK/rp-yes.out" || fail "recipe repo-path --yes: should print an explicit honoring message"
-pass "recipe repo-path outside default honored with --yes (explicit message)"
+[[ "$(repo_path_of)" == "$exp_yes" ]] || fail "recipe repo --yes: REPO_PATHS[0] should be the recipe path (got '${REPO_PATHS[0]:-}')"
+[[ "$(repo_name_of)" == "rp-yes" ]] || fail "recipe repo --yes: default repo name should be the project name basename/path basename-compatible"
+grep -q "honoring recipe repo path" "$WORK/rp-yes.out" || fail "recipe repo --yes: should print an explicit honoring message"
+pass "recipe repo outside default honored with --yes (explicit message)"
 
-# (b) recipe repo-path OUTSIDE default + interactive 'yes' => honored.
+# (b) recipe repo OUTSIDE default + interactive 'yes' => honored.
 cat > "$TEAM_REC/rp-confirm" <<EOF
-repo-path=$CUSTOM_REPOS/rp-confirm
+repo=$CUSTOM_REPOS/rp-confirm
 EOF
 : > "$LOG"
-run_new rp-confirm <<< $'yes\n' >"$WORK/rp-confirm.out" 2>"$WORK/rp-confirm.err" || fail "recipe repo-path confirm 'yes' should honor"
+run_new rp-confirm <<< $'yes\n' >"$WORK/rp-confirm.out" 2>"$WORK/rp-confirm.err" || fail "recipe repo confirm 'yes' should honor"
 load_cfg rp-confirm
 exp_conf="$(dce_resolve_path "$CUSTOM_REPOS/rp-confirm")"
-[[ "$REPOS_DIR" == "$exp_conf" ]] || fail "recipe repo-path confirm: REPOS_DIR mismatch (got '${REPOS_DIR:-}')"
-pass "recipe repo-path outside default confirmed interactively"
+[[ "$(repo_path_of)" == "$exp_conf" ]] || fail "recipe repo confirm: REPO_PATHS[0] mismatch (got '${REPO_PATHS[0]:-}')"
+pass "recipe repo outside default confirmed interactively"
 
-# (c) recipe repo-path OUTSIDE default + denied => aborted, nothing mounted.
+# (c) recipe repo OUTSIDE default + denied => aborted, nothing mounted.
 cat > "$TEAM_REC/rp-deny" <<EOF
-repo-path=$CUSTOM_REPOS/rp-deny
+repo=$CUSTOM_REPOS/rp-deny
 EOF
 : > "$LOG"
 run_new rp-deny <<< $'no\n' >"$WORK/rp-deny.out" 2>"$WORK/rp-deny.err" || true
 assert_no_config rp-deny
-grep -q "Aborted" "$WORK/rp-deny.out" || fail "recipe repo-path deny: should print Aborted"
-pass "recipe repo-path outside default can be denied (no mount)"
+grep -q "Aborted" "$WORK/rp-deny.out" || fail "recipe repo deny: should print Aborted"
+pass "recipe repo outside default can be denied (no mount)"
 
 # (c2) non-interactive (no stdin / EOF) + no --yes => aborted, never silently mounted.
 cat > "$TEAM_REC/rp-eof" <<EOF
-repo-path=$CUSTOM_REPOS/rp-eof
+repo=$CUSTOM_REPOS/rp-eof
 EOF
 : > "$LOG"
 run_new rp-eof </dev/null >"$WORK/rp-eof.out" 2>"$WORK/rp-eof.err" || true
 assert_no_config rp-eof
-grep -q "Aborted" "$WORK/rp-eof.out" || fail "recipe repo-path non-interactive: should abort with a message"
-pass "recipe repo-path non-interactive (no --yes) aborts with a message"
+grep -q "Aborted" "$WORK/rp-eof.out" || fail "recipe repo non-interactive: should abort with a message"
+pass "recipe repo non-interactive (no --yes) aborts with a message"
 
-# (d) recipe repo-path traversal => hard-rejected after normalization.
+# (d) recipe repo traversal => hard-rejected after normalization.
 cat > "$TEAM_REC/rp-traversal" <<'EOF'
-repo-path=../../..
+repo=../../..
 EOF
 : > "$LOG"
 if run_new rp-traversal >"$WORK/rp-traversal.out" 2>"$WORK/rp-traversal.err"; then
-  fail "recipe repo-path traversal (../../..) should be rejected"
+  fail "recipe repo traversal (../../..) should be rejected"
 fi
 assert_no_config rp-traversal
-pass "recipe repo-path traversal rejected after normalization"
+pass "recipe repo traversal rejected after normalization"
 
-# (e) recipe repo-path resolving to $HOME => hard-rejected even with --yes.
+# (e) recipe repo resolving to $HOME => hard-rejected even with --yes.
 cat > "$TEAM_REC/rp-home" <<EOF
-repo-path=$HOME
+repo=$HOME
 EOF
 : > "$LOG"
 if run_new rp-home --yes >"$WORK/rp-home.out" 2>"$WORK/rp-home.err"; then
-  fail "recipe repo-path resolving to \$HOME should be rejected even with --yes"
+  fail "recipe repo resolving to \$HOME should be rejected even with --yes"
 fi
 assert_no_config rp-home
-pass "recipe repo-path resolving to \$HOME is hard-rejected"
+pass "recipe repo resolving to \$HOME is hard-rejected"
 
-# (f) recipe repo-path INSIDE the default repos dir => no gate, just works.
+# (f) recipe repo INSIDE the default repos dir => no gate, just works.
 INSIDE_REPOS="$WORK/home/repos/shared"
 cat > "$TEAM_REC/rp-inside" <<EOF
-repo-path=$INSIDE_REPOS
+repo=$INSIDE_REPOS
 EOF
 : > "$LOG"
-run_new rp-inside >"$WORK/rp-inside.out" 2>"$WORK/rp-inside.err" || fail "recipe repo-path inside repos dir should need no confirmation"
+run_new rp-inside >"$WORK/rp-inside.out" 2>"$WORK/rp-inside.err" || fail "recipe repo inside repos dir should need no confirmation"
 load_cfg rp-inside
 exp_in="$(dce_resolve_path "$INSIDE_REPOS")"
-[[ "$REPOS_DIR" == "$exp_in" ]] || fail "recipe repo-path inside repos: REPOS_DIR mismatch (got '${REPOS_DIR:-}')"
-pass "recipe repo-path inside default repos dir needs no confirmation"
+[[ "$(repo_path_of)" == "$exp_in" ]] || fail "recipe repo inside repos: REPO_PATHS[0] mismatch (got '${REPO_PATHS[0]:-}')"
+pass "recipe repo inside default repos dir needs no confirmation"
 
-# (g) CLI --repo-path outside default => escape hatch, no prompt, honored.
+# (g) removed CLI --repo-path fails with replacement guidance.
 : > "$LOG"
-run_new rp-cli --repo-path "$CUSTOM_REPOS/rp-cli" >"$WORK/rp-cli.out" 2>"$WORK/rp-cli.err" <<< "" \
-  || fail "CLI --repo-path should work without a prompt"
-load_cfg rp-cli
-exp_cli="$(dce_resolve_path "$CUSTOM_REPOS/rp-cli")"
-[[ "$REPOS_DIR" == "$exp_cli" ]] || fail "CLI --repo-path: REPOS_DIR mismatch (got '${REPOS_DIR:-}')"
-pass "CLI --repo-path escape hatch preserved (no prompt)"
+if run_new rp-cli --repo-path "$CUSTOM_REPOS/rp-cli" >"$WORK/rp-cli.out" 2>"$WORK/rp-cli.err" <<< ""; then
+  fail "CLI --repo-path should be rejected with replacement guidance"
+fi
+grep -qi -- '--repo' "$WORK/rp-cli.err" || fail "removed --repo-path error should mention --repo replacement"
+grep -qi 'legacy-single-repo' "$WORK/rp-cli.err" \
+  || fail "removed --repo-path error should also point to the legacy-single-repo branch (got: $(cat "$WORK/rp-cli.err" 2>/dev/null))"
+assert_no_config rp-cli
+pass "CLI --repo-path removed with replacement guidance"
 
-# (h) other recipe keys still parse/apply alongside repo-path gating (regression).
+# (g2) CLI --repo outside default works and defaults the repo name from basename(path).
+# --yes: outside-default-root entries are gated for CLI sources too.
+: > "$LOG"
+run_new rp-cli2 --yes --repo "$CUSTOM_REPOS/rp-cli" >"$WORK/rp-cli2.out" 2>"$WORK/rp-cli2.err" <<< "" \
+  || fail "CLI --repo should honor an explicit path"
+load_cfg rp-cli2
+exp_cli="$(dce_resolve_path "$CUSTOM_REPOS/rp-cli")"
+[[ "$(repo_path_of)" == "$exp_cli" ]] || fail "CLI --repo: REPO_PATHS[0] mismatch (got '${REPO_PATHS[0]:-}')"
+[[ "$(repo_name_of)" == "rp-cli" ]] || fail "CLI --repo: default repo name should come from basename(path)"
+pass "CLI --repo honors explicit path and basename-derived name"
+
+# (g3) CLI --repo with explicit name=<path> works.
+: > "$LOG"
+run_new rp-clialias --yes --repo "frontend=$CUSTOM_REPOS/rp-clialias" >"$WORK/rp-clialias.out" 2>"$WORK/rp-clialias.err" \
+  || fail "CLI --repo name=path should work"
+load_cfg rp-clialias
+[[ "${REPO_NAMES[0]:-}" == "frontend" ]] || fail "CLI --repo name=path: explicit repo name not preserved"
+pass "CLI --repo name=path preserves explicit name"
+
+# (g4) multi-repo create with repeated --repo works and persists both repos.
+: > "$LOG"
+run_new multirepo --yes --repo "web=$CUSTOM_REPOS/multi-web" --repo "$CUSTOM_REPOS/multi-api" \
+  >"$WORK/multirepo.out" 2>"$WORK/multirepo.err" || fail "multi-repo create with repeated --repo should work"
+load_cfg multirepo
+[[ ${#REPO_NAMES[@]} -eq 2 ]] || fail "repeated --repo should persist two repo names (got ${#REPO_NAMES[@]})"
+[[ "${REPO_NAMES[0]:-}" == "web" && "${REPO_NAMES[1]:-}" == "multi-api" ]] \
+  || fail "repeated --repo names wrong (got ${REPO_NAMES[*]:-})"
+pass "repeated --repo creates a two-repo project"
+
+# (g5) recipe repo-path is removed with replacement guidance.
+cat > "$TEAM_REC/rp-oldkey" <<EOF
+repo-path=$CUSTOM_REPOS/rp-oldkey
+EOF
+if run_new rp-oldkey >"$WORK/rp-oldkey.out" 2>"$WORK/rp-oldkey.err"; then
+  fail "recipe repo-path should be rejected with replacement guidance"
+fi
+grep -qi 'repo=' "$WORK/rp-oldkey.err" || fail "removed recipe repo-path error should mention repo= replacement"
+grep -qi 'legacy-single-repo' "$WORK/rp-oldkey.err" \
+  || fail "removed recipe repo-path error should also point to the legacy-single-repo branch (got: $(cat "$WORK/rp-oldkey.err" 2>/dev/null))"
+assert_no_config rp-oldkey
+pass "recipe repo-path removed with replacement guidance"
+
+# (h) other recipe keys still parse/apply alongside repo gating (regression).
 cat > "$TEAM_REC/rp-other" <<'EOF'
 scopes=nodejs
 cpus=2
@@ -449,43 +507,44 @@ load_cfg rp-other
 [[ "${CONTAINER_OVERLAY_SCOPES:-}" == "nodejs" ]] || fail "recipe other keys: scopes"
 [[ "${CONTAINER_CPUS:-}" == "2" ]] || fail "recipe other keys: cpus"
 [[ "${CONTAINER_MEMORY:-}" == "4g" ]] || fail "recipe other keys: memory"
-[[ "${CONTAINER_HIDDEN_PATHS[*]:-}" == "node_modules" ]] || fail "recipe other keys: hide"
+[[ "${CONTAINER_HIDDEN_PATHS[*]:-}" == "rp-other/node_modules" ]] || fail "recipe other keys: hide"
 [[ "${PORTS[*]:-}" == "3000:3000" ]] || fail "recipe other keys: port"
-pass "other recipe keys unaffected by repo-path gating"
+pass "other recipe keys unaffected by repo gating"
 
 # ---------------------------------------------------------------------------
-# repo-path gate hardening (review follow-ups)
+# repo gate hardening (review follow-ups)
 #
-# Covers the gaps found in review of the recipe repo-path gate:
+# Covers the gaps found in review of the recipe repo gate:
 #   - symlink redirect: a path that looks inside the repos root lexically but
 #     resolves to $HOME via a symlink must be hard-rejected (canonical resolve).
-#   - CLI escape hatch: --repo-path to $HOME is honored (sensitive-root
-#     rejection is recipe-only by design).
+#   - The host root (/) and $HOME are never valid repo paths, for EVERY source.
 #   - -y short flag parses in the position-after-name slot (scope pre-parse).
 #   - DC_REPOS_DIR='~/repos' is tilde-expanded for the inside/outside test.
 # ---------------------------------------------------------------------------
 
-# (i) recipe repo-path that is a SYMLINK to $HOME => caught by canonical resolve.
+# (i) recipe repo that is a SYMLINK to $HOME => caught by canonical resolve.
 mkdir -p "$WORK/home/repos"
 ln -s "$HOME" "$WORK/home/repos/link"
 cat > "$TEAM_REC/rp-symlink" <<EOF
-repo-path=$WORK/home/repos/link
+repo=$WORK/home/repos/link
 EOF
 : > "$LOG"
 if run_new rp-symlink </dev/null >"$WORK/rp-symlink.out" 2>"$WORK/rp-symlink.err"; then
-  fail "recipe repo-path symlink to \$HOME should be rejected"
+  fail "recipe repo symlink to \$HOME should be rejected"
 fi
 assert_no_config rp-symlink
-pass "recipe repo-path symlink to a sensitive root is rejected (canonical resolve)"
+pass "recipe repo symlink to a sensitive root is rejected (canonical resolve)"
 
-# (j) CLI --repo-path "$HOME" => escape hatch restored (recipe-only rejection).
+# (j) CLI --repo "$HOME" => rejected: canonical $HOME (like /) is never a
+# valid repo path.
 : > "$LOG"
-run_new rp-clihome --repo-path "$HOME" </dev/null >"$WORK/rp-clihome.out" 2>"$WORK/rp-clihome.err" \
-  || fail "CLI --repo-path \$HOME should be honored (escape hatch)"
-load_cfg rp-clihome
-exp_clihome="$(dce_resolve_path "$HOME")"
-[[ "$REPOS_DIR" == "$exp_clihome" ]] || fail "CLI --repo-path \$HOME: REPOS_DIR mismatch (got '${REPOS_DIR:-}')"
-pass "CLI --repo-path to \$HOME honored (escape hatch preserved)"
+if run_new rp-clihome --repo "$HOME" </dev/null >"$WORK/rp-clihome.out" 2>"$WORK/rp-clihome.err"; then
+  fail "CLI --repo \$HOME should be rejected (canonical \$HOME is never mountable)"
+fi
+assert_no_config rp-clihome
+grep -qi 'home directory' "$WORK/rp-clihome.err" \
+  || fail "CLI --repo \$HOME rejection should explain the home-directory rule (got: $(cat "$WORK/rp-clihome.err" 2>/dev/null))"
+pass "CLI --repo to \$HOME rejected (canonical \$HOME never mountable)"
 
 # (k) -y short flag parses in the position-after-name slot (was misparsed as scope).
 : > "$LOG"
@@ -499,7 +558,7 @@ pass "short flag -y accepted in the position-after-name slot"
 # (l) DC_REPOS_DIR='~/repos' is tilde-expanded for the default-root comparison.
 # A recipe path actually inside ~/repos must NOT be misclassified as outside.
 cat > "$TEAM_REC/rp-tilde" <<EOF
-repo-path=$HOME/repos/tildeinside
+repo=$HOME/repos/tildeinside
 EOF
 : > "$LOG"
 # shellcheck disable=SC2088
@@ -515,6 +574,134 @@ if grep -qi "outside the default repos directory" "$WORK/rp-tilde.out"; then
 fi
 load_cfg rp-tilde
 pass "DC_REPOS_DIR=~/repos tilde-expanded for the inside/outside comparison"
+
+# ---------------------------------------------------------------------------
+# CLI --repo outside the default repos root gates the same way recipes do
+#
+# plans/projects-2.md section 8 originally made the repos-root/ancestor hard
+# rejection recipe-only. We deliberately tighten the policy for the multi-repo
+# model: the repos root (and any ancestor of it) is too broad to expose for ANY
+# source. Other outside-default-root paths still prompt unless --yes/-y is
+# present; / and $HOME remain rejected for every source.
+# ---------------------------------------------------------------------------
+
+# (m) CLI --repo outside default + --yes => honored with an explicit msg.
+: > "$LOG"
+run_new rp-cliyes --yes --repo "$CUSTOM_REPOS/rp-cliyes" </dev/null \
+  >"$WORK/rp-cliyes.out" 2>"$WORK/rp-cliyes.err" \
+  || fail "CLI --repo outside default + --yes should honor the path"
+load_cfg rp-cliyes
+exp_cliyes="$(dce_resolve_path "$CUSTOM_REPOS/rp-cliyes")"
+[[ "$(repo_path_of)" == "$exp_cliyes" ]] \
+  || fail "CLI --repo --yes: REPO_PATHS[0] should be the --repo path (got '${REPO_PATHS[0]:-}')"
+grep -q "honoring --repo path" "$WORK/rp-cliyes.out" \
+  || fail "CLI --repo --yes: should print an explicit honoring message (got: $(cat "$WORK/rp-cliyes.out" 2>/dev/null))"
+pass "CLI --repo outside default honored with --yes (explicit message)"
+
+# (n) CLI --repo outside default + interactive 'yes' => honored.
+: > "$LOG"
+run_new rp-cliconfirm --repo "$CUSTOM_REPOS/rp-cliconfirm" <<< $'yes\n' \
+  >"$WORK/rp-cliconfirm.out" 2>"$WORK/rp-cliconfirm.err" \
+  || fail "CLI --repo confirm 'yes' should honor"
+grep -qi "requires confirmation" "$WORK/rp-cliconfirm.out" \
+  || fail "CLI --repo outside default should prompt before mounting (got: $(cat "$WORK/rp-cliconfirm.out" 2>/dev/null))"
+load_cfg rp-cliconfirm
+exp_cliconf="$(dce_resolve_path "$CUSTOM_REPOS/rp-cliconfirm")"
+[[ "$(repo_path_of)" == "$exp_cliconf" ]] \
+  || fail "CLI --repo confirm: REPO_PATHS[0] mismatch (got '${REPO_PATHS[0]:-}')"
+pass "CLI --repo outside default confirmed interactively"
+
+# (o) CLI --repo outside default + denied => aborted, nothing mounted.
+: > "$LOG"
+run_new rp-clideny --repo "$CUSTOM_REPOS/rp-clideny" <<< $'no\n' \
+  >"$WORK/rp-clideny.out" 2>"$WORK/rp-clideny.err" || true
+assert_no_config rp-clideny
+grep -q "Aborted" "$WORK/rp-clideny.out" || fail "CLI --repo deny: should print Aborted"
+pass "CLI --repo outside default can be denied (no mount)"
+
+# (o2) CLI --repo outside default, non-interactive (EOF) + no --yes => aborted.
+: > "$LOG"
+run_new rp-clieof --repo "$CUSTOM_REPOS/rp-clieof" </dev/null \
+  >"$WORK/rp-clieof.out" 2>"$WORK/rp-clieof.err" || true
+assert_no_config rp-clieof
+grep -q "Aborted" "$WORK/rp-clieof.out" || fail "CLI --repo non-interactive: should abort with a message"
+pass "CLI --repo non-interactive (no --yes) aborts with a message"
+
+# (p) CLI --repo INSIDE the default repos dir => no gate, no prompt.
+: > "$LOG"
+run_new rp-cliinside --repo "$WORK/home/repos/cli-inside" </dev/null \
+  >"$WORK/rp-cliinside.out" 2>"$WORK/rp-cliinside.err" \
+  || fail "CLI --repo inside repos dir should need no confirmation"
+if grep -qi "outside the default repos directory" "$WORK/rp-cliinside.out"; then
+  fail "CLI --repo inside the repos dir must not prompt"
+fi
+load_cfg rp-cliinside
+pass "CLI --repo inside default repos dir needs no confirmation"
+
+# (p2) CLI --repo resolving to the repos root is rejected outright.
+: > "$LOG"
+if run_new rp-cliroot --repo "$WORK/home/repos" </dev/null >"$WORK/rp-cliroot.out" 2>"$WORK/rp-cliroot.err"; then
+  fail "CLI --repo to the repos root should be rejected outright"
+fi
+assert_no_config rp-cliroot
+grep -qi 'repos root' "$WORK/rp-cliroot.err" \
+  || fail "CLI --repo repos-root rejection should explain the broad-mount rule (got: $(cat "$WORK/rp-cliroot.err" 2>/dev/null))"
+pass "CLI --repo to the repos root rejected outright"
+
+# (p3) CLI --repo resolving to an ancestor of the repos root is rejected outright.
+: > "$LOG"
+mkdir -p "$WORK/outer/home/repos"
+mkdir -p "$WORK/outer/home/.config/dc-enclave/team/overlays" \
+         "$WORK/outer/home/.config/dc-enclave/team/container-recipes" \
+         "$WORK/outer/home/.config/dc-enclave/user/overlays" \
+         "$WORK/outer/home/.config/dc-enclave/user/container-recipes"
+cat > "$WORK/outer/home/.config/dc-enclave/config" <<EOF
+DC_TEAM_DIR="$WORK/outer/home/.config/dc-enclave/team"
+DC_USER_DIR="$WORK/outer/home/.config/dc-enclave/user"
+EOF
+if HOME="$WORK/outer/home" DC_REPOS_DIR="$WORK/outer/home/repos" TZ=UTC \
+  DC_STUB_LOG="$LOG" DC_STUB_IMAGES="$IMAGES" DC_STUB_NETWORKS="$NETWORKS" \
+  PATH="$STUB_DIR:$ORIG_PATH" CONTAINER_BACKEND=docker \
+  bash "$ROOT_DIR/scripts/new-container.sh" rp-cliancestor --repo "$WORK/outer" </dev/null \
+  >"$WORK/rp-cliancestor.out" 2>"$WORK/rp-cliancestor.err"; then
+  fail "CLI --repo to an ancestor of the repos root should be rejected outright"
+fi
+grep -qi 'parent of it' "$WORK/rp-cliancestor.err" \
+  || fail "CLI --repo ancestor rejection should explain the broad-mount rule (got: $(cat "$WORK/rp-cliancestor.err" 2>/dev/null))"
+pass "CLI --repo to an ancestor of the repos root rejected outright"
+
+# (q) CLI --repo requires a non-empty repo path.
+: > "$LOG"
+if run_new rp-cliempty --repo "" </dev/null >"$WORK/rp-cliempty.out" 2>"$WORK/rp-cliempty.err"; then
+  fail "CLI --repo with an empty spec should be rejected"
+fi
+assert_no_config rp-cliempty
+grep -qi 'repo spec' "$WORK/rp-cliempty.err" \
+  || fail "CLI --repo empty-spec rejection should mention the repo spec requirement (got: $(cat "$WORK/rp-cliempty.err" 2>/dev/null))"
+pass "CLI --repo empty spec rejected"
+
+# (q2) CLI --repo name= requires a non-empty path component too.
+: > "$LOG"
+if run_new rp-cliemptypath --repo 'web=' </dev/null >"$WORK/rp-cliemptypath.out" 2>"$WORK/rp-cliemptypath.err"; then
+  fail "CLI --repo name= should be rejected"
+fi
+assert_no_config rp-cliemptypath
+grep -qi 'non-empty path' "$WORK/rp-cliemptypath.err" \
+  || fail "CLI --repo name= rejection should mention the empty path (got: $(cat "$WORK/rp-cliemptypath.err" 2>/dev/null))"
+pass "CLI --repo name= rejected"
+
+# (r) A safe-looking symlink path that resolves to an unsafe path is rejected.
+mkdir -p "$WORK/home/repos/unsafe:semicolon-root"
+ln -s "$WORK/home/repos/unsafe:semicolon-root" "$WORK/home/repos/safelink"
+: > "$LOG"
+if run_new rp-clisafelink --repo "$WORK/home/repos/safelink/child" </dev/null \
+  >"$WORK/rp-clisafelink.out" 2>"$WORK/rp-clisafelink.err"; then
+  fail "CLI --repo resolving through a symlink to an unsafe path should be rejected"
+fi
+assert_no_config rp-clisafelink
+grep -qi 'unsafe for a bind-mount source' "$WORK/rp-clisafelink.err" \
+  || fail "resolved-path unsafe-char rejection should explain the bind-mount rule (got: $(cat "$WORK/rp-clisafelink.err" 2>/dev/null))"
+pass "CLI --repo rejects symlink-resolved unsafe paths"
 
 echo ""
 echo "All recipe checks passed."

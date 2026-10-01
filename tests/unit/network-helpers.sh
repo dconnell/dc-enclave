@@ -60,23 +60,24 @@ mapfile -t CA < <(DEV_CONTAINERS_BACKEND=docker dce_networks_create_args)
 # CONTAINER_NETWORKS round-trips through the hardened loader.
 cfgA="$WORK/sectA/config"; mkdir -p "$(dirname "$cfgA")"; chmod 700 "$(dirname "$cfgA")"
 {
-  echo 'CONTAINER_PROJECT="p"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
+  echo 'CONFIG_SCHEMA_VERSION="2"'; echo 'CONTAINER_PROJECT="p"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
+  echo 'REPO_NAMES=(p)'; echo "REPO_PATHS=($WORK/repos/p)"
   echo 'PORTS=()'; echo 'CONTAINER_HIDDEN_PATHS=()'; echo 'CONTAINER_NETWORKS=(myapp:10.0.0.5 obs)'
 } > "$cfgA"; chmod 600 "$cfgA"
 # shellcheck disable=SC2034
-PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=()
+PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=() REPO_NAMES=() REPO_PATHS=()
 dce_load_project_config "$cfgA"
 [[ "${CONTAINER_NETWORKS[*]}" == "myapp:10.0.0.5 obs" ]] || fail "loader CONTAINER_NETWORKS round-trip"
 
 # dce_set_config_array rewrites the array line and round-trips.
 dce_set_config_array "$cfgA" CONTAINER_NETWORKS "onlynet"
 # shellcheck disable=SC2034
-PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=()
+PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=() REPO_NAMES=() REPO_PATHS=()
 dce_load_project_config "$cfgA"
 [[ "${CONTAINER_NETWORKS[*]}" == "onlynet" ]] || fail "set_config_array rewrite"
 dce_set_config_array "$cfgA" CONTAINER_NETWORKS   # empty out
 # shellcheck disable=SC2034
-PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=()
+PORTS=() CONTAINER_HIDDEN_PATHS=() CONTAINER_NETWORKS=() REPO_NAMES=() REPO_PATHS=()
 dce_load_project_config "$cfgA"
 [[ ${#CONTAINER_NETWORKS[@]} -eq 0 ]] || fail "set_config_array empty"
 

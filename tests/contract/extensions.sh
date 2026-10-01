@@ -27,7 +27,7 @@ chmod 700 "$WORK"
 # Stub harness: fake HOME + global config + stub docker + stub host `code`.
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -184,17 +184,19 @@ ORIG_PATH="$PATH"
 # Build a minimal project config (mirrors editor.sh's fixture + scopes).
 make_project() {
   local project="$1" scopes="${2:-}" running="${3:-}"
-  local cfg_dir="$HOME/.config/dce-enclave/$project"
+  local cfg_dir="$HOME/.config/dc-enclave/projects/$project"
   local repos="$WORK/repos/$project"
   mkdir -p "$cfg_dir" "$repos"
   chmod 700 "$cfg_dir"
   cat > "$cfg_dir/config" <<CFG
 CONTAINER_PROJECT="$project"
+CONFIG_SCHEMA_VERSION="2"
 CONTAINER_BACKEND="docker"
 CONTAINER_GIT_HOST="github"
 CONTAINER_IMAGE="dce-base:latest"
 CONTAINER_OVERLAY_SCOPES="$scopes"
-REPOS_DIR="$repos"
+REPO_NAMES=("$project")
+REPO_PATHS=("$repos")
 SECRET_DIR="$cfg_dir"
 SSH_KEY_PATH="$cfg_dir/ssh_key"
 TOKEN_FILE="$cfg_dir/github-token"
@@ -459,10 +461,15 @@ pass "capture: rejects malformed ids, accepts valid publisher.name"
 # ===========================================================================
 # 10. unknown editor -> error.
 # ===========================================================================
-if run_ext --editor zed show alpha >/dev/null 2>&1; then
+if run_ext show alpha --editor zed >/dev/null 2>&1; then
   fail "extensions: unknown editor must error"
 fi
 pass "unknown editor rejected"
+
+if run_ext --editor vscode show alpha >/dev/null 2>&1; then
+  fail "extensions: leading global flags before the subcommand must be rejected"
+fi
+pass "extensions: rejects flag-first ordering before the subcommand"
 
 # ===========================================================================
 # 11. apple backend: container-derived ops now work (experimental attach path),
@@ -470,8 +477,8 @@ pass "unknown editor rejected"
 # ===========================================================================
 make_project "beta" "nodejs" running
 # Rewrite beta's backend to apple.
-sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$HOME/.config/dce-enclave/beta/config"
-rm -f "$HOME/.config/dce-enclave/beta/config.bak"
+sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$HOME/.config/dc-enclave/projects/beta/config"
+rm -f "$HOME/.config/dc-enclave/projects/beta/config.bak"
 # Deterministic declared + installed state for beta.
 seed_manifest user nodejs "node.declared\n"
 printf 'node.declared\nextra.runtime\n' > "$CONTAINER_EXT_FILE"

@@ -48,6 +48,7 @@ dce_complete_subcommands() {
     "config" \
     "network" \
     "net" \
+    "repo" \
     "doctor" \
     "install" \
     "rotate-token" \
@@ -57,6 +58,77 @@ dce_complete_subcommands() {
     "help" \
     "--help" \
     "-h"
+}
+
+# Echo the default host repos root (`${DC_REPOS_DIR:-$HOME/repos}`) with a
+# leading `~` expanded. Kept local to completion so bash/zsh can discover repo
+# candidates without sourcing the full runtime lib chain.
+_dce_complete_default_repos_root() {
+  local val="${DC_REPOS_DIR:-$HOME/repos}"
+  # shellcheck disable=SC2088
+  # ~ is a literal char being matched against user input, not an expansion.
+  if [[ "$val" == "~" || "$val" == "~/"* ]]; then
+    val="$HOME${val#\~}"
+  fi
+  printf '%s' "$val"
+}
+
+# Parse one simple shell-style array assignment from a project config WITHOUT
+# sourcing it. Accepts the exact `printf %q`-style form emitted by dce's config
+# writers: KEY=( elem ... ). Echoes one decoded element per line.
+_dce_complete_extract_array() {
+  local file="$1" key="$2"
+  local line="" raw=""
+
+  [[ -f "$file" ]] || return 1
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == "$key="* ]] || continue
+    raw="${line#*=}"
+    [[ "${raw:0:1}" == "(" && "${raw: -1}" == ")" ]] || return 1
+    raw="${raw#(}"
+    raw="${raw%)}"
+    raw="${raw# }"
+    raw="${raw% }"
+    [[ -n "$raw" ]] || return 0
+
+    local token="" ch="" i=0 escaped=0
+    for ((i = 0; i < ${#raw}; i++)); do
+      ch="${raw:i:1}"
+      if (( escaped )); then
+        token+="$ch"
+        escaped=0
+        continue
+      fi
+      # shellcheck disable=SC1003
+      # '\\' is a literal single-backslash comparison.
+      if [[ "$ch" == '\\' ]]; then
+        escaped=1
+        continue
+      fi
+      if [[ "$ch" == ' ' ]]; then
+        if [[ -n "$token" ]]; then
+          printf '%s\n' "$token"
+          token=""
+        fi
+        continue
+      fi
+      token+="$ch"
+    done
+    [[ -n "$token" ]] && printf '%s\n' "$token"
+    return 0
+  done < "$file"
+
+  return 1
+}
+
+# Print the subactions of `dce repo` (list/add/remove). Mirrors the dispatch
+# table in scripts/repo.sh.
+dce_complete_repo_subactions() {
+  printf '%s\n' \
+    "list" \
+    "add" \
+    "remove"
 }
 
 # Read DC_TEAM_DIR / DC_USER_DIR from the global config WITHOUT sourcing or
@@ -95,11 +167,12 @@ _dce_read_config_root() {
 _dce_read_team_dir() { _dce_read_config_root "$1" DC_TEAM_DIR; }
 _dce_read_user_dir() { _dce_read_config_root "$1" DC_USER_DIR; }
 
-# Print configured project names (dirs under ~/.config/dce-enclave with a
-# `config` file). When $1 is non-empty, only names with that prefix are printed.
+# Print configured project names (dirs under ~/.config/dc-enclave/projects with
+# a `config` file). When $1 is non-empty, only names with that prefix are
+# printed.
 dce_complete_projects() {
   local cur="${1:-}"
-  local base="$HOME/.config/dce-enclave"
+  local base="$HOME/.config/dc-enclave/projects"
   local d name
 
   [[ -d "$base" ]] || return 0
@@ -120,13 +193,152 @@ dce_complete_projects() {
   done
 }
 
+# Print the configured repo names for one project (REPO_NAMES), optionally
+# filtered by a prefix. Parsed directly from the project config so completion
+# does not need to source project config files.
+dce_complete_project_repos() {
+  local project="$1"
+  local cur="${2:-}"
+  local config="$HOME/.config/dc-enclave/projects/$project/config"
+  local name=""
+
+  [[ -f "$config" ]] || return 0
+
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    if [[ -z "$cur" || "$name" == "$cur"* ]]; then
+      printf '%s\n' "$name"
+    fi
+  done < <(_dce_complete_extract_array "$config" REPO_NAMES)
+}
+
+# Print directories under the default repos root, optionally filtered by a
+# prefix. Used for `shell` / `exec` `--repo <name>` completion.
+dce_complete_repo_root_names() {
+  local cur="${1:-}"
+  local root=""
+  local d name
+
+  root="$(_dce_complete_default_repos_root)"
+  [[ -d "$root" ]] || return 0
+
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    setopt local_options NULL_GLOB
+  fi
+
+  for d in "$root"/*; do
+    [[ -d "$d" ]] || continue
+    name="$(basename "$d")"
+    if [[ -z "$cur" || "$name" == "$cur"* ]]; then
+      printf '%s\n' "$name"
+    fi
+  done
+}
+
+# Print the configured hidden-volume paths for one project (CONTAINER_HIDDEN_PATHS),
+# optionally filtered by a prefix. Parsed directly from the project config.
+dce_complete_project_hidden_paths() {
+  local project="$1"
+  local cur="${2:-}"
+  local config="$HOME/.config/dc-enclave/projects/$project/config"
+  local path=""
+
+  [[ -f "$config" ]] || return 0
+
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    if [[ -z "$cur" || "$path" == "$cur"* ]]; then
+      printf '%s\n' "$path"
+    fi
+  done < <(_dce_complete_extract_array "$config" CONTAINER_HIDDEN_PATHS)
+}
+
+# Print the configured network names for one project (CONTAINER_NETWORKS),
+# optionally filtered by a prefix. The stored form is <name> or <name>:<ip>.
+dce_complete_project_networks() {
+  local project="$1"
+  local cur="${2:-}"
+  local config="$HOME/.config/dc-enclave/projects/$project/config"
+  local entry="" name=""
+
+  [[ -f "$config" ]] || return 0
+
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    name="${entry%%:*}"
+    if [[ -z "$cur" || "$name" == "$cur"* ]]; then
+      printf '%s\n' "$name"
+    fi
+  done < <(_dce_complete_extract_array "$config" CONTAINER_NETWORKS)
+}
+
+# Print the union of configured network names across all projects, filtered by a
+# prefix. Used for `dce network` completions without requiring backend access.
+dce_complete_network_names() {
+  local cur="${1:-}"
+  local config="" project="" seen=""
+  local name=""
+
+  while IFS= read -r config; do
+    [[ -f "$config" ]] || continue
+    project="$(basename "$(dirname "$config")")"
+    while IFS= read -r name; do
+      [[ -z "$name" ]] && continue
+      case " $seen " in
+        *" $name "*) continue ;;
+      esac
+      seen+=" $name"
+      printf '%s\n' "$name"
+    done < <(dce_complete_project_networks "$project" "$cur")
+  done < <(printf '%s\n' "$HOME/.config/dc-enclave/projects"/*/config)
+}
+
+# Print snapshot labels recorded for one project, filtered by a prefix. Labels
+# come from the snapshot manifest names (<label>.volumes) under the project dir.
+dce_complete_snapshot_labels() {
+  local project="$1"
+  local cur="${2:-}"
+  local dir="$HOME/.config/dc-enclave/projects/$project/snapshots"
+  local file="" label=""
+
+  [[ -d "$dir" ]] || return 0
+
+  if [[ -n "${ZSH_VERSION:-}" ]]; then
+    setopt local_options NULL_GLOB
+  fi
+
+  for file in "$dir"/*.volumes; do
+    [[ -f "$file" ]] || continue
+    label="$(basename "$file" .volumes)"
+    if [[ -z "$cur" || "$label" == "$cur"* ]]; then
+      printf '%s\n' "$label"
+    fi
+  done
+}
+
+# Print the writable and read-only friendly key names accepted by `dce config
+# get`. `set` intentionally keeps the smaller writable-only key set.
+dce_complete_config_get_keys() {
+  printf '%s\n' \
+    "cpus" \
+    "memory" \
+    "scopes" \
+    "ports" \
+    "hide" \
+    "networks" \
+    "project" \
+    "backend" \
+    "image" \
+    "repos"
+}
+
 # Print available overlay scope names discovered from the team and user
 # overlays/ leaf directories, applying the same DC_TEAM_DIR / DC_USER_DIR
 # resolution as the runtime helpers. Order is preserved and duplicates removed
 # (first occurrence wins). Dedup uses a newline-delimited accumulator so a
 # scope name can never partially match another (names cannot contain newlines).
 dce_complete_scopes() {
-  local config="$HOME/.config/dce-enclave/config"
+  local config="$HOME/.config/dc-enclave/config"
   local team_dir="" user_dir=""
   local f name
   local nl=$'\n'
@@ -139,8 +351,8 @@ dce_complete_scopes() {
     user_dir="$(_dce_complete_resolve_root "$user_dir")"
   fi
 
-  [[ -z "$team_dir" ]] && team_dir="$HOME/.config/dce-enclave/team"
-  [[ -z "$user_dir" ]] && user_dir="$HOME/.config/dce-enclave/user"
+  [[ -z "$team_dir" ]] && team_dir="$HOME/.config/dc-enclave/team"
+  [[ -z "$user_dir" ]] && user_dir="$HOME/.config/dc-enclave/user"
 
   local team_od="$team_dir/overlays"
   local user_od="$user_dir/overlays"
@@ -177,7 +389,7 @@ _dce_complete_resolve_root() {
   if [[ "$val" == "~" || "$val" == "~/"* ]]; then
     val="$HOME${val#\~}"
   elif [[ "$val" != /* && -n "$val" ]]; then
-    val="$HOME/.config/dce-enclave/$val"
+    val="$HOME/.config/dc-enclave/$val"
   fi
   printf '%s' "$val"
 }
@@ -230,7 +442,7 @@ dce_complete_doctor_targets() {
   local cur="${1:-}"
   local d name
   printf '%s\n' apple docker orbstack colima podman
-  for d in "$HOME/.config/dce-enclave"/*; do
+  for d in "$HOME/.config/dc-enclave/projects"/*; do
     [[ -d "$d" && -f "$d/config" ]] || continue
     name="$(basename "$d")"
     [[ -z "$cur" || "$name" == "$cur"* ]] && printf '%s\n' "$name"

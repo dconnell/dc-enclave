@@ -52,8 +52,8 @@ pass "Section A: id normalization + registry"
 # are deterministic and isolated from the test runner's real config.
 # ===========================================================================
 FAKE_HOME="$WORK/home"
-mkdir -p "$FAKE_HOME/.config/dce-enclave"
-GLOBAL_CFG="$FAKE_HOME/.config/dce-enclave/config"
+mkdir -p "$FAKE_HOME/.config/dc-enclave"
+GLOBAL_CFG="$FAKE_HOME/.config/dc-enclave/config"
 
 run_select() {
   HOME="$FAKE_HOME" \

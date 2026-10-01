@@ -42,6 +42,13 @@ source "$ROOT_DIR/lib/extensions.sh"
 EXPLICIT_EDITOR=""
 PROJECT=""
 
+PROJECT="${1:-}"
+if [[ -n "$PROJECT" && "$PROJECT" != -* ]]; then
+  shift
+else
+  PROJECT=""
+fi
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --editor)
@@ -61,27 +68,24 @@ while [[ $# -gt 0 ]]; do
       dce_die "Unknown option: $1"
       ;;
     *)
-      if [[ -z "$PROJECT" ]]; then
-        PROJECT="$1"
-      else
-        dce_die "Unexpected argument: $1"
-      fi
+      dce_die "Unexpected argument: $1"
       shift
       ;;
   esac
 done
 
 if [[ -z "$PROJECT" ]]; then
-  echo "Usage: dce editor [--editor <id>] <project>" >&2
+  echo "Usage: dce editor <project> [--editor <id>]" >&2
   echo "" >&2
   echo "Launch your editor attached to a running dev container at /workspace." >&2
-  echo "Docker-compatible backends only (docker/orbstack/colima/podman)." >&2
+  echo "Works on all backends (docker/orbstack/colima/podman/apple/container);" >&2
+  echo "apple uses VS Code's experimental apple-container attach path." >&2
   echo "" >&2
   echo "Editor selection: --editor <id> > \$DCE_EDITOR > global DCE_EDITOR > \$VISUAL > \$EDITOR > default" >&2
   exit 1
 fi
 
-CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG="$(dce_project_config_path "$PROJECT")"
 if [[ ! -f "$CONFIG" ]]; then
   dce_die "No config for '$PROJECT'. Run: dce new $PROJECT <scope>"
 fi
@@ -113,7 +117,7 @@ if ! backend_is_running "$PROJECT"; then
 fi
 
 echo "  Backend: $ACTIVE_BACKEND"
-echo "  Workspace: /workspace (-> ${REPOS_DIR:-<repos-dir>} on host)"
+echo "  Workspace: /workspace (project root; repos bind-mounted under it)"
 
 # Read the project's git token for a status line (provider env-var name:
 # GITHUB_TOKEN / GITLAB_TOKEN), mirroring `dce shell`. Empty = unset.

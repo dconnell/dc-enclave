@@ -4,7 +4,7 @@
 # git token (PAT) into a container, state-preserving and idempotent.
 #
 # Run this right after editing the host token file
-# (~/.config/dce-enclave/<name>/<host>-token) to refresh the container's
+# (~/.config/dc-enclave/projects/<name>/<host>-token) to refresh the container's
 # ~/.git-credentials without a full rebuild. It force-writes the current token
 # (overwriting a stale or compromised value) and re-wires git auth, leaving all
 # container state (packages, caches, running processes) untouched.
@@ -35,7 +35,7 @@ source "$ROOT_DIR/lib/common.sh"
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/container-backend.sh"
 
-CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG="$(dce_project_config_path "$PROJECT")"
 if [[ ! -f "$CONFIG" ]]; then
   dce_die "No config for '$PROJECT'."
 fi

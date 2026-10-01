@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# lib/devcontainer.sh - Managed .devcontainer/devcontainer.json helpers.
+# lib/devcontainer.sh - Managed devcontainer.json helpers (file lives at ~/.config/dc-enclave/projects/<project>/devcontainer.json).
 #
 # The devcontainer.json that `dce new` seeds (Docker-compatible backends) embeds
 # several fields derived from dce-managed state: build.dockerfile (from scopes),
@@ -42,6 +42,7 @@ declare -gr _DC_VSCODE_DEVCONTAINER_SH_LOADED=1
 # "<tag>\t<value>" lines (set fields repeat once per member); comparing two
 # sorted streams is the drift test.
 declare -gr _DC_DRIFT_TAG_SCOPES="scopes"
+declare -gr _DC_DRIFT_TAG_REPOS="repos"
 declare -gr _DC_DRIFT_TAG_HIDDEN="hidden"
 declare -gr _DC_DRIFT_TAG_NETWORKS="networks"
 declare -gr _DC_DRIFT_TAG_PORTS="ports"
@@ -51,6 +52,7 @@ declare -gr _DC_DRIFT_TAG_EXTENSIONS="extensions"
 _dce_dc_drift_label() {
   case "$1" in
     "$_DC_DRIFT_TAG_SCOPES")  printf 'scopes' ;;
+    "$_DC_DRIFT_TAG_REPOS")   printf 'repo mounts' ;;
     "$_DC_DRIFT_TAG_HIDDEN")  printf 'hidden paths' ;;
     "$_DC_DRIFT_TAG_NETWORKS") printf 'networks' ;;
     "$_DC_DRIFT_TAG_PORTS")   printf 'ports' ;;
@@ -107,9 +109,12 @@ _dce_dc_csv_lines() {
 # -----------------------------------------------------------------------------
 # Expected canonical state (from current config / inputs).
 #
-# Emits "<tag>\t<value>" lines for the four drift fields:
+# Emits "<tag>\t<value>" lines for the drift fields:
 #   scopes    one line (omitted when build_dockerfile is empty)
-#   hidden    one line per hidden path (the managed mount TARGET path)
+#   repos     one line per schema-v2 repo bind ("repos\t<name>=<host-path>";
+#             repos_nl is newline-separated "<name>\t<host-path>" lines)
+#   hidden    one line per user hidden path PLUS the managed /workspace/.cache
+#             volume, which every schema-v2 project carries
 #   networks  one line per network entry (name or name:ip)
 #   ports     one line per CONTAINER port
 # Pure: no I/O. Callers pass already-normalized CSVs.
@@ -127,16 +132,31 @@ dce_devcontainer_expected_state() {
   local ext_namespace="${6:-}"
   local extensions_csv="${7:-}"
   local manifests_exist="${8:-false}"
+  # Optional schema-v2 repo binds: newline-separated "<name>\t<host-path>".
+  local repos_nl="${9:-}"
 
   if [[ -n "$build_dockerfile" ]]; then
     printf '%s\t%s\n' "$_DC_DRIFT_TAG_SCOPES" "$(_dce_dc_scope_token "$build_dockerfile")"
   fi
+
+  local rl="" rname="" rpath=""
+  while IFS= read -r rl; do
+    [[ -z "$rl" ]] && continue
+    rname="${rl%%$'\t'*}"
+    rpath="${rl#*$'\t'}"
+    [[ -n "$rname" && -n "$rpath" ]] || continue
+    printf '%s\t%s=%s\n' "$_DC_DRIFT_TAG_REPOS" "$rname" "$rpath"
+  done <<< "$repos_nl"
 
   local hp=""
   while IFS= read -r hp; do
     [[ -z "$hp" ]] && continue
     printf '%s\t%s\n' "$_DC_DRIFT_TAG_HIDDEN" "$hp"
   done < <(_dce_dc_csv_lines "$hidden_csv")
+
+  # The managed cache volume is part of the v2 mount shape even when the
+  # project declares no hidden paths.
+  printf '%s\t%s\n' "$_DC_DRIFT_TAG_HIDDEN" "$(dce_managed_cache_path)"
 
   local ne=""
   while IFS= read -r ne; do
@@ -196,6 +216,10 @@ dce_devcontainer_recorded_state_jq() {
   # Tag literals are hardcoded here (the jq program is single-quoted, so bash
   # vars would not expand). They mirror the _DC_DRIFT_TAG_* constants exactly.
   # The scopes token mirrors _dce_dc_scope_token so recorded matches expected.
+  # Repo binds are recognized by their managed shape: type=bind with a
+  # /workspace/<name> target whose name starts alphanumeric (the repo-name
+  # grammar) -- the npmrc bind lives outside /workspace and the managed
+  # volumes are type=volume, so neither collides.
   # Extension parsing is conditional on $ns being non-empty so a caller that
   # passes no namespace pays no cost and sees no extensions lines.
   jq -r --arg slug "$slug" --arg ns "$ext_namespace" '
@@ -209,6 +233,10 @@ dce_devcontainer_recorded_state_jq() {
       | select(test("source=dce-hide-" + $slug + "-"))
       | capture("target=/workspace/(?<p>[^,]+)")
       | "hidden\t" + .p),
+    (.mounts[]?
+      | select(test("target=/workspace/[A-Za-z0-9][^/,]*,type=bind"))
+      | capture("source=(?<s>[^,]+),target=/workspace/(?<n>[A-Za-z0-9][^/,]*),type=bind")
+      | "repos\t" + .n + "=" + .s),
     (reduce (.runArgs[]?) as $t ({flag:"", nets:[]};
         if $t == "--network" then .flag = "net"
         elif $t == "--ip" then .flag = "ip"
@@ -246,10 +274,20 @@ dce_devcontainer_recorded_state_grep() {
   done <<< "$content"
 
   # hidden: each managed mount string (source=dce-hide-<slug>-) -> its target path.
+  # This also covers the managed /workspace/.cache volume (same naming family).
   while IFS= read -r line; do
     [[ "$line" == *"source=dce-hide-$slug-"* ]] || continue
     if [[ "$line" =~ target=/workspace/([^,\"]+) ]]; then
       printf '%s\t%s\n' "$_DC_DRIFT_TAG_HIDDEN" "${BASH_REMATCH[1]}"
+    fi
+  done <<< "$content"
+
+  # repos: managed repo binds by shape -- type=bind with a /workspace/<name>
+  # target whose name starts alphanumeric (repo-name grammar). Dot-prefixed
+  # targets are user-owned paths, never repo mounts.
+  while IFS= read -r line; do
+    if [[ "$line" =~ source=([^,\"]+),target=/workspace/([A-Za-z0-9][^,/\" ]*),type=bind ]]; then
+      printf '%s\t%s=%s\n' "$_DC_DRIFT_TAG_REPOS" "${BASH_REMATCH[2]}" "${BASH_REMATCH[1]}"
     fi
   done <<< "$content"
 
@@ -383,18 +421,20 @@ dce_devcontainer_detect_drift() {
   local ext_namespace="${7:-}"
   local extensions_csv="${8:-}"
   local manifests_exist="${9:-false}"
+  # Optional schema-v2 repo binds: newline-separated "<name>\t<host-path>".
+  local repos_nl="${10:-}"
 
   [[ -f "$file" ]] || return 0
 
   local expected recorded
   expected="$(dce_devcontainer_expected_state "$project" "$build_dockerfile" \
     "$hidden_csv" "$networks_csv" "$ports_csv" \
-    "$ext_namespace" "$extensions_csv" "$manifests_exist")"
+    "$ext_namespace" "$extensions_csv" "$manifests_exist" "$repos_nl")"
   recorded="$(dce_devcontainer_recorded_state "$project" "$file" "$ext_namespace")"
 
   # Fields to compare; scopes only when a dockerfile was supplied; extensions
   # only when manifests are adopted (pre-adoption the array is user-owned).
-  local -a tags=("$_DC_DRIFT_TAG_HIDDEN" "$_DC_DRIFT_TAG_NETWORKS" "$_DC_DRIFT_TAG_PORTS")
+  local -a tags=("$_DC_DRIFT_TAG_REPOS" "$_DC_DRIFT_TAG_HIDDEN" "$_DC_DRIFT_TAG_NETWORKS" "$_DC_DRIFT_TAG_PORTS")
   [[ -n "$build_dockerfile" ]] && tags=("$_DC_DRIFT_TAG_SCOPES" "${tags[@]}")
   [[ "$manifests_exist" == "true" && -n "$ext_namespace" ]] \
     && tags+=("$_DC_DRIFT_TAG_EXTENSIONS")
@@ -491,8 +531,29 @@ _dce_dc_json_number_array() {
   printf '[%s]' "$arr"
 }
 
-# Full JSON for a from-scratch seed. Byte-compatible with the heredoc `dce new`
-# historically emitted, so existing lifecycle assertions still hold.
+# Build the managed mount strings for the schema-v2 mount shape, one per line:
+#   repo binds      source=<host-path>,target=/workspace/<name>,type=bind
+#   managed cache   source=<cache-volume>,target=/workspace/.cache,type=volume
+# Used by both the renderer and the jq sync so the two always agree.
+_dce_dc_repo_and_cache_mount_entries() {  # <project> <repos_nl>
+  local project="$1"
+  local repos_nl="$2"
+  local rl="" name="" path=""
+  while IFS= read -r rl; do
+    [[ -z "$rl" ]] && continue
+    name="${rl%%$'\t'*}"
+    path="${rl#*$'\t'}"
+    [[ -n "$name" && -n "$path" ]] || continue
+    printf 'source=%s,target=/workspace/%s,type=bind\n' "$path" "$name"
+  done <<< "$repos_nl"
+  printf 'source=%s,target=/workspace/%s,type=volume\n' \
+    "$(dce_cache_volume_name "$project")" "$(dce_managed_cache_path)"
+}
+
+# Full JSON for a from-scratch seed. Renders the schema-v2 mount shape:
+# per-repo binds, the managed /workspace/.cache volume, the .npmrc secret bind,
+# and one volume per hidden path. There is no workspaceMount: /workspace is the
+# project root assembled from those mounts, not a host bind.
 #
 # The optional auth_method argument ("pat"/"ssh"/"none", from
 # dce_git_auth_method) controls whether the VS Code git-auth setting is emitted:
@@ -515,6 +576,8 @@ dce_devcontainer_render() {
   # produce byte-identical output.
   local ext_namespace="${10:-}"
   local extensions_csv="${11:-}"
+  # Optional schema-v2 repo binds: newline-separated "<name>\t<host-path>".
+  local repos_nl="${12:-}"
 
   local forward_ports_block=""
   local -a container_ports=()
@@ -533,8 +596,14 @@ dce_devcontainer_render() {
     forward_ports_block=$',\n  "forwardPorts": ['"$fp_csv"$']'
   fi
 
-  # mounts always present (npmrc bind + one volume per hidden path).
+  # mounts always present: repo binds + managed .cache volume + npmrc bind +
+  # one volume per hidden path.
   local -a mounts_entries=()
+  local rme=""
+  while IFS= read -r rme; do
+    [[ -z "$rme" ]] && continue
+    mounts_entries+=("$rme")
+  done < <(_dce_dc_repo_and_cache_mount_entries "$project" "$repos_nl")
   mounts_entries+=("source=$secret_dir/.npmrc,target=/home/dev/.npmrc,type=bind,readonly")
   local hp="" hidden_volume=""
   while IFS= read -r hp; do
@@ -624,7 +693,6 @@ dce_devcontainer_render() {
     "dockerfile": "$build_dockerfile",
     "context": "$build_context"
   },
-  "workspaceMount": "source=\${localWorkspaceFolder},target=/workspace,type=bind",
   "workspaceFolder": "/workspace",
   "remoteUser": "dev",
   "postCreateCommand": "true"$forward_ports_block$mounts_block$runargs_block$containerenv_block$customizations_block
@@ -663,6 +731,10 @@ dce_devcontainer_sync() {
   local ext_namespace="${12:-}"
   local extensions_csv="${13:-}"
   local manifests_exist="${14:-false}"
+  # Optional schema-v2 repo binds: newline-separated "<name>\t<host-path>".
+  # Managed repo binds are dropped by their /workspace/<name> target and
+  # re-added from this set, so a renamed host path is replaced in place.
+  local repos_nl="${15:-}"
 
   if ! command -v jq >/dev/null 2>&1; then
     printf 'ERROR: sync-vscode requires jq (it is optional everywhere else).\n' >&2
@@ -674,10 +746,16 @@ dce_devcontainer_sync() {
   fi
 
   # Managed mounts to (re)add. Existing managed mounts are dropped STRUCTURALLY
-  # in jq (hidden vols by their dce-hide-<slug>- source; the npmrc bind by its
-  # stable /home/dev/.npmrc target), so a stale npmrc path or an old hidden
-  # volume is replaced even if its exact source differs from the current one.
+  # in jq (repo binds by their /workspace/<name> target; hidden vols by their
+  # dce-hide-<slug>- source; the npmrc bind by its stable /home/dev/.npmrc
+  # target), so a stale npmrc path, an old hidden volume, or a moved repo is
+  # replaced even if its exact source differs from the current one.
   local -a add_mounts=()
+  local rme=""
+  while IFS= read -r rme; do
+    [[ -z "$rme" ]] && continue
+    add_mounts+=("$rme")
+  done < <(_dce_dc_repo_and_cache_mount_entries "$project" "$repos_nl")
   add_mounts+=("source=$secret_dir/.npmrc,target=/home/dev/.npmrc,type=bind,readonly")
   local hp="" hidden_volume=""
   while IFS= read -r hp; do
@@ -724,10 +802,12 @@ dce_devcontainer_sync() {
   local ext_ns_arg="$ext_namespace"
 
   # Count user top-level keys we will NOT touch (for the summary). Array
-  # subtraction is unambiguous: keys minus the managed set.
+  # subtraction is unambiguous: keys minus the managed set. workspaceMount is
+  # not in the managed list because it is DELETED outright (the v2 layout has
+  # no host workspace bind to describe).
   local user_keys="0"
   user_keys="$(jq -r '
-      (keys - ["name","build","workspaceMount","workspaceFolder","remoteUser",
+      (keys - ["name","build","workspaceFolder","remoteUser",
                "postCreateCommand","forwardPorts","runArgs","mounts","containerEnv",
                "customizations"]
       ) | length' "$file" 2>/dev/null || printf '0')"
@@ -741,7 +821,7 @@ dce_devcontainer_sync() {
     printf 'Preserved (untouched): %s user top-level key(s) + user mounts.\n' "$user_keys" >&2
     dce_devcontainer_detect_drift "$project" "$file" "$build_dockerfile" \
       "$hidden_csv" "$networks_csv" "$ports_csv" \
-      "$ext_ns_arg" "$extensions_csv" "$manifests_exist" >&2 || true
+      "$ext_ns_arg" "$extensions_csv" "$manifests_exist" "$repos_nl" >&2 || true
     return 0
   fi
 
@@ -771,7 +851,7 @@ dce_devcontainer_sync() {
       --arg manifests "$manifests_exist" '
       .name = $name
       | .build = {"dockerfile": $df, "context": $ctx}
-      | .workspaceMount = "source=${localWorkspaceFolder},target=/workspace,type=bind"
+      | del(.workspaceMount)
       | .workspaceFolder = "/workspace"
       | .remoteUser = "dev"
       | .postCreateCommand = "true"
@@ -783,6 +863,7 @@ dce_devcontainer_sync() {
           | ($e | try capture("target=(?<t>[^\",]+)") catch null) as $tgt
           | if ($src // null) != null and ($src.s | startswith("dce-hide-" + $slug + "-")) then empty
             elif ($tgt // null) != null and $tgt.t == "/home/dev/.npmrc" then empty
+            elif $e | test("target=/workspace/[A-Za-z0-9][^,/]*,type=bind") then empty
             else $e end
         ) ) + $add_mounts
       | (if $tz == "" then .
@@ -814,7 +895,7 @@ dce_devcontainer_sync() {
   # Best-effort: confirm the file is now in sync.
   if ! dce_devcontainer_detect_drift "$project" "$file" "$build_dockerfile" \
         "$hidden_csv" "$networks_csv" "$ports_csv" \
-        "$ext_ns_arg" "$extensions_csv" "$manifests_exist" >/dev/null 2>&1; then
+        "$ext_ns_arg" "$extensions_csv" "$manifests_exist" "$repos_nl" >/dev/null 2>&1; then
     dce_warn "devcontainer.json still reports drift after sync (please report this bug): $file"
   fi
   return 0

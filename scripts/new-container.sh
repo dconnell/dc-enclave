@@ -3,7 +3,7 @@
 # scripts/new-container.sh - `dce new`: create a new isolated dev container.
 #
 # High-level flow:
-#   1. Parse project name, optional scope(s), flags (--repo-path/--cpus/
+#   1. Parse project name, optional scope(s), flags (--repo/--cpus/
 #      --memory/--hide), and host:container port mappings.
 #   2. Resolve the derived image from scopes; compose+build it if missing,
 #      reuse it if present (dce-base:latest when no scopes).
@@ -45,7 +45,7 @@ source "$ROOT_DIR/lib/devcontainer.sh"
 source "$ROOT_DIR/lib/extensions.sh"
 
 # 1. Parse arguments: project name, optional scope, flags, and port mappings.
-PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--config <path>|--config=<path>] [--save-team] [--save-user] [--git-host <provider>] [--repo-path <path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--yes|-y] [port:port ...]}"
+PROJECT="${1:?Usage: new-container.sh <project-name> [scope[,scope...]] [--config <path>|--config=<path>] [--save-team] [--save-user] [--git-host <provider>] [--repo <path|name=path>] [--cpus <N>] [--memory <val>] [--hide <path[,path...]> ...] [--yes|-y] [port:port ...]}"
 shift
 SCOPE_INPUT=""
 CLI_SET_SCOPE=false
@@ -61,7 +61,7 @@ if [[ ! "$PROJECT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
 fi
 
 PORTS=()
-REPO_PATH_OVERRIDE=""
+REPO_SPECS=()
 HIDDEN_PATH_INPUTS=()
 NETWORK_INPUT=""
 NETWORK_IP=""
@@ -74,7 +74,7 @@ CLI_SET_MEMORY=false
 CLI_SET_HIDE=false
 CLI_SET_NETWORK=false
 CLI_SET_IP=false
-CLI_SET_REPO_PATH=false
+CLI_SET_REPO=false
 CLI_SET_PORTS=false
 ASSUME_YES=false
 while [[ $# -gt 0 ]]; do
@@ -94,11 +94,15 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --repo-path)
-      if [[ $# -lt 2 || "$2" == --* ]]; then
-        dce_die "--repo-path requires a path argument"
+      dce_die "--repo-path was removed. Use repeatable --repo <path> or --repo <name>=<path> instead,
+   or check out the legacy-single-repo branch for the old single-repo model."
+      ;;
+    --repo)
+      if [[ $# -lt 2 || -z "$2" || "$2" == --* ]]; then
+        dce_die "--repo requires a repo spec (<path> or <name>=<path>)"
       fi
-      REPO_PATH_OVERRIDE="$2"
-      CLI_SET_REPO_PATH=true
+      REPO_SPECS+=("$2")
+      CLI_SET_REPO=true
       shift 2
       ;;
     --cpus)
@@ -182,7 +186,7 @@ CLI_CONTAINER_CPUS="${CONTAINER_CPUS:-}"
 CLI_CONTAINER_MEMORY="${CONTAINER_MEMORY:-}"
 CLI_NETWORK_INPUT="$NETWORK_INPUT"
 CLI_NETWORK_IP="$NETWORK_IP"
-CLI_REPO_PATH_OVERRIDE="$REPO_PATH_OVERRIDE"
+CLI_REPO_SPECS=("${REPO_SPECS[@]}")
 CLI_HIDDEN_PATH_INPUTS=("${HIDDEN_PATH_INPUTS[@]}")
 CLI_PORTS=("${PORTS[@]}")
 
@@ -242,8 +246,10 @@ if $SAVE_TEAM_RECIPE || $SAVE_USER_RECIPE; then
     SAVE_RECIPE_LINES+=("ip=$CLI_NETWORK_IP")
   fi
 
-  if $CLI_SET_REPO_PATH; then
-    SAVE_RECIPE_LINES+=("repo-path=$CLI_REPO_PATH_OVERRIDE")
+  if $CLI_SET_REPO; then
+    for SAVE_REPO_SPEC in "${CLI_REPO_SPECS[@]}"; do
+      [[ -n "$SAVE_REPO_SPEC" ]] && SAVE_RECIPE_LINES+=("repo=$SAVE_REPO_SPEC")
+    done
   fi
 
   if $CLI_SET_PORTS; then
@@ -283,8 +289,8 @@ fi
 if [[ -z "$NETWORK_IP" && -n "${_DC_RECIPE_MERGED_NETWORK_IP:-}" ]]; then
   NETWORK_IP="$_DC_RECIPE_MERGED_NETWORK_IP"
 fi
-if [[ -z "$REPO_PATH_OVERRIDE" && -n "${_DC_RECIPE_MERGED_REPO_PATH_OVERRIDE:-}" ]]; then
-  REPO_PATH_OVERRIDE="$_DC_RECIPE_MERGED_REPO_PATH_OVERRIDE"
+if [[ ${#REPO_SPECS[@]} -eq 0 && ${#_DC_RECIPE_MERGED_REPO_SPECS[@]} -gt 0 ]]; then
+  REPO_SPECS=("${_DC_RECIPE_MERGED_REPO_SPECS[@]}")
 fi
 if [[ ${#PORTS[@]} -eq 0 && ${#_DC_RECIPE_MERGED_PORTS[@]} -gt 0 ]]; then
   PORTS=("${_DC_RECIPE_MERGED_PORTS[@]}")
@@ -308,10 +314,6 @@ SCOPE_CSV="$(dce_normalize_scopes_csv "$SCOPE_INPUT")" || exit 1
 IMAGE="$(dce_image_ref_from_scopes "$(dce_team_overlays_dir)" "$(dce_user_overlays_dir)" "$SCOPE_CSV")" || exit 1
 
 HIDDEN_PATHS_CSV="$(dce_normalize_hidden_paths_values "${HIDDEN_PATH_INPUTS[@]:-}")" || exit 1
-CONTAINER_HIDDEN_PATHS=()
-if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
-  IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
-fi
 
 # Resolve the network membership requested via --network (with optional --ip on
 # the primary). The result is a CONTAINER_NETWORKS array of `name[:ip]` entries;
@@ -354,11 +356,11 @@ for port_mapping in "${PORTS[@]}"; do
   fi
 done
 
-SECRET_DIR="$HOME/.config/dce-enclave/$PROJECT"
-CONFIG_FILE="$HOME/.config/dce-enclave/$PROJECT/config"
+SECRET_DIR="$(dce_project_dir "$PROJECT")"
+CONFIG_FILE="$(dce_project_config_path "$PROJECT")"
 # shellcheck disable=SC2088
 # Display path shown to the user with a literal ~; not meant to expand.
-CONFIG_FILE_DISPLAY="~/.config/dce-enclave/$PROJECT/config"
+CONFIG_FILE_DISPLAY="~/.config/dc-enclave/projects/$PROJECT/config"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   dce_die "Project '$PROJECT' already exists (config: $CONFIG_FILE_DISPLAY)
@@ -400,27 +402,13 @@ if [[ ${#CONTAINER_NETWORKS[@]} -gt 0 ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# repo-path safety gate
+# repo-spec safety gate
 #
-# `repo-path` selects the host directory bind-mounted read-write as /workspace.
-# CLI `--repo-path` is an intentional power-user escape hatch (unrestricted);
-# an auto-loaded (untrusted) recipe supplying `repo-path` is NOT -- it must not
-# silently widen the mount. Two layers run BEFORE the container is created:
-#
-#   1. Character whitelist (any source): a value containing characters unsafe
-#      in a bind-mount source (`:` breaks the `--volume src:dst` spec; shell
-#      metacharacters, control chars, and quotes are refused too) is rejected
-#      outright, before anything is created. This guards mount-spec integrity,
-#      not the trust boundary, so it applies to CLI and recipe alike.
-#   2. Sensitive-root + confirmation gate (recipe source only): after the target
-#      is created and resolved to its CANONICAL form (symlinks followed), a
-#      recipe repo-path that resolves to /, $HOME, the repos root, or a parent
-#      of it is hard-rejected; one that merely lands OUTSIDE the default repos
-#      dir is gated behind an operator confirmation (--yes/-y honors it with a
-#      visible notice). Canonical resolution is essential here: a symlink can
-#      make a path look inside the repos root lexically while actually pointing
-#      at $HOME, so the lexical view alone is not a sound trust boundary. CLI
-#      --repo-path skips this layer entirely (escape hatch).
+# `--repo` / recipe `repo=` entries select the host directories bind-mounted
+# read-write under /workspace/<repo-name>. Every entry passes through the same
+# character + path validation and the outside-default-root confirmation gate;
+# recipe-sourced entries additionally hard-reject sensitive roots and
+# relative-path widening (untrusted recipe input must never widen the mount).
 # -----------------------------------------------------------------------------
 
 # Expand a leading ~ to $HOME (literal-char match, not shell expansion), so a
@@ -448,8 +436,10 @@ _dce_new_repo_path_chars_unsafe() {  # <value>
 
 # Return 0 (true) when an already-canonicalized mount source is too broad to
 # expose: empty, the host root (/), the user's home, the repos root, or an
-# ancestor of it. Recipe-sourced only -- the CLI --repo-path escape hatch is
-# intentionally unrestricted.
+# ancestor of it. Applied to recipe-sourced values only: an untrusted recipe
+# must never widen the bind mount that far. CLI entries rely on the universal
+# / and $HOME rejection in dce_validate_repo_path plus the outside-default-root
+# confirmation gate below.
 _dce_new_repo_path_is_sensitive_root() {  # <resolved> <home> <repos_root>
   local resolved="$1" home="$2" root="$3"
   if [[ -z "$resolved" || "$resolved" == "/" ]]; then
@@ -466,76 +456,77 @@ _dce_new_repo_path_is_sensitive_root() {  # <resolved> <home> <repos_root>
   return 1
 }
 
-if [[ -n "$REPO_PATH_OVERRIDE" ]]; then
-  repo_target="$REPO_PATH_OVERRIDE"
-else
-  repo_target="$(_dce_new_repo_path_expand_tilde "${DC_REPOS_DIR:-$HOME/repos}")/$PROJECT"
-fi
-repo_target="$(_dce_new_repo_path_expand_tilde "$repo_target")"
-if [[ "$repo_target" != /* ]]; then
-  repo_target="$PWD/$repo_target"
-fi
-
-# Layer 1: character whitelist (any source), before anything is created. A value
-# with characters unsafe for a bind-mount source (`:` splits the mount spec, etc.)
-# is refused regardless of whether it came from the CLI or a recipe.
-if _dce_new_repo_path_chars_unsafe "$repo_target"; then
-  _new_repo_err="repo-path contains characters that are unsafe for a bind-mount source: $repo_target
-       (Allowed: letters, digits, and  / . _ - ~ + @ , and space.)"
-  if [[ -n "$REPO_PATH_OVERRIDE" && "$CLI_SET_REPO_PATH" == true ]]; then
-    _new_repo_err+="
-       (--repo-path was: $REPO_PATH_OVERRIDE)"
-  elif [[ -n "$REPO_PATH_OVERRIDE" ]]; then
-    _new_repo_err+="
-       (recipe repo-path was: $REPO_PATH_OVERRIDE)"
-  fi
-  dce_die "$_new_repo_err"
-fi
-
-mkdir -p "$repo_target"
-REPOS_DIR="$(dce_resolve_path "$repo_target")" || {
-  if [[ -n "$REPO_PATH_OVERRIDE" ]]; then
-    dce_die "--repo-path could not be resolved: $REPO_PATH_OVERRIDE"
-  else
-    dce_die "Default repo path could not be resolved: $repo_target"
-  fi
-}
-
-# Canonical anchors (symlinks resolved) so the trust boundary reasons about where
-# the mount will REALLY land, not where it appears to land lexically. A symlink
-# can redirect an inside-repos-root path to $HOME or /; only the canonical form
-# closes that hole.
-HOME_CANON="$(dce_resolve_path "$HOME")"
-DEFAULT_REPOS_ROOT_CANON="$(_dce_new_repo_path_expand_tilde "${DC_REPOS_DIR:-$HOME/repos}")"
+DEFAULT_REPOS_ROOT_CANON="$(dce_default_repos_root)"
 DEFAULT_REPOS_ROOT_CANON="$(dce_resolve_path "$DEFAULT_REPOS_ROOT_CANON" 2>/dev/null || printf '%s' "$DEFAULT_REPOS_ROOT_CANON")"
 
-# Layer 2: recipe-sourced repo-path only. CLI --repo-path is the escape hatch and
-# skips this layer entirely.
-if [[ -n "$REPO_PATH_OVERRIDE" && "$CLI_SET_REPO_PATH" != true ]]; then
-  if _dce_new_repo_path_is_sensitive_root "$REPOS_DIR" "$HOME_CANON" "$DEFAULT_REPOS_ROOT_CANON"; then
-    dce_die "recipe repo-path resolves to '$REPOS_DIR', a sensitive root
-       (/, your home, the repos root, or a parent of it); refusing to widen the bind mount.
-       (recipe repo-path was: $REPO_PATH_OVERRIDE)"
+if [[ ${#REPO_SPECS[@]} -eq 0 ]]; then
+  REPO_SPECS=("$(_dce_new_repo_path_expand_tilde "${DC_REPOS_DIR:-$HOME/repos}")/$PROJECT")
+fi
+
+REPO_NAMES=()
+REPO_PATHS=()
+REPOS_DIR=""
+
+for repo_spec in "${REPO_SPECS[@]}"; do
+  _repo_path_value="$repo_spec"
+  if [[ "$repo_spec" == *=* ]]; then
+    _repo_path_value="${repo_spec#*=}"
   fi
-  # A RELATIVE recipe repo-path must resolve UNDER the repos root. One whose
-  # `..` escapes it is unambiguous traversal and is hard-rejected -- NOT routed
-  # to the confirmation path. Without this the verdict depends on $PWD depth: a
-  # deep CWD (e.g. CI) resolves `../../..` to a non-sensitive intermediate dir
-  # that slips past the sensitive-root check into the outside-default flow,
-  # which `exit 0`s on decline. Legit outside-default usage is absolute, so it
-  # still reaches the confirmation below untouched.
-  if [[ "$REPO_PATH_OVERRIDE" != /* ]] \
-     && [[ "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON" && "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON/"* ]]; then
-    dce_die "recipe repo-path '$REPO_PATH_OVERRIDE' resolves outside the repos root ('$REPOS_DIR') via a relative path; refusing to widen the bind mount."
+  if [[ -z "$_repo_path_value" ]]; then
+    dce_die "repo spec must include a non-empty path: $repo_spec"
   fi
-  if [[ "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON" && "$REPOS_DIR" != "$DEFAULT_REPOS_ROOT_CANON/"* ]]; then
-    echo "Recipe 'repo-path' resolves outside the default repos directory:"
-    echo "  resolved path : $REPOS_DIR"
+  # Bare names resolve against the default repos root; path-shaped relatives
+  # stay $PWD-relative (dce_repo_path_resolve -- same rule as the resolver).
+  _repo_path_value="$(dce_repo_path_resolve "$_repo_path_value")"
+
+  if ! dce_validate_repo_path "$_repo_path_value" >&2; then
+    dce_die "Refusing to use '$_repo_path_value' as a repo path for project '$PROJECT'."
+  fi
+
+  if _dce_new_repo_path_chars_unsafe "$_repo_path_value"; then
+    dce_die "repo path contains characters that are unsafe for a bind-mount source: $_repo_path_value
+       (Allowed: letters, digits, and  / . _ - ~ + @ , and space.)"
+  fi
+
+  mkdir -p "$_repo_path_value"
+  _repo_pair="$(dce_repo_spec_resolve "$repo_spec")" || dce_die "Could not resolve repo spec: $repo_spec"
+  _repo_name="${_repo_pair%%$'\t'*}"
+  _repo_path="${_repo_pair#*$'\t'}"
+
+  if _dce_new_repo_path_chars_unsafe "$_repo_path"; then
+    dce_die "repo path contains characters that are unsafe for a bind-mount source: $_repo_path
+       (Allowed: letters, digits, and  / . _ - ~ + @ , and space.)"
+  fi
+
+  if ! dce_validate_repo_path_not_repos_root_or_ancestor "$_repo_path" >&2; then
+    dce_die "Refusing to use '$_repo_path' as a repo path for project '$PROJECT'."
+  fi
+
+  # Recipe-only hard rejections: an untrusted recipe must never widen the mount
+  # via a relative path outside the repos root. The broader floor (/, $HOME,
+  # repos root, or a parent of it) now applies to every source via the shared
+  # repo-path validators.
+  if [[ "$CLI_SET_REPO" != true ]]; then
+    if [[ "$repo_spec" != *=/* && "$repo_spec" != /* && "$repo_spec" != *=~* && "$repo_spec" != ~* ]] \
+       && [[ "$_repo_path" != "$DEFAULT_REPOS_ROOT_CANON" && "$_repo_path" != "$DEFAULT_REPOS_ROOT_CANON/"* ]]; then
+      dce_die "recipe repo '$repo_spec' resolves outside the repos root ('$_repo_path') via a relative path; refusing to widen the bind mount."
+    fi
+    _repo_gate_label="recipe repo path"
+  else
+    _repo_gate_label="--repo path"
+  fi
+
+  # Outside-default-root confirmation gate: applies to EVERY source (recipe or
+  # CLI). --yes/-y honors the path with a visible notice; an interactive 'yes'
+  # proceeds; anything else (including EOF) aborts without creating anything.
+  if [[ "$_repo_path" != "$DEFAULT_REPOS_ROOT_CANON" && "$_repo_path" != "$DEFAULT_REPOS_ROOT_CANON/"* ]]; then
+    echo "$_repo_gate_label resolves outside the default repos directory:"
+    echo "  resolved path : $_repo_path"
     echo "  default root  : $DEFAULT_REPOS_ROOT_CANON"
     if $ASSUME_YES; then
-      echo "(--yes: honoring recipe repo-path; it will be mounted read-write as /workspace.)"
+      echo "(--yes: honoring $_repo_gate_label; it will be mounted read-write under /workspace.)"
     else
-      echo "Mounting it read-write as /workspace requires confirmation."
+      echo "Mounting it read-write under /workspace requires confirmation."
       read -r -p "Type 'yes' to continue: " _repo_path_confirm || _repo_path_confirm=""
       if [[ "$_repo_path_confirm" != "yes" ]]; then
         echo "Aborted."
@@ -543,6 +534,23 @@ if [[ -n "$REPO_PATH_OVERRIDE" && "$CLI_SET_REPO_PATH" != true ]]; then
       fi
     fi
   fi
+
+  REPO_NAMES+=("$_repo_name")
+  REPO_PATHS+=("$_repo_path")
+  [[ -z "$REPOS_DIR" ]] && REPOS_DIR="$_repo_path"
+done
+
+dce_validate_repo_entries >&2 || exit 1
+
+# Single-repo ergonomics: an unprefixed --hide path (e.g. node_modules) is
+# shorthand for the repo-prefixed form the mount layout requires.
+if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
+  IFS=',' read -r -a _new_hidden_list <<< "$HIDDEN_PATHS_CSV"
+  HIDDEN_PATHS_CSV="$(dce_hidden_paths_for_project "${_new_hidden_list[@]}")" || exit 1
+fi
+CONTAINER_HIDDEN_PATHS=()
+if [[ -n "$HIDDEN_PATHS_CSV" ]]; then
+  IFS=',' read -r -a CONTAINER_HIDDEN_PATHS <<< "$HIDDEN_PATHS_CSV"
 fi
 
 COMPOSED_CONTAINERFILE=""
@@ -618,7 +626,18 @@ echo ""
 mkdir -p "$SECRET_DIR" "$REPOS_DIR"
 chmod 700 "$SECRET_DIR"
 echo "✓ Directories created"
-echo "  Repos mount: $REPOS_DIR"
+_new_repo_count="$(dce_repo_count)"
+if [[ "$_new_repo_count" -eq 1 ]]; then
+  echo "  Repo:        ${REPO_NAMES[0]} (${REPO_PATHS[0]}) -> /workspace/${REPO_NAMES[0]}"
+else
+  echo "  Repos:       $_new_repo_count repo(s), each bind-mounted at /workspace/<repo-name>:"
+  while IFS= read -r _new_repo_line; do
+    [[ -z "$_new_repo_line" ]] && continue
+    _new_repo_name="${_new_repo_line%%$'\t'*}"
+    _new_repo_path="${_new_repo_line#*$'\t'}"
+    echo "    $_new_repo_name ($_new_repo_path) -> /workspace/$_new_repo_name"
+  done < <(dce_repo_entries_lines)
+fi
 echo "  Secrets:     $SECRET_DIR (chmod 700)"
 
 # Bootstrap per-project secrets (only created if missing, never overwritten).
@@ -691,29 +710,34 @@ esc_image="$(dce_escape_config_value "$IMAGE")" || exit 1
 esc_backend="$(dce_escape_config_value "$ACTIVE_BACKEND")" || exit 1
 esc_cpus="$(dce_escape_config_value "${CONTAINER_CPUS:-}")" || exit 1
 esc_memory="$(dce_escape_config_value "${CONTAINER_MEMORY:-}")" || exit 1
-esc_repos="$(dce_escape_config_value "$REPOS_DIR")" || exit 1
 esc_secret="$(dce_escape_config_value "$SECRET_DIR")" || exit 1
 esc_ssh="$(dce_escape_config_value "$SECRET_DIR/ssh_key")" || exit 1
 esc_token="$(dce_escape_config_value "$SECRET_DIR/${GIT_HOST_TOKEN_FILENAME}")" || exit 1
 esc_npmrc="$(dce_escape_config_value "$SECRET_DIR/.npmrc")" || exit 1
 esc_git_host="$(dce_escape_config_value "$GIT_HOST")" || exit 1
 
+# Schema-v2 config: repo identity is explicit (REPO_NAMES/REPO_PATHS); there
+# is no legacy REPOS_DIR scalar. Arrays are serialized with printf '%q' so
+# they round-trip inertly through the hardened loader.
 cat > "$CONFIG_FILE" <<EOF
 # DC Enclave config for: $PROJECT
 # Generated: $(date)
 CONTAINER_PROJECT="$esc_project"
+CONFIG_SCHEMA_VERSION="$_DC_CONFIG_SCHEMA_VERSION"
 CONTAINER_OVERLAY_SCOPES="$esc_scopes"
 CONTAINER_IMAGE="$esc_image"
 CONTAINER_BACKEND="$esc_backend"
 CONTAINER_GIT_HOST="$esc_git_host"
 CONTAINER_CPUS="$esc_cpus"
 CONTAINER_MEMORY="$esc_memory"
-REPOS_DIR="$esc_repos"
 SECRET_DIR="$esc_secret"
 SSH_KEY_PATH="$esc_ssh"
 TOKEN_FILE="$esc_token"
 NPMRC_PATH="$esc_npmrc"
 EOF
+
+{ printf 'REPO_NAMES=('; printf '%q ' "${REPO_NAMES[@]}"; printf ')\n'; } >> "$CONFIG_FILE"
+{ printf 'REPO_PATHS=('; printf '%q ' "${REPO_PATHS[@]}"; printf ')\n'; } >> "$CONFIG_FILE"
 
 if [[ ${#PORTS[@]} -gt 0 ]]; then
   { printf 'PORTS=('; printf '%q ' "${PORTS[@]}"; printf ')\n'; } >> "$CONFIG_FILE"
@@ -763,14 +787,12 @@ if [[ -n "${CONTAINER_MEMORY:-}" ]]; then
   RESOURCE_ARGS+=(--memory "$CONTAINER_MEMORY")
 fi
 
-# Mount flags. Default: workspace bind mount + read-only .npmrc + one hidden
-# volume per --hide path.
-VOLUME_ARGS=(--volume "$REPOS_DIR:/workspace")
-VOLUME_ARGS+=(--volume "$SECRET_DIR/.npmrc:/home/dev/.npmrc:ro")
-for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
-  hidden_volume="$(dce_hidden_volume_name "$PROJECT" "$hidden_path")"
-  VOLUME_ARGS+=(--volume "$hidden_volume:/workspace/$hidden_path")
-done
+# Mount flags via the SHARED planner (same source of truth as rebuild): one
+# bind per repo at /workspace/<repo-name>, the managed /workspace/.cache
+# volume, the read-only .npmrc secret bind, and one hidden volume per --hide
+# path. There is deliberately NO root /workspace bind anymore: /workspace is
+# the project root assembled from those mounts.
+mapfile -t VOLUME_ARGS < <(dce_workspace_mount_args "$PROJECT" "$SECRET_DIR/.npmrc" "live" "${CONTAINER_HIDDEN_PATHS[@]:-}")
 
 echo ""
 echo "==> Creating container from image: $IMAGE"
@@ -790,22 +812,25 @@ echo "==> Starting container for initial SSH key injection..."
 backend_start "$PROJECT"
 sleep 2
 
-if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
-  echo "==> Verifying hidden volume mounts..."
-  if ! dce_ensure_hidden_mounts "$PROJECT" "${CONTAINER_HIDDEN_PATHS[@]}"; then
-    exit 1
-  fi
-  echo "  ✓ Hidden volume mounts active"
+# All managed volumes (user hidden paths + the managed .cache volume) are
+# verified and ownership-normalized after create.
+mapfile -t MANAGED_VOLUME_PATHS < <(dce_managed_volume_paths "${CONTAINER_HIDDEN_PATHS[@]:-}")
 
-  echo "==> Normalizing hidden-path ownership..."
-  for hidden_path in "${CONTAINER_HIDDEN_PATHS[@]}"; do
-    target="/workspace/$hidden_path"
-    backend_exec_as_root "$PROJECT" sh -lc "mkdir -p '$target' && chown -R dev:dev '$target'"
-    if ! backend_exec "$PROJECT" sh -lc "test -w '$target'"; then
-      dce_die "Hidden path is not writable by dev: $target"
-    fi
-  done
+echo ""
+echo "==> Verifying managed volume mounts..."
+if ! dce_ensure_hidden_mounts "$PROJECT" "${MANAGED_VOLUME_PATHS[@]}"; then
+  exit 1
 fi
+echo "  ✓ Managed volume mounts active (incl. /workspace/.cache)"
+
+echo "==> Normalizing volume ownership..."
+for volume_path in "${MANAGED_VOLUME_PATHS[@]}"; do
+  target="/workspace/$volume_path"
+  backend_exec_as_root "$PROJECT" sh -lc "mkdir -p '$target' && chown -R dev:dev '$target'"
+  if ! backend_exec "$PROJECT" sh -lc "test -w '$target'"; then
+    dce_die "Managed volume path is not writable by dev: $target"
+  fi
+done
 
 # Expose SSH_KEY_PATH / CONTAINER_GIT_HOST so the inject + git-auth helpers read
 # through the same env the persisted config will use. At `dce new` time the
@@ -825,16 +850,19 @@ dce_ensure_git_credentials "$PROJECT"
 # runtime regenerated /etc/hosts at start). No-op without a fragment.
 dce_ensure_container_hosts "$PROJECT"
 
-# Seed .devcontainer/devcontainer.json + the VS Code named-attach config for
-# every backend. apple/container now uses VS Code Dev Containers' EXPERIMENTAL
-# apple-container attach path (dev.containers.experimentalAppleContainerSupport),
-# which consults the same .devcontainer/devcontainer.json + nameConfigs storage
-# as docker -- so the seed is identical and attach lands in /workspace with
-# declared extensions installed. Existing files are preserved; drift is
-# reported read-only.
+# Seed the MANAGED devcontainer.json inside the project config dir
+# (~/.config/dc-enclave/projects/<project>/devcontainer.json) + the VS Code named-
+# attach config for every backend. There is no canonical repo root anymore, so
+# no devcontainer file is ever written into a repo. apple/container uses VS
+# Code Dev Containers' EXPERIMENTAL apple-container attach path
+# (dev.containers.experimentalAppleContainerSupport), which consults the same
+# managed file + nameConfigs storage as docker -- so the seed is identical and
+# attach lands in /workspace with declared extensions installed. Existing
+# files are preserved; drift is reported read-only.
 echo "==> Generating Dev Containers config..."
-DEVCONTAINER_DIR="$REPOS_DIR/.devcontainer"
-DEVCONTAINER_FILE="$DEVCONTAINER_DIR/devcontainer.json"
+DEVCONTAINER_FILE="$(dce_managed_devcontainer_file "$PROJECT")"
+DEVCONTAINER_DIR="$(dirname "$DEVCONTAINER_FILE")"
+REPOS_NL="$(dce_repo_entries_lines)"
 
 if [[ -f "$DEVCONTAINER_FILE" ]]; then
   echo "  ✓ $DEVCONTAINER_FILE already exists - not overwritten."
@@ -859,7 +887,7 @@ if [[ -f "$DEVCONTAINER_FILE" ]]; then
   fi
   dce_devcontainer_detect_drift "$PROJECT" "$DEVCONTAINER_FILE" "$DEVCONTAINER_BUILD_FILE" \
     "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" \
-    "vscode" "$_new_ext_csv" "$_new_ext_adopted" >&2 || true
+    "vscode" "$_new_ext_csv" "$_new_ext_adopted" "$REPOS_NL" >&2 || true
 else
   mkdir -p "$DEVCONTAINER_DIR"
 
@@ -883,7 +911,7 @@ else
   # git-auth override only when a PAT is configured (see dce_devcontainer_render).
   dce_devcontainer_render "$PROJECT" "$DEVCONTAINER_BUILD_FILE" "$ROOT_DIR" \
     "$SECRET_DIR" "$HIDDEN_PATHS_CSV" "$_new_nets_csv" "$_new_ports_csv" "$HOST_TZ" \
-    "$(dce_git_auth_method)" "vscode" "$_new_ext_csv" \
+    "$(dce_git_auth_method)" "vscode" "$_new_ext_csv" "$REPOS_NL" \
     > "$DEVCONTAINER_FILE"
 
   echo "  ✓ Created $DEVCONTAINER_FILE"
@@ -909,53 +937,31 @@ if [[ "$ATTACH_CONFIG_COUNT" -eq 0 ]]; then
   echo "  (No VS Code user storage found; config will be created after first VS Code attach.)"
 fi
 
-# apple/container additionally seeds a VS Code terminal profile that routes
-# shell tabs through `dce shell` -- the pre-attach terminal workflow. Harmless
-# alongside the Dev Containers attach path (terminals in an attached session
-# already open inside the container).
-if ! $DOCKER_COMPATIBLE; then
-  echo "==> Generating VS Code workspace settings for apple/container backend..."
-  VSCODE_DIR="$REPOS_DIR/.vscode"
-  VSCODE_SETTINGS="$VSCODE_DIR/settings.json"
-  mkdir -p "$VSCODE_DIR"
-
-  if [[ ! -f "$VSCODE_SETTINGS" ]]; then
-    cat > "$VSCODE_SETTINGS" <<EOF
-{
-  "terminal.integrated.defaultProfile.osx": "dce-container",
-  "terminal.integrated.profiles.osx": {
-    "dce-container": {
-      "path": "/bin/zsh",
-      "args": ["-c", "$ROOT_DIR/scripts/shell.sh $PROJECT"]
-    }
-  }
-}
-EOF
-    echo "  ✓ Created $VSCODE_SETTINGS"
-    echo "  All VS Code terminal tabs will open inside the container."
-  else
-    echo "  ✓ $VSCODE_SETTINGS already exists - not overwritten."
-    echo "  Add this manually if needed:"
-    echo '    "terminal.integrated.defaultProfile.osx": "dce-container"'
-    echo "    \"terminal.integrated.profiles.osx\": { \"dce-container\": { \"path\": \"/bin/zsh\", \"args\": [\"-c\", \"$ROOT_DIR/scripts/shell.sh $PROJECT\"] } }"
-  fi
-fi
+# Note: no repo-local .vscode/settings.json is written anymore. With repos
+# mounted at /workspace/<repo-name> there is no single canonical repo root to
+# own that file; `dce editor` (attach at /workspace) is the supported path.
 
 echo ""
 echo "======================================================================"
 echo "Container '$PROJECT' created and started."
 echo "======================================================================"
 echo ""
-echo "Config: ~/.config/dce-enclave/$PROJECT/"
+echo "Config: ~/.config/dc-enclave/projects/$PROJECT/"
 echo "  [ ] ${GIT_HOST_TOKEN_FILENAME}   Replace ${GIT_HOST_SENTINEL} with your ${GIT_HOST_DISPLAY} token"
 echo "  [ ] ssh_key.pub    Add as ${GIT_HOST_DISPLAY} Deploy Key for your repos"
-echo "  [ ] (Optional) hosts       Add host entries if the container needs them (~/.config/dce-enclave/$PROJECT/hosts)"
+echo "  [ ] (Optional) hosts       Add host entries if the container needs them (~/.config/dc-enclave/projects/$PROJECT/hosts)"
 echo ""
+while IFS= read -r _new_repo_line; do
+  [[ -z "$_new_repo_line" ]] && continue
+  _new_repo_name="${_new_repo_line%%$'\t'*}"
+  _new_repo_path="${_new_repo_line#*$'\t'}"
+  echo "  Repo mounted at /workspace/$_new_repo_name (host: $_new_repo_path)"
+done < <(dce_repo_entries_lines)
 if $DOCKER_COMPATIBLE; then
-  echo "  [ ] (Optional) Open $REPOS_DIR in VS Code Dev Containers"
+  echo "  [ ] (Optional) Attach VS Code to the running container (Dev Containers)"
 else
-  echo "  [ ] (Optional) Open $REPOS_DIR in VS Code Dev Containers (experimental on apple/container;"
-  echo "      enable dev.containers.experimentalAppleContainerSupport)"
+  echo "  [ ] (Optional) Attach VS Code to the running container (experimental on"
+  echo "      apple/container; enable dev.containers.experimentalAppleContainerSupport)"
 fi
 echo "  [ ] Set up dotfiles in VS Code settings for personal config"
 echo "      (see README: Personal configuration / dotfiles)"

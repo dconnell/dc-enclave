@@ -143,7 +143,7 @@ dce_editor_select() {
       printf '%s' "$norm"
       return 0
     fi
-    dce_die "Unknown editor '$val' in DCE_EDITOR (~/.config/dce-enclave/config).
+    dce_die "Unknown editor '$val' in DCE_EDITOR (~/.config/dc-enclave/config).
   Known editors: $(tr '\n' ' ' <<<"$(dce_editor_known_ids)")"
   fi
 

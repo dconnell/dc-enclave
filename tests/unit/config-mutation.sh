@@ -38,7 +38,7 @@ mode_is() {
   [[ -n "$(find "$file" -maxdepth 0 -perm "$want" -print 2>/dev/null)" ]]
 }
 
-# Write a small but loadable config at mode 600 under a 0700 project dir.
+# Write a small but loadable schema-v2 config at mode 600 under a 0700 dir.
 write_config() {
   local file="$1"
   mkdir -p "$(dirname "$file")"
@@ -49,6 +49,9 @@ write_config() {
     echo 'CONTAINER_BACKEND="docker"'
     echo 'CONTAINER_IMAGE="dce-base:latest"'
     echo 'CONTAINER_CPUS="2"'
+    echo 'CONFIG_SCHEMA_VERSION="2"'
+    echo 'REPO_NAMES=(testproj)'
+    echo 'REPO_PATHS=(/tmp/repos/testproj)'
     echo 'PORTS=(3000:3000)'
     echo 'CONTAINER_HIDDEN_PATHS=()'
     echo 'CONTAINER_NETWORKS=()'
@@ -112,6 +115,23 @@ dce_set_config_key "$cfg5" CONTAINER_CPUS "2"
 mode_is "$cfg5" 600 || fail "idempotent rewrite must preserve mode 600"
 
 pass "idempotent rewrite preserves mode"
+
+# --- repo arrays (schema v2) preserve mode and round-trip ----------------------
+cfg6="$WORK/p6/config"
+write_config "$cfg6"
+dce_set_config_array "$cfg6" REPO_NAMES web api
+dce_set_config_array "$cfg6" REPO_PATHS /tmp/repos/web /tmp/repos/api
+mode_is "$cfg6" 600 || fail "repo array rewrite must preserve mode 600"
+
+REPO_NAMES=()
+REPO_PATHS=()
+dce_load_project_config "$cfg6"
+[[ "${REPO_NAMES[0]:-}" == "web" && "${REPO_NAMES[1]:-}" == "api" ]] \
+  || fail "repo names did not round-trip (got ${REPO_NAMES[*]:-})"
+[[ "${REPO_PATHS[0]:-}" == "/tmp/repos/web" && "${REPO_PATHS[1]:-}" == "/tmp/repos/api" ]] \
+  || fail "repo paths did not round-trip (got ${REPO_PATHS[*]:-})"
+
+pass "repo arrays preserve mode and round-trip"
 
 echo ""
 echo "All config-mutation invariants passed."

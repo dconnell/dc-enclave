@@ -25,15 +25,39 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK"
-DC_ROOT="$HOME/.config/dce-enclave"
-mkdir -p "$DC_ROOT"/{alpha,beta,gamma}
-touch "$DC_ROOT"/alpha/config "$DC_ROOT"/beta/config "$DC_ROOT"/gamma/config
+export DC_REPOS_DIR="$HOME/repos"
+DC_ROOT="$HOME/.config/dc-enclave"
+PROJECTS_ROOT="$DC_ROOT/projects"
+mkdir -p "$PROJECTS_ROOT"/{alpha,beta,gamma}
+touch "$PROJECTS_ROOT"/alpha/config "$PROJECTS_ROOT"/beta/config "$PROJECTS_ROOT"/gamma/config
+cat > "$PROJECTS_ROOT/alpha/config" <<'EOF'
+CONFIG_SCHEMA_VERSION="2"
+CONTAINER_PROJECT="alpha"
+CONTAINER_BACKEND="docker"
+CONTAINER_IMAGE="dce-base:latest"
+REPO_NAMES=( web api )
+REPO_PATHS=( /tmp/web /tmp/api )
+SECRET_DIR="/tmp/alpha-secret"
+SSH_KEY_PATH="/tmp/alpha-secret/ssh_key"
+TOKEN_FILE="/tmp/alpha-secret/token"
+NPMRC_PATH="/tmp/alpha-secret/.npmrc"
+PORTS=()
+CONTAINER_HIDDEN_PATHS=( web/node_modules )
+CONTAINER_NETWORKS=( appnet dbnet:10.0.0.5 )
+EOF
+mkdir -p "$PROJECTS_ROOT/alpha/snapshots"
+: > "$PROJECTS_ROOT/alpha/snapshots/release-1.volumes"
+: > "$PROJECTS_ROOT/alpha/snapshots/beta.volumes"
 # A dir without a config file must NOT be offered as a project.
-mkdir -p "$DC_ROOT/incomplete"
+mkdir -p "$PROJECTS_ROOT/incomplete"
+# Legacy flat project dirs are a clean-break miss and must not be discovered.
+mkdir -p "$DC_ROOT/flat-legacy"
+touch "$DC_ROOT/flat-legacy/config"
 
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
+mkdir -p "$HOME/repos"/api "$HOME/repos"/tools "$HOME/repos"/web
 touch "$TEAM_DIR/overlays/Containerfile.node" "$TEAM_DIR/overlays/Containerfile.all"
 touch "$USER_DIR/overlays/Containerfile.node" "$USER_DIR/overlays/Containerfile.golang"
 {
@@ -66,6 +90,9 @@ expect_sorted "projects list" \
 expect_sorted "projects prefix filter (al)" \
   "$(dce_complete_projects al)" alpha
 
+expect_sorted "project repo names (alpha)" \
+  "$(dce_complete_project_repos alpha)" api web
+
 # Scopes dedup node (team+user) and preserve first-seen order; gamma-style
 # whole-line matching prevents partial collisions.
 scopes_out="$(dce_complete_scopes | sort)"
@@ -75,20 +102,27 @@ pass "scopes dedup + membership"
 
 subs="$(dce_complete_subcommands | sort)"
 for c in new start stop status s list ls shell logs editor extensions exec restart rm \
-         rebuild-container rebuild-image snapshot snapshots provenance clean config network net doctor install rotate-token version help; do
+         rebuild-container rebuild-image snapshot snapshots provenance clean config network net repo doctor install rotate-token version help; do
   grep -qx "$c" <<<"$subs" || fail "subcommands missing: $c"
 done
 pass "subcommands list"
 
-# config data layer: subactions + writable keys.
+# config data layer: subactions + writable keys + gettable keys.
 expect_sorted "config subactions" \
   "$(dce_complete_config_subactions)" get ls set show sync-vscode
 expect_sorted "config keys" \
   "$(dce_complete_config_keys)" cpus hide memory networks ports scopes
+expect_sorted "config get keys" \
+  "$(dce_complete_config_get_keys)" backend cpus hide image memory networks ports project repos scopes
 
 # doctor targets: the five backend names plus configured projects.
 expect_sorted "doctor targets" \
   "$(dce_complete_doctor_targets)" apple docker orbstack colima podman alpha beta gamma
+
+if dce_complete_projects | grep -qx 'flat-legacy'; then
+  fail "project discovery must ignore legacy flat config dirs"
+fi
+pass "project discovery ignores legacy flat config dirs"
 
 # Hardened global-config parser: must accept a clean quoted value and reject
 # anything that could execute ($, backtick, or unquoted).
@@ -159,27 +193,30 @@ drive 3 dce start alpha "";            assert_reply "start alpha <TAB>" beta gam
 drive 4 dce start alpha beta "";       assert_reply "start alpha beta <TAB>" gamma
 drive 5 dce stop alpha beta gamma "";  assert_empty   "stop all three <TAB>"
 
-# shell: one project, then free-form command (nothing past project).
-drive 2 dce shell "";       assert_reply "shell <TAB>" alpha beta gamma
-drive 3 dce shell alpha ""; assert_empty   "shell alpha <TAB>"
+# shell: project first, then optional --repo <name>, then a free-form command.
+drive 2 dce shell "";             assert_reply "shell <TAB>" alpha beta gamma
+drive 3 dce shell alpha "";       assert_reply "shell alpha <TAB>" --repo
+drive 4 dce shell alpha --repo ""; assert_reply "shell alpha --repo <TAB>" api web
+drive 5 dce shell alpha --repo api ""; assert_empty "shell alpha --repo api <cmd> (free-form)"
 
-# editor: optional --editor <id>, then one project.
-drive 2 dce editor "";              assert_reply "editor <TAB>" --editor alpha beta gamma
-drive 3 dce editor alpha "";        assert_empty   "editor alpha <TAB> (nothing past project)"
-drive 3 dce editor --editor "";     assert_reply "editor --editor <TAB>" vscode vscode-insiders
-drive 4 dce editor --editor vscode ""; assert_reply "editor --editor vscode <TAB>" --editor alpha beta gamma
+# editor: project first, then optional --editor <id>.
+drive 2 dce editor "";                    assert_reply "editor <TAB>" alpha beta gamma
+drive 3 dce editor alpha "";              assert_reply "editor alpha <TAB>" --editor
+drive 4 dce editor alpha --editor "";     assert_reply "editor alpha --editor <TAB>" vscode vscode-insiders
+drive 5 dce editor alpha --editor vscode ""; assert_empty "editor alpha --editor vscode <TAB> (nothing past flag value)"
 
-# extensions: subactions at slot 2; project + flags after.
+# extensions: subactions at slot 2; project immediately after for project-taking subcommands.
 drive 2 dce extensions ""; assert_reply "extensions <TAB>" \
   available capture diff host list show
 drive 3 dce extensions show ""; assert_reply "extensions show <TAB>" alpha beta gamma
 # Past the project, the output flags are offered (--editor/--format).
 drive 4 dce extensions show alpha ""; assert_reply "extensions show alpha <TAB>" --editor --format
 # --editor / --format / --scope consume a value.
-drive 3 dce extensions --editor ""; assert_reply "extensions --editor <TAB>" vscode
-drive 4 dce extensions list --format ""; assert_reply "extensions list --format <TAB>" ids json manifest
-# capture offers --scope/--user/--team/--all plus project.
+drive 5 dce extensions show alpha --editor ""; assert_reply "extensions show alpha --editor <TAB>" vscode
+drive 5 dce extensions list alpha --format ""; assert_reply "extensions list alpha --format <TAB>" ids json manifest
+# capture offers the project first, then capture-only flags.
 drive 3 dce extensions capture ""; assert_reply "extensions capture <TAB>" alpha beta gamma
+drive 4 dce extensions capture alpha ""; assert_reply "extensions capture alpha <TAB>" --all --editor --format --scope --team --user
 
 # rebuild-container: one project, then the flags.
 drive 2 dce rebuild-container "";  assert_reply "rebuild-container <TAB>" alpha beta gamma
@@ -188,6 +225,8 @@ drive 3 dce rebuild-container alpha "--"; assert_reply "rebuild-container alpha 
 
 drive 3 dce rebuild-container alpha ""; assert_reply "rebuild-container alpha <TAB>" \
   --from-snap --inject-creds --keep-hidden-volumes --rotate-keys --yes -y
+drive 4 dce rebuild-container alpha --from-snap ""; assert_reply "rebuild-container alpha --from-snap <TAB>" \
+  beta release-1
 drive 5 dce rebuild-container alpha --from-snap lbl ""; assert_reply "rebuild-container alpha --from-snap lbl <TAB>" \
   --inject-creds --keep-hidden-volumes --rotate-keys --yes -y
 
@@ -212,9 +251,24 @@ drive 2 dce rebuild-image ""; assert_reply "rebuild-image <TAB>" all base
 drive 2 dce provenance "";              assert_reply "provenance <TAB>" alpha beta gamma
 drive 3 dce provenance alpha "--";      assert_reply "provenance alpha --<TAB>" --all --history
 
-# network: subactions at position 2.
+# network: subactions at position 2; names/projects complete after that.
 drive 2 dce network ""; assert_reply "network <TAB>" \
   add create list ls members remove rm
+drive 3 dce network members ""; assert_reply "network members <TAB>" appnet dbnet
+drive 3 dce network rm "";      assert_reply "network rm <TAB>" appnet dbnet
+drive 3 dce network add "";     assert_reply "network add <TAB>" appnet dbnet
+drive 4 dce network add appnet ""; assert_reply "network add appnet <project> <TAB>" alpha beta gamma
+drive 3 dce network remove "";     assert_reply "network remove <TAB>" appnet dbnet
+drive 4 dce network remove appnet ""; assert_reply "network remove appnet <project> <TAB>" alpha beta gamma
+
+# repo: subactions at position 2; project at 3; add/remove arg slots after.
+drive 2 dce repo ""; assert_reply "repo <TAB>" add list remove
+drive 3 dce repo list ""; assert_reply "repo list <TAB>" alpha beta gamma
+drive 3 dce repo add ""; assert_reply "repo add <TAB>" --yes -y alpha beta gamma
+drive 4 dce repo add --yes ""; assert_reply "repo add --yes <TAB>" alpha beta gamma
+drive 4 dce repo add alpha ""; assert_reply "repo add alpha <spec> <TAB>" \
+  api tools web
+drive 3 dce repo remove ""; assert_reply "repo remove <TAB>" alpha beta gamma
 
 # config: subactions at position 2; project at 3; key at 4 (get/set);
 # sync-vscode offers --dry-run at position 4.
@@ -222,7 +276,7 @@ drive 2 dce config ""; assert_reply "config <TAB>" get ls set show sync-vscode
 drive 3 dce config show ""; assert_reply "config show <TAB>" alpha beta gamma
 drive 3 dce config get "";  assert_reply "config get <project> <TAB>" alpha beta gamma
 drive 4 dce config get alpha ""; assert_reply "config get alpha <key> <TAB>" \
-  cpus hide memory networks ports scopes
+  backend cpus hide image memory networks ports project repos scopes
 drive 4 dce config set alpha ""; assert_reply "config set alpha <key> <TAB>" \
   cpus hide memory networks ports scopes
 # set's value (position 5) is free-form -> no completion.
@@ -244,10 +298,13 @@ drive 3 dce logs alpha "";          assert_reply "logs alpha <TAB>" --follow -f 
 drive 3 dce logs alpha "--";        assert_reply "logs alpha --<TAB>" --follow --tail
 drive 4 dce logs alpha --tail "";   assert_empty "logs alpha --tail <val> (no completion)"
 
-# exec: optional leading --root, one project, then a free-form command.
-drive 2 dce exec "";                assert_reply "exec <TAB>" --root alpha beta gamma
-drive 3 dce exec --root "";         assert_reply "exec --root <TAB>" alpha beta gamma
-drive 3 dce exec alpha "";          assert_empty "exec alpha <cmd> (free-form)"
+# exec: project first, then optional --repo/--root, then a free-form command.
+drive 2 dce exec "";                    assert_reply "exec <TAB>" alpha beta gamma
+drive 3 dce exec alpha "";              assert_reply "exec alpha <TAB>" --repo --root
+drive 4 dce exec alpha --root "";       assert_reply "exec alpha --root <TAB>" --repo
+drive 4 dce exec alpha --repo "";       assert_reply "exec alpha --repo <TAB>" api web
+drive 5 dce exec alpha --repo api "";   assert_empty "exec alpha --repo api <cmd> (free-form)"
+drive 4 dce exec alpha -- "";           assert_empty "exec alpha -- <cmd> (free-form)"
 
 # restart: variadic projects (excludes already-typed), like start/stop.
 drive 2 dce restart "";             assert_reply "restart <TAB>" alpha beta gamma
@@ -273,8 +330,10 @@ drive 4 dce clean --snapshots alpha "--"; assert_reply "clean --snapshots alpha 
 # snapshot / snapshots: position 1 offers rm/list + projects; labels are free.
 drive 2 dce snapshot ""; assert_reply "snapshot <TAB>" rm alpha beta gamma
 drive 3 dce snapshot rm ""; assert_reply "snapshot rm <project> <TAB>" alpha beta gamma
+drive 4 dce snapshot rm alpha ""; assert_reply "snapshot rm alpha <label> <TAB>" beta release-1
 # --exclude-volumes / --exclude-volume / --yes are offered once a project is present.
 drive 3 dce snapshot alpha "--exc"; assert_reply "snapshot alpha --exc <TAB>" --exclude-volume --exclude-volumes
+drive 4 dce snapshot alpha --exclude-volume ""; assert_reply "snapshot alpha --exclude-volume <TAB>" web/node_modules
 drive 3 dce snapshot alpha "--yes"; assert_reply "snapshot alpha --yes <TAB>" --yes
 # empty prefix offers all create flags, including the -y short form.
 drive 3 dce snapshot alpha ""; assert_reply "snapshot alpha <TAB>" --exclude-volume --exclude-volumes --yes -y
@@ -284,10 +343,12 @@ drive 3 dce snapshots list ""; assert_reply "snapshots list <project> <TAB>" alp
 # new: name is free text (no completion), pos3 = scope + flags.
 drive 2 dce new "";               assert_empty "new <name> (free text, no completion)"
 drive 3 dce new foo "";           assert_reply "new foo <TAB> (scope + flags)" \
-  --config --cpus --git-host --hide --ip --memory --network --repo-path --save-team --save-user --yes -y all golang node
+  --config --cpus --git-host --hide --ip --memory --network --repo --save-team --save-user --yes -y all golang node
 # --network/--ip consume a value (no completion offered for the value).
 drive 4 dce new foo --network ""; assert_empty "new foo --network <val> (no completion)"
 drive 4 dce new foo --git-host ""; assert_reply "new foo --git-host <TAB>" github gitlab
+drive 4 dce new foo --repo "";     assert_reply "new foo --repo <spec> <TAB>" \
+  api tools web
 
 # ---------------------------------------------------------------------------
 # Section 3 - zsh completion (scripts/_dce), gated on zsh being installed
@@ -348,10 +409,15 @@ if command -v zsh >/dev/null 2>&1; then
 
     # _arguments stub: detect the top-level router call by its ->state specs
     # and emulate the state transition + the *:: word re-slice. Per-subcommand
-    # spec calls (no ->) are just recorded for later assertion.
+    # spec calls are just recorded for later assertion. Router detection must
+    # match the two router specs exactly: hint slots now also use ->state form
+    # (real-widget rendering), so a broad "->" test would misroute those calls
+    # and leave SPEC empty.
     _arguments() {
       local spec is_router=0
-      for spec in "$@"; do [[ "$spec" == *"->"* ]] && is_router=1; done
+      for spec in "$@"; do
+        [[ "$spec" == "1: :->subcmd" || "$spec" == "*:: :->args" ]] && is_router=1
+      done
       if (( is_router )); then
         if (( CURRENT == 2 )); then
           state=subcmd
@@ -454,7 +520,7 @@ if command -v zsh >/dev/null 2>&1; then
 
     # Subcommand candidate set (also from the shared lib).
     ADD=(); _dce_subcommands
-    local want="--help --version -h -v clean config doctor editor exec extensions help install list logs ls net network new provenance rebuild-container rebuild-image restart rm rotate-token s shell snapshot snapshots start status stop version"
+    local want="--help --version -h -v clean config doctor editor exec extensions help install list logs ls net network new provenance rebuild-container rebuild-image repo restart rm rotate-token s shell snapshot snapshots start status stop version"
     [[ "$(print -l -- "${ADD[@]}" | sort | tr "\n" " ")" == "$want " ]] \
       || { print "FAIL: zsh subcommand values -> [${ADD[*]}]"; exit 1 }
     print "PASS: zsh subcommand candidate set"
@@ -463,8 +529,9 @@ if command -v zsh >/dev/null 2>&1; then
     chk() { SPEC=(); _dce_dispatch "$1"; [[ "${SPEC[*]}" == *"$2"* ]] || { print "FAIL: zsh $1 spec missing [$2] got [${SPEC[*]}]"; exit 1 }; }
     chk start            "*:project:"
     chk shell            "1:project:"
+    chk shell            "*--repo+[repo name]"
     chk editor           "1:project:"
-    chk editor           "--editor+[editor id]"
+    chk editor           "*--editor+[editor id]"
     chk extensions       "1:subcommand: _dce_extensions_subactions"
     chk extensions       "--scope+[target scope for capture]"
     # capture-only flags must NOT be offered on non-capture subactions.
@@ -479,13 +546,17 @@ if command -v zsh >/dev/null 2>&1; then
     # subaction (parity with editor/shell/logs and with the bash front-end).
     words=(extensions show "") CURRENT=3 SPEC=(); _dce_extensions
     [[ "${SPEC[*]}" == *"2:project"* ]] || { print "FAIL: zsh extensions show should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1 }
+    words=(extensions capture "") CURRENT=3 SPEC=(); _dce_extensions
+    [[ "${SPEC[*]}" == *"2:project"* ]] || { print "FAIL: zsh extensions capture should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1 }
     # `host` takes NO project -- the project spec must not appear.
     words=(extensions host "") CURRENT=3 SPEC=(); _dce_extensions
     [[ "${SPEC[*]}" != *"2:project"* ]] || { print "FAIL: zsh extensions host must not offer a project -> [${SPEC[*]}]"; exit 1 }
     chk logs             "1:project:"
     chk logs             "--follow["
-    chk exec             "--root["
+    chk logs             "--tail+[last N lines]:line count:->hint_tail"
     chk exec             "1:project:"
+    chk exec             "*--root["
+    chk exec             "*--repo+[repo name]"
     chk restart          "*:project:"
     chk rm               "1:project:"
     chk rm               "--keep-config["
@@ -502,15 +573,36 @@ if command -v zsh >/dev/null 2>&1; then
     chk rebuild-image    "1:target:_dce_rebuild_image_targets"
     chk provenance       "1:project:_dce_projects_simple"
     chk provenance       "--history["
+    chk repo             "1:subcommand: _dce_repo_subactions"
+    words=(repo add "") CURRENT=3 SPEC=(); _dce_repo
+    [[ "${SPEC[*]}" == *"--yes[skip confirmation prompts for repo paths outside the default repos dir]"* ]] \
+      || { print "FAIL: zsh repo add should offer --yes -> [${SPEC[*]}]"; exit 1; }
+    [[ "${SPEC[*]}" == *"2:project"* ]] \
+      || { print "FAIL: zsh repo add should complete a project at slot 2 -> [${SPEC[*]}]"; exit 1; }
+    words=(repo add alpha "") CURRENT=4 SPEC=(); _dce_repo
+    [[ "${SPEC[*]}" == *"3:repo spec:_dce_repo_specs"* ]] || { print "FAIL: zsh repo add should complete a repo spec at slot 3 -> [${SPEC[*]}]"; exit 1 }
     chk new              "2:scope:_dce_scopes"
+    chk new              "1:project name:->hint_project"
     chk new              "*--hide["
     chk new              "--git-host+[git host provider (github/gitlab)]"
+    chk new              "*--repo[repo spec (<name>, <path> or <name>=<path>)]:repo spec:_dce_repo_specs"
     chk new              "*--network["
-    chk new              "--ip+["
-    chk new              "--yes[skip the recipe-repo-path confirmation prompt]"
-    chk new              "-y[skip the recipe-repo-path confirmation prompt]"
+    chk new              "--cpus+[cpu limit (e.g. 2, 1.5)]:cpu limit:->hint_cpus"
+    chk new              "--memory+[memory limit (e.g. 4g, 512m)]:memory limit:->hint_memory"
+    chk new              "--ip+[static IPv4 for the primary network]:IPv4 address:->hint_ip"
+    chk new              "--yes[skip confirmation prompts for repo paths outside the default repos dir]"
+    chk new              "-y[skip confirmation prompts for repo paths outside the default repos dir]"
     words=(rebuild-container alpha "") CURRENT=3
     chk rebuild-container "--from-snap+[recreate from snapshot"
+    words=(network members "") CURRENT=3 SPEC=(); _dce_network
+    [[ "${SPEC[*]}" == *"2:network"* ]] || { print "FAIL: zsh network members should complete a network at slot 2 -> [${SPEC[*]}]"; exit 1 }
+    words=(network create "") CURRENT=3 SPEC=(); _dce_network
+    [[ "${SPEC[*]}" == *"2:network:->hint_netname"* ]] || { print "FAIL: zsh network create should hint for the network name -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" == *"--subnet+[IPv4 CIDR]:IPv4 CIDR:->hint_subnet"* ]] || { print "FAIL: zsh network create should hint for --subnet -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" == *"--subnet-v6+[IPv6 CIDR]:IPv6 CIDR:->hint_subnet6"* ]] || { print "FAIL: zsh network create should hint for --subnet-v6 -> [${SPEC[*]}]"; exit 1 }
+    words=(network add "") CURRENT=3 SPEC=(); _dce_network
+    [[ "${SPEC[*]}" == *"2:network"* ]] || { print "FAIL: zsh network add should complete a network at slot 2 -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" == *"3:project"* ]] || { print "FAIL: zsh network add should complete a project at slot 3 -> [${SPEC[*]}]"; exit 1 }
     chk snapshot         "1:project or rm:"
     chk snapshot         "--exclude-volumes[skip ALL hidden-volume capture]"
     chk snapshot         "*--exclude-volume[exclude specific hidden volume"
@@ -519,8 +611,14 @@ if command -v zsh >/dev/null 2>&1; then
     # config: dispatched subcommand offers its subactions; get/set offer a key.
     chk config           "1:subcommand: _dce_config_subactions"
     words=(config get "") CURRENT=3 SPEC=(); _dce_config
-    [[ "${SPEC[*]}" == *"3:key: _dce_config_keys"* ]] || { print "FAIL: zsh config get should offer a key at slot 3 -> [${SPEC[*]}]"; exit 1 }
+    [[ "${SPEC[*]}" == *"3:key: _dce_config_get_keys"* ]] || { print "FAIL: zsh config get should offer a key at slot 3 -> [${SPEC[*]}]"; exit 1 }
     print "PASS: zsh config dispatch + key spec"
+    words=(config set alpha cpus "") CURRENT=5 SPEC=(); _dce_config
+    [[ "${SPEC[*]}" == *"4:value:->hint_value"* ]] || { print "FAIL: zsh config set should hint for the value slot -> [${SPEC[*]}]"; exit 1 }
+    words=(shell alpha "") CURRENT=3 SPEC=(); _dce_dispatch shell
+    [[ "${SPEC[*]}" == *"*:command:->hint_command"* ]] || { print "FAIL: zsh shell should hint for trailing commands -> [${SPEC[*]}]"; exit 1 }
+    words=(exec alpha "") CURRENT=3 SPEC=(); _dce_dispatch exec
+    [[ "${SPEC[*]}" == *"*:command:->hint_command"* ]] || { print "FAIL: zsh exec should hint for trailing commands -> [${SPEC[*]}]"; exit 1 }
     # rm subcommand branch: completes a project at slot 2 and offers NO create
     # flags (parity with the bash rm path).
     words=(snapshot rm "") CURRENT=3 SPEC=(); _dce_snapshot
@@ -529,6 +627,12 @@ if command -v zsh >/dev/null 2>&1; then
     print "PASS: zsh snapshot rm completes a project, no create flags"
     print "PASS: zsh per-subcommand dispatch specs"
   ' || fail "zsh completion logic/spec test failed"
+
+  # Real-widget render test: spec-string assertions above cannot detect an
+  # action that never renders (three broken hint attempts shipped that way).
+  # Drives a clean `zsh -f` under zpty and asserts on the actual screen.
+  zsh "$ROOT_DIR/tests/unit/completion-widget.zsh" \
+    || fail "zsh completion widget render test failed"
 else
   echo "SKIP: zsh completion tests (zsh not installed)"
 fi

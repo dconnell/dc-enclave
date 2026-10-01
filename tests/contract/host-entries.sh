@@ -8,7 +8,7 @@
 # the REAL scripts through stubbed docker/container/podman CLIs:
 #
 #   scaffold  -> `dce new` creates the hosts template comment-only, mode 644,
-#                at ~/.config/dce-enclave/<project>/hosts -- and re-running
+#                at ~/.config/dc-enclave/projects/<project>/hosts -- and re-running
 #                creation never overwrites a user-seeded fragment
 #   no-op     -> `dce start` / `dce shell` with NO fragment issue zero
 #                hosts-related exec traffic (no /tmp/.dce-hosts staging, no
@@ -17,7 +17,7 @@
 #   apply     -> `dce start` with a fragment first wires git credentials, then
 #                (a) stages the NORMALIZED entries via a root stdin exec at
 #                /tmp/.dce-hosts, and (b) reconciles via a root exec whose
-#                script targets /etc/hosts between the dce-enclave markers
+#                script targets /etc/hosts between the dc-enclave markers
 #   ordering  -> static pin: every entry script calls
 #                dce_ensure_container_hosts after dce_ensure_git_credentials
 #
@@ -44,7 +44,7 @@ chmod 700 "$WORK"
 # Fake HOME + global config + nodejs-scope overlays.
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -158,15 +158,17 @@ _mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
 make_project() {  # <project> [running]
   local project="$1"
   local running="${2:-}"
-  local cfg_dir="$DC_ROOT/$project"
+  local cfg_dir="$DC_ROOT/projects/$project"
   local repos="$WORK/home/repos/$project"
   mkdir -p "$cfg_dir" "$repos"
   chmod 700 "$cfg_dir"
   cat > "$cfg_dir/config" <<CFG
 CONTAINER_PROJECT="$project"
+CONFIG_SCHEMA_VERSION="2"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-base:latest"
-REPOS_DIR="$repos"
+REPO_NAMES=("$project")
+REPO_PATHS=("$repos")
 SECRET_DIR="$cfg_dir"
 PORTS=()
 CONTAINER_HIDDEN_PATHS=()
@@ -188,9 +190,9 @@ assert_no_hosts_traffic() {  # <label>
     fail "$1: hosts staging traffic observed without a fragment
 $(grep -F '/tmp/.dce-hosts' "$LOG")"
   fi
-  if grep -qF 'dce-enclave hosts (managed)' "$LOG"; then
+  if grep -qF 'dc-enclave hosts (managed)' "$LOG"; then
     fail "$1: managed-block marker reached a container argv without a fragment
-$(grep -F 'dce-enclave hosts (managed)' "$LOG")"
+$(grep -F 'dc-enclave hosts (managed)' "$LOG")"
   fi
 }
 
@@ -206,7 +208,7 @@ if ! run_script "$ROOT_DIR/scripts/new-container.sh" "$SPROJ" nodejs \
 -- stderr:$(cat "$WORK/new1.err")"
 fi
 
-HOSTS_FILE="$DC_ROOT/$SPROJ/hosts"
+HOSTS_FILE="$DC_ROOT/projects/$SPROJ/hosts"
 [[ -f "$HOSTS_FILE" ]] || fail "scaffold: hosts template missing at $HOSTS_FILE"
 [[ "$(_mode "$HOSTS_FILE")" == "644" ]] \
   || fail "scaffold: template must be 644 (got $(_mode "$HOSTS_FILE")): a scaffold, not a secret"
@@ -229,7 +231,7 @@ SEEDED="$WORK/seeded.hosts"
 } > "$SEEDED"
 cp "$SEEDED" "$HOSTS_FILE"
 chmod 644 "$HOSTS_FILE"
-rm -f "$DC_ROOT/$SPROJ/config"
+rm -f "$DC_ROOT/projects/$SPROJ/config"
 : > "$CONTAINERS"
 : > "$LOG"
 if ! run_script "$ROOT_DIR/scripts/new-container.sh" "$SPROJ" nodejs \
@@ -274,7 +276,7 @@ if ! run_script "$ROOT_DIR/scripts/shell.sh" "nofragsh" "echo hi" \
   fail "shell (no fragment) exited non-zero
 -- stderr:$(cat "$WORK/s2b.err")"
 fi
-grep -Fq 'zsh -ic echo hi' "$LOG" \
+grep -Fq 'zsh -ic cd /workspace/nofragsh 2>/dev/null || true; echo hi' "$LOG" \
   || fail "no-op/shell: command never reached the container
 $(grep '^CALL' "$LOG")"
 assert_no_hosts_traffic "no-op/shell"
@@ -287,7 +289,7 @@ pass "no-op wiring: dce shell command mode without a fragment issues zero hosts 
 # ===========================================================================
 APPLY_PROJ="hostproj"
 make_project "$APPLY_PROJ" ""
-printf '# corp registry\n\n10.0.0.5 registry.corp.internal\n' > "$DC_ROOT/$APPLY_PROJ/hosts"
+printf '# corp registry\n\n10.0.0.5 registry.corp.internal\n' > "$DC_ROOT/projects/$APPLY_PROJ/hosts"
 : > "$LOG"
 if ! run_script "$ROOT_DIR/scripts/start.sh" "$APPLY_PROJ" \
     >"$WORK/s3.out" 2>"$WORK/s3.err"; then
@@ -334,9 +336,9 @@ grep -Fq "TARGET='/etc/hosts'" <<<"$recon_payload" \
   || fail "apply: reconcile script does not target /etc/hosts"
 grep -Fq "FRAG='/tmp/.dce-hosts'" <<<"$recon_payload" \
   || fail "apply: reconcile script does not consume the staged fragment"
-grep -Fq '# >>> dce-enclave hosts (managed) >>>' <<<"$recon_payload" \
+grep -Fq '# >>> dc-enclave hosts (managed) >>>' <<<"$recon_payload" \
   || fail "apply: reconcile script missing the BEGIN marker"
-grep -Fq '# <<< dce-enclave hosts (managed) <<<' <<<"$recon_payload" \
+grep -Fq '# <<< dc-enclave hosts (managed) <<<' <<<"$recon_payload" \
   || fail "apply: reconcile script missing the END marker"
 
 # Ordering: the hosts staging follows the git-credentials wiring in the same

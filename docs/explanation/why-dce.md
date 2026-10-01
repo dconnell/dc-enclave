@@ -4,7 +4,7 @@
 
 Every developer now runs tools that touch their whole repo — AI agents in VS Code extensions, TUI runners like Claude Code, OpenCode, or Pi launched from the terminal, build scripts, dependency installers. Left on the host, each one can read your global credentials, mutate files outside the project, and leave state that survives the session. DC Enclave puts a hard boundary around all of it: the container. Anything you run inside it stays inside.
 
-- **Whatever runs in the container, stays in the container.** Launch a TUI agent from `dce shell`, or run a VS Code extension from the integrated terminal — both operate inside the same boundary. Your project repo is bind-mounted read-write at `/workspace` (so editors and builds can read and write it), but everything outside that mount — home directory, shell history, and global credentials — stays out of reach. One exception: when VS Code is *attached* to the container, a workspace extension inside it can open a terminal on your host and run commands — stock VS Code allows this, [VSCodium blocks it by default](https://github.com/VSCodium/vscodium/pull/2487) ([discussion](https://github.com/VSCodium/vscodium/issues/2480)). See [isolation and security](isolation-and-security.md#vs-code-remote-development-can-reach-your-host).
+- **Whatever runs in the container, stays in the container.** Launch a TUI agent from `dce shell`, or run a VS Code extension from the integrated terminal — both operate inside the same boundary. Your project repos are bind-mounted read-write under `/workspace/<repo-name>` (so editors and builds can read and write them), but everything outside those mounts — home directory, shell history, and global credentials — stays out of reach. One exception: when VS Code is *attached* to the container, a workspace extension inside it can open a terminal on your host and run commands — stock VS Code allows this, [VSCodium blocks it by default](https://github.com/VSCodium/vscodium/pull/2487) ([discussion](https://github.com/VSCodium/vscodium/issues/2480)). See [isolation and security](isolation-and-security.md#vs-code-remote-development-can-reach-your-host).
 - **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it. Link them only when you mean to.
 - **A bad session is one command to undo.** `dce rebuild-container <name>` destroys the container filesystem and recreates it from a known-good image. No snapshots to manage, no manual cleanup, no digging through `git reflog`.
 - **Trust is pinned, not learned on first use.** GitHub's SSH host keys are baked into the base image and verified by a guard test, so a hijacked network can't silently redirect git traffic.
@@ -20,7 +20,7 @@ If you already work with Docker, Podman, or apple/container directly, `dce` orch
 What `dce` adds beyond raw backend commands:
 
 - project bootstrap from a shared base image plus optional overlay Containerfiles
-- persisted per-project configuration in `~/.config/dce-enclave/<name>/config`
+- persisted per-project configuration in `~/.config/dc-enclave/projects/<name>/config`
 - consistent mounts, ports, and resource limit handling across backends
 - optional per-project credential layout for PAT/SSH key/.npmrc with repeatable rebuild flows
 - one-command rebuild and key-rotation workflows for incident response
@@ -37,4 +37,3 @@ The table below focuses on the commands where `dce` replaces the most manual bac
 | `dce install myapp ~/.dotfiles` | Stream dotfiles via `tar` + `docker exec`, run `install.sh`, then remove temp files | Same flow with `podman` | Same flow with `container exec` |
 
 Of these, `dce new`, `dce rebuild-image`, and `dce rebuild-container` cover image lifecycle, container recovery, and security response as repeatable one-command workflows, without retyping backend-specific command sequences. `dce clean` and `dce install` reduce ongoing maintenance once projects are running.
-

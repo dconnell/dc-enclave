@@ -14,7 +14,7 @@
 #                     secret bootstrap (perms), generated Containerfile layer
 #                     order, create argv shape (volume/port/resource order,
 #                     image positional last), devcontainer.json.
-#   dce new (apple):   devcontainer.json + .vscode/settings.json terminal-profile.
+#   dce new (apple):   managed devcontainer.json seed; no repo-local editor writes.
 #   rebuild:          never builds; stop->delete->create->start order; create
 #                     argv parity with `dce new`; default removes hidden volumes.
 #   rebuild flags:    fail-fast on missing image (no destructive calls);
@@ -40,7 +40,7 @@ chmod 700 "$WORK"
 # hash is purely a function of (nodejs, golang).
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 TEAM_OD="$TEAM_DIR/overlays"
@@ -138,8 +138,7 @@ run_script() {
 first_call() { grep -En "$1" "$LOG" | head -n1 | cut -d: -f1; }
 
 PROJECT="myapp"
-REPOS_DIR="$WORK/home/repos/$PROJECT"
-SECRET_DIR="$WORK/home/.config/dce-enclave/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dc-enclave/projects/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 # ===========================================================================
@@ -159,15 +158,25 @@ fi
 [[ -f "$CONFIG" ]] || fail "dce new: config not written"
 chmod 600 "$CONFIG" 2>/dev/null || true
 dce_load_project_config "$CONFIG"
+# The persisted repo path is the RESOLVED host path (dce_resolve_path follows
+# symlinks, e.g. /tmp -> /private/tmp on macOS); the dir now exists post-create.
+REPOS_DIR="$(dce_resolve_path "$WORK/home/repos/$PROJECT")"
 [[ "${CONTAINER_PROJECT:-}" == "$PROJECT" ]] || fail "config: CONTAINER_PROJECT"
+[[ "${CONFIG_SCHEMA_VERSION:-}" == "2" ]] || fail "config: schema version"
+[[ "${REPO_NAMES[0]:-}" == "$PROJECT" ]] || fail "config: REPO_NAMES"
+[[ "${REPO_PATHS[0]:-}" == "$REPOS_DIR" ]] || fail "config: REPO_PATHS"
+if grep -q '^REPOS_DIR=' "$CONFIG"; then
+  fail "config: legacy REPOS_DIR must not be written by dce new"
+fi
 [[ "${CONTAINER_OVERLAY_SCOPES:-}" == "nodejs,golang" ]] || fail "config: scopes (got [${CONTAINER_OVERLAY_SCOPES:-}])"
 [[ "${CONTAINER_BACKEND:-}" == "docker" ]] || fail "config: backend"
 [[ "${CONTAINER_CPUS:-}" == "2" ]] || fail "config: cpus"
 [[ "${CONTAINER_MEMORY:-}" == "4g" ]] || fail "config: memory"
 [[ "${PORTS[0]:-}" == "3000:3000" ]] || fail "config: PORTS[0]"
 [[ "${PORTS[1]:-}" == "8080" ]] || fail "config: PORTS[1]"
-[[ "${CONTAINER_HIDDEN_PATHS[0]:-}" == "node_modules" ]] || fail "config: hidden paths"
-[[ "${CONTAINER_IMAGE:-}" == dce-img-*:latest ]] || fail "config: derived image"
+# Single-repo --hide shorthand is normalized to the repo-prefixed form.
+[[ "${CONTAINER_HIDDEN_PATHS[0]:-}" == "$PROJECT/node_modules" ]] || fail "config: hidden paths (got [${CONTAINER_HIDDEN_PATHS[*]:-}])"
+[[ "${CONTAINER_IMAGE:-}" == dce-*:latest ]] || fail "config: derived image"
 
 # Persisted image is exactly what the helper derives from the scopes -> the
 # new/rebuild bridge is deterministic by construction.
@@ -208,10 +217,19 @@ $(grep '^CALL' "$LOG")"
 NEW_CREATE="$(grep -E 'create --name myapp' "$LOG" | head -n1)"
 [[ -n "$NEW_CREATE" ]] || fail "dce new: no create call recorded"
 grep -Fq -- "--name myapp"                <<<"$NEW_CREATE" || fail "create: --name"
-grep -Fq -- "--volume $REPOS_DIR:/workspace" <<<"$NEW_CREATE" || fail "create: workspace mount"
+# Schema-v2 mount shape: one bind per repo at /workspace/<repo-name>, the
+# managed cache volume, the npmrc secret bind, the repo-prefixed hidden
+# volume -- and NO root /workspace bind.
+grep -Fq -- "--volume $REPOS_DIR:/workspace/$PROJECT" <<<"$NEW_CREATE" || fail "create: repo bind at /workspace/$PROJECT"
+cache_vol="$(dce_cache_volume_name "$PROJECT")"
+grep -Fq -- "--volume $cache_vol:/workspace/.cache" <<<"$NEW_CREATE" || fail "create: managed .cache volume"
 grep -Fq -- "--volume $SECRET_DIR/.npmrc:/home/dev/.npmrc:ro" <<<"$NEW_CREATE" || fail "create: npmrc mount"
-hidden_vol="$(dce_hidden_volume_name "$PROJECT" "node_modules")"
-grep -Fq -- "--volume $hidden_vol:/workspace/node_modules" <<<"$NEW_CREATE" || fail "create: hidden mount"
+hidden_vol="$(dce_hidden_volume_name "$PROJECT" "$PROJECT/node_modules")"
+grep -Fq -- "--volume $hidden_vol:/workspace/$PROJECT/node_modules" <<<"$NEW_CREATE" || fail "create: hidden mount (repo-prefixed)"
+if grep -Eq -- '--volume [^ ]+:/workspace( |$)' <<<"$NEW_CREATE"; then
+  fail "create: root /workspace bind must not exist anymore
+$NEW_CREATE"
+fi
 grep -Fq -- "--publish 3000:3000"         <<<"$NEW_CREATE" || fail "create: port 3000"
 grep -Fq -- "--publish 8080:8080"         <<<"$NEW_CREATE" || fail "create: port 8080"
 grep -Fq -- "--cpus 2"                    <<<"$NEW_CREATE" || fail "create: cpus"
@@ -234,12 +252,23 @@ first_vol2="$(grep -bo -- '--volume' <<<"$NEW_CREATE" | head -1 | cut -d: -f1)"
 [[ "$first_tz" -lt "$first_vol2" ]] \
   || fail "create: --env TZ must precede the volume group (env is fundamental)"
 
-# --- devcontainer.json (docker-compatible branch) ------------------------
-dce_json="$REPOS_DIR/.devcontainer/devcontainer.json"
-[[ -f "$dce_json" ]] || fail "devcontainer.json missing"
+# --- managed devcontainer.json (docker-compatible branch) -----------------
+# Lives in the project config dir; no managed file may ever land in a repo.
+dce_json="$SECRET_DIR/devcontainer.json"
+[[ -f "$dce_json" ]] || fail "managed devcontainer.json missing at $dce_json"
+if [[ -e "$REPOS_DIR/.devcontainer/devcontainer.json" || -e "$REPOS_DIR/.vscode" ]]; then
+  fail "no managed editor config may be written into the repo root"
+fi
 grep -Fq '"workspaceFolder": "/workspace"' "$dce_json" || fail "devcontainer.json: workspaceFolder"
 grep -Fq '"remoteUser": "dev"' "$dce_json" || fail "devcontainer.json: remoteUser"
 grep -Fq "source=$hidden_vol" "$dce_json" || fail "devcontainer.json: hidden volume mount entry"
+grep -Fq -- "source=$REPOS_DIR,target=/workspace/$PROJECT,type=bind" "$dce_json" \
+  || fail "devcontainer.json: repo bind mount entry"
+grep -Fq -- "source=$cache_vol,target=/workspace/.cache,type=volume" "$dce_json" \
+  || fail "devcontainer.json: managed .cache volume entry"
+grep -Fq '"workspaceMount"' "$dce_json" \
+  && fail "devcontainer.json: workspaceMount must be gone" \
+  || true
 # The VS Code "Reopen in Container" recipe must carry the same TZ so a rebuild
 # from VS Code matches a dce-created container.
 grep -Fq '"containerEnv"' "$dce_json" || fail "devcontainer.json: containerEnv block missing"
@@ -329,7 +358,7 @@ pass "dce new: reuses existing derived image (no rebuild)"
 # config key, and guidance copy. (github default is covered by the case above.)
 # ===========================================================================
 GL_PROJ="glapp"
-GL_SECRET_DIR="$WORK/home/.config/dce-enclave/$GL_PROJ"
+GL_SECRET_DIR="$WORK/home/.config/dc-enclave/projects/$GL_PROJ"
 GL_CONFIG="$GL_SECRET_DIR/config"
 GL_SENTINEL="$(dce_git_host_field gitlab sentinel)"
 GL_TOKEN_FILE="$GL_SECRET_DIR/$(dce_git_host_field gitlab token_filename)"
@@ -405,10 +434,15 @@ RB_CREATE="$(grep -E 'create --name myapp' "$LOG" | head -n1)"
 -- new:     $NEW_CREATE
 -- rebuild: $RB_CREATE"
 
-# Default rebuild removes hidden volumes (clean slate) -> volume rm observed.
+# Default rebuild removes hidden volumes (clean slate) -> volume rm observed...
 grep -Fq "CALL docker volume rm $hidden_vol" "$LOG" \
   || fail "rebuild: default should remove hidden volume [$hidden_vol]
 $(grep 'volume' "$LOG")"
+# ...but the managed /workspace/.cache volume is PRESERVED on a normal rebuild.
+if grep -Fq "CALL docker volume rm $cache_vol" "$LOG"; then
+  fail "rebuild: managed .cache volume must survive a normal rebuild
+$(grep 'volume' "$LOG")"
+fi
 
 pass "rebuild (default): never builds, delete<create<start, create-argv parity, removes hidden volumes"
 
@@ -528,7 +562,7 @@ pass "rebuild -y: short form skips prompt"
 # The myapp project has scopes nodejs,golang. Adopt manifests: declare a.b only.
 BACKEND=docker
 cp "$IMAGES_BAK" "$IMAGES"; printf '%s\n' "$CONTAINER_IMAGE" >> "$IMAGES"
-EXT_USER_DIR="$WORK/home/.config/dce-enclave/user/extensions/vscode"
+EXT_USER_DIR="$WORK/home/.config/dc-enclave/user/extensions/vscode"
 mkdir -p "$EXT_USER_DIR"
 printf 'a.b\n' > "$EXT_USER_DIR/nodejs.txt"
 : > "$EXT_USER_DIR/golang.txt"
@@ -586,10 +620,9 @@ fi
 pass "rebuild: no extension warning pre-adoption (migration guard)"
 
 # ===========================================================================
-# dce new (apple backend): devcontainer.json + VS Code terminal-profile seed
-# (apple/container now uses VS Code Dev Containers' experimental attach path,
-#  so it seeds the same .devcontainer/devcontainer.json as docker-compatible,
-#  and additionally keeps the .vscode/settings.json terminal profile.)
+# dce new (apple backend): managed devcontainer.json seed; NO repo-local
+# .vscode/settings.json (the old terminal-profile seeding depended on one
+# canonical repo root and is gone).
 # ===========================================================================
 APROJ="appleproj"
 BACKEND=apple
@@ -598,28 +631,23 @@ run_script "$ROOT_DIR/scripts/new-container.sh" "$APROJ" nodejs 3000:3000 \
   >"$WORK/apple.stdout" 2>"$WORK/apple.stderr" \
   || fail "dce new (apple) exited non-zero"
 
-# apple now seeds a Dev Containers devcontainer.json (experimental attach path).
-apple_dc="$WORK/home/repos/$APROJ/.devcontainer/devcontainer.json"
-[[ -f "$apple_dc" ]] || fail "apple: devcontainer.json missing (experimental attach seed)"
+# apple seeds the same managed devcontainer.json (experimental attach path).
+apple_dc="$WORK/home/.config/dc-enclave/projects/$APROJ/devcontainer.json"
+[[ -f "$apple_dc" ]] || fail "apple: managed devcontainer.json missing"
 grep -Fq '"workspaceFolder": "/workspace"' "$apple_dc" || fail "apple: devcontainer.json workspaceFolder"
 grep -Fq '"remoteUser": "dev"' "$apple_dc" || fail "apple: devcontainer.json remoteUser"
 grep -Fq '"forwardPorts": [3000]' "$apple_dc" || fail "apple: devcontainer.json forwardPorts"
+apple_repo="$WORK/home/repos/$APROJ"
+[[ ! -e "$apple_repo/.vscode" ]] || fail "apple: repo-local .vscode must not be created"
+[[ ! -e "$apple_repo/.devcontainer" ]] || fail "apple: repo-local .devcontainer must not be created"
 
-# apple still seeds the VS Code terminal-profile settings.json (alternative
-# non-attach terminal workflow; harmless alongside the Dev Containers path).
-vs_settings="$WORK/home/repos/$APROJ/.vscode/settings.json"
-[[ -f "$vs_settings" ]] || fail "apple: .vscode/settings.json missing"
-grep -Fq '"terminal.integrated.defaultProfile.osx": "dce-container"' "$vs_settings" \
-  || fail "apple: defaultProfile.dce-container missing"
-grep -Fq "scripts/shell.sh $APROJ" "$vs_settings" \
-  || fail "apple: terminal profile must reference dce shell.sh $APROJ"
 # apple/container also receives the host TZ via --env (backend-agnostic).
 APPLE_CREATE="$(grep -E 'create --name appleproj' "$LOG" | head -n1)"
 grep -Fq -- "--env TZ=America/New_York" <<<"$APPLE_CREATE" \
   || fail "apple create: --env TZ missing
 $APPLE_CREATE"
 
-pass "dce new (apple): devcontainer.json + terminal-profile settings.json seed"
+pass "dce new (apple): managed devcontainer.json seed, no repo-local editor writes"
 
 echo ""
 echo "All new/rebuild lifecycle checks passed."

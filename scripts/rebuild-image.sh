@@ -103,7 +103,6 @@ fi
 
 dce_load_global_config
 
-CONFIG_DIR="$HOME/.config/dce-enclave"
 COMPOSE_SCRIPT="$SCRIPT_DIR/compose-containerfile.sh"
 if [[ ! -f "$COMPOSE_SCRIPT" ]]; then
   dce_die "Compose helper not found at $COMPOSE_SCRIPT"
@@ -152,7 +151,7 @@ while IFS= read -r config_file; do
   # Record provenance per project (deduped). Shared images get an entry in each
   # project's log so `dce provenance <project>` is populated.
   dce_log_provenance "$project_name" "$image_ref" "rebuild" "$DC_TEAM_DIR" "$DC_USER_DIR" "$scope_csv" "$PROV_BASE_ID"
-done < <(for f in "$CONFIG_DIR"/*/config; do [[ -f "$f" ]] && printf '%s\n' "$f"; done)
+done < <(dce_project_config_paths)
 
 echo ""
 if [[ ${#BUILT_REPOS[@]} -eq 0 ]]; then

@@ -8,8 +8,8 @@ dce status
 dce start myapp-monorepo
 
 # shell into the container
+# single-repo projects land in /workspace/<repo-name> automatically
 dce shell myapp-monorepo
-cd /workspace
 
 # run frontend and backend commands as needed
 npm run dev
@@ -60,4 +60,4 @@ dce status
 dce rebuild-container myapp-monorepo
 ```
 
-For apple backend, `dce editor` launches VS Code via the experimental apple-container attach path: enable **Dev Containers: Experimental: Apple Container Support** (`dev.containers.experimentalAppleContainerSupport`) in VS Code settings first, or the attach will not resolve. The `dce new`-seeded `.vscode/settings.json` terminal profile is also available as an alternative workflow (open the host repo folder; terminals route through `dce shell`).
+For apple backend, `dce editor` launches VS Code via the experimental apple-container attach path: enable **Dev Containers: Experimental: Apple Container Support** (`dev.containers.experimentalAppleContainerSupport`) in VS Code settings first, or the attach will not resolve. Attach at `/workspace` is the supported workflow; `dce` never writes editor config into your repos.

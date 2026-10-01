@@ -30,7 +30,8 @@ source "$ROOT_DIR/lib/container-backend.sh"
 # re-inject the SSH key if the container lost it (e.g. after a host reboot).
 _start_container() {
   local project="$1"
-  local config="$HOME/.config/dce-enclave/$project/config"
+  local config=""
+  config="$(dce_project_config_path "$project")"
 
   if [[ ! -f "$config" ]]; then
     echo "✗ No config found for '$project' at $config"
@@ -75,10 +76,14 @@ _start_container() {
   echo "  -> Starting $project on $active_backend..."
   backend_start "$project"
 
-  if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+  # Verify ALL managed volumes (user hidden paths + the managed /workspace/.cache
+  # cache volume) are actually mounted, restarting once to reapply if needed.
+  local -a managed_volume_paths=()
+  mapfile -t managed_volume_paths < <(dce_managed_volume_paths "${CONTAINER_HIDDEN_PATHS[@]:-}")
+  if [[ ${#managed_volume_paths[@]} -gt 0 ]]; then
     sleep 2
-    if ! dce_ensure_hidden_mounts "$project" "${CONTAINER_HIDDEN_PATHS[@]}"; then
-      echo "  ✗ $project - hidden volume mounts not active"
+    if ! dce_ensure_hidden_mounts "$project" "${managed_volume_paths[@]}"; then
+      echo "  ✗ $project - managed volume mounts not active"
       return 1
     fi
   fi
@@ -104,7 +109,7 @@ if [[ $# -gt 0 ]]; then
     _start_container "$project"
   done
 else
-  PROJECTS=("$HOME"/.config/dce-enclave/*/config)
+  mapfile -t PROJECTS < <(dce_project_config_paths)
   if [[ ${#PROJECTS[@]} -eq 0 ]]; then
     echo "No containers configured yet. Run: dce new <name> [scope]"
     exit 0

@@ -33,7 +33,7 @@ var the token is exported as inside `dce shell` (`GITHUB_TOKEN` / `GITLAB_TOKEN`
 To complete setup, edit the token file and (optionally) add the deploy key:
 
 ```
-~/.config/dce-enclave/<name>/
+~/.config/dc-enclave/projects/<name>/
   github-token   or   gitlab-token    # replace the sentinel with your token
   ssh_key.pub                         # add as a deploy key on your host
 ```

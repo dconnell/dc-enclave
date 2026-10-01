@@ -3,7 +3,7 @@
 
 Each project container runs with its own credentials and container state, so projects stay independent. The credentials below are **optional hardening** — the container runs fine without any of them. `dce new` generates the SSH keypair and creates placeholder/template files for the rest, then prints a checklist for completing the ones you want.
 
-- Per-project SSH deploy key (generated) — `dce new` creates a dedicated keypair at `~/.config/dce-enclave/<name>/ssh_key` and prints the `.pub`. Add it as a deploy key on your git host to use it; skip if you don't need repo write from inside the container.
+- Per-project SSH deploy key (generated) — `dce new` creates a dedicated keypair at `~/.config/dc-enclave/projects/<name>/ssh_key` and prints the `.pub`. Add it as a deploy key on your git host to use it; skip if you don't need repo write from inside the container.
 - Per-project git token / PAT (optional) — put a fine-grained, repo-scoped token (no admin) in the project's token file (`github-token` for `--git-host github`, `gitlab-token` for `--git-host gitlab`; GitHub is the default). A non-placeholder token becomes the container's active git auth.
   - `dce new`/`start`/`shell`/`editor`/`install`/`rebuild-container` set `credential.helper store`, seed `~/.git-credentials` as `https://<https-user>:<token>@<host>` (`x-access-token` for GitHub, `oauth2` for GitLab), and rewrite `git@<host>:` URLs to HTTPS so `git pull` works without changing your repo's `origin`.
   - The token is also exported as the provider's env var inside `dce shell` (`GITHUB_TOKEN` / `GITLAB_TOKEN`), and crosses the host/container boundary through a stdin pipe, never host argv.
@@ -12,12 +12,18 @@ Each project container runs with its own credentials and container state, so pro
     - GitLab has no equivalent VS Code conflict, so no setting is emitted for it.
     - Under ssh/none auth, the key is omitted from both files, leaving VS Code's default (interactive OAuth) as a fallback.
   - **Attach mode.** Under PAT auth, `dce editor` syncs VS Code's attached-container named config with a Git `remoteEnv` override (`credential.helper = ""` then `store`) so editor/terminal Git uses the PAT-backed `~/.git-credentials` instead of VS Code's host-credential forwarding helper.
-- Per-project .npmrc (optional) — a template is created at `~/.config/dce-enclave/<name>/.npmrc`; edit it for projects that use npm. It is mounted read-only at `/home/dev/.npmrc`.
-- Host-mounted workspace (read-write) — code lives at `${DC_REPOS_DIR:-$HOME/repos}/<project>` on your machine and is bind-mounted to `/workspace` inside the container, so processes in the container can read and write the project. Everything on the host outside this mount (home directory, shell history, global credentials) is out of reach.
+- Per-project .npmrc (optional) — a template is created at `~/.config/dc-enclave/projects/<name>/.npmrc`; edit it for projects that use npm. It is mounted read-only at `/home/dev/.npmrc`.
+- Host-mounted workspace (read-write) — code lives in one or more host repos listed by `REPO_PATHS` and is bind-mounted under `/workspace/<repo-name>` inside the container, so processes in the container can read and write the project repos. Everything on the host outside those mounts (home directory, shell history, global credentials) is out of reach.
 
 These credentials are injected by `dce` itself — at `dce new`, and re-applied by `dce start`, `dce shell`, `dce editor`, `dce install`, and `dce rebuild-container`. A VS Code-initiated rebuild bypasses dce entirely, so **always rebuild via `dce`** (never VS Code's *Rebuild Container*) or the SSH key, PAT git auth, `.npmrc`, and attach-mode Git override won't be present and `git pull` / private-package installs will fail. See [rebuild and recover](../how-to/rebuild-and-recover.md).
 
 If a container's state is ever suspect, `dce rebuild-container` replaces the container from a known-good image without touching your host repos.
+
+### The same host repo in multiple projects
+
+Repo paths must be unique and non-overlapping **within** a project, but the same canonical host repo path is allowed in **different** projects — by design, with no locking, reservation, or coordination. Both containers bind-mount the same directory, so they operate on one checkout: tracked files, untracked files, branch state, and `.git` metadata are shared, and an edit or commit made from one project is immediately visible in the other.
+
+Even when a repo is shared, credentials (SSH deploy key, git token, `.npmrc`), hidden volumes created by `--hide`, and the managed `/workspace/.cache` volume stay project-scoped. They belong to each project's container, so two projects sharing a repo remain independent trust zones for everything outside that repo's bind mount.
 
 ### VS Code remote development can reach your host
 

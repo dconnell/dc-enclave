@@ -79,7 +79,7 @@ if $LIST_ONLY; then
   echo "  command-surface : version/help/aliases + unknown-cmd   [all backends]"
   echo "  install         : real dotfiles install effect         [all backends]"
   if [[ "$MODE" == "full" ]]; then
-    echo "  lifecycle       : full flow + fixture flags (--config/--repo-path/"
+    echo "  lifecycle       : full flow + fixture flags (--config/--repo/"
     echo "                    --from-snap/--rotate-keys/--network/--ip/network subcmds)"
     echo "  flags-matrix    : data-driven rows from matrix/flags.tsv (independent +"
     echo "                    pairwise flags + backend-specific expected failures)"

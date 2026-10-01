@@ -69,7 +69,7 @@ if [[ -z "$PROJECT" ]]; then
   usage_die "Project name is required."
 fi
 
-CONFIG="$HOME/.config/dce-enclave/$PROJECT/config"
+CONFIG="$(dce_project_config_path "$PROJECT")"
 if [[ ! -f "$CONFIG" ]]; then
   dce_die "No project '$PROJECT' (config not found)."
 fi

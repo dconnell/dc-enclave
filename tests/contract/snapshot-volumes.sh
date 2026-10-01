@@ -27,7 +27,7 @@ trap 'rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 TEAM_OD="$TEAM_DIR/overlays"
@@ -183,7 +183,7 @@ vol_has() { grep -Fxq "$1" "$VOLUMES" 2>/dev/null; }
 # ===========================================================================
 BACKEND=docker
 PROJECT="myapp"
-SECRET_DIR="$WORK/home/.config/dce-enclave/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dc-enclave/projects/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" "$PROJECT" nodejs \
@@ -195,8 +195,13 @@ expected_img="$(dce_image_ref_from_scopes "$TEAM_OD" "$USER_OD" "nodejs")"
 grep -Fxq "$expected_img" "$IMAGES" || printf '%s\n' "$expected_img" >> "$IMAGES"
 grep -Fxq "$PROJECT" "$EXISTS" || printf '%s\n' "$PROJECT" >> "$EXISTS"
 grep -Fxq "$PROJECT" "$RUNNING" || printf '%s\n' "$PROJECT" >> "$RUNNING"
-orig_vol="$(dce_hidden_volume_name "$PROJECT" "node_modules")"
+# v2: --hide node_modules persists repo-prefixed; the managed /workspace/.cache
+# volume always exists alongside it.
+HIDDEN_P="$PROJECT/node_modules"
+orig_vol="$(dce_hidden_volume_name "$PROJECT" "$HIDDEN_P")"
+cache_vol="$(dce_cache_volume_name "$PROJECT")"
 printf '%s\n' "$orig_vol" >> "$VOLUMES"
+printf '%s\n' "$cache_vol" >> "$VOLUMES"
 
 # ===========================================================================
 # A. confirmation prompt: non-'yes' aborts (no snapshot, no copy); --yes skips
@@ -242,7 +247,7 @@ pass "snapshot --exclude-volumes: no prompt (nothing to copy)"
 # ===========================================================================
 # B. snapshot (default, --yes): captures the hidden volume RO, writes manifest
 # ===========================================================================
-snapvol="$(dce_snapshot_volume_name "$PROJECT" "pre" "node_modules")"
+snapvol="$(dce_snapshot_volume_name "$PROJECT" "pre" "$HIDDEN_P")"
 snap_ref="$(dce_snapshot_ref "$PROJECT" "pre")"
 manifest="$(dce_snapshot_volumes_manifest "$PROJECT" "pre")"
 
@@ -262,19 +267,25 @@ grep -Fq -- " -u 0 " <<<"$copy_call" || fail "snapshot: copy must run as uid 0"
 vol_has "$snapvol" || fail "snapshot: snapvol not created"
 vol_has "$orig_vol" || fail "snapshot: original hidden volume must remain"
 [[ -f "$manifest" ]] || fail "snapshot: manifest not written"
-grep -Fxq "$(printf '%s\t%s\tcaptured' "node_modules" "$snapvol")" "$manifest" \
+grep -Fxq "$(printf '%s\t%s\tcaptured' "$HIDDEN_P" "$snapvol")" "$manifest" \
   || fail "snapshot: manifest row wrong/absent
+$(cat "$manifest")"
+# The managed /workspace/.cache volume is captured BY DEFAULT (managed state).
+snapvol_pre_cache="$(dce_snapshot_volume_name "$PROJECT" "pre" ".cache")"
+grep -Fxq "$(printf '%s\t%s\tcaptured' ".cache" "$snapvol_pre_cache")" "$manifest" \
+  || fail "snapshot: managed .cache volume must be captured by default
 $(cat "$manifest")"
 
 run_script "$ROOT_DIR/scripts/snapshot.sh" list "$PROJECT" >"$WORK/list.stdout" 2>&1 \
   || fail "snapshots list exited non-zero"
-grep -Fq "captured 1" "$WORK/list.stdout" || fail "list: VOLUMES column should say 'captured 1'"
-pass "dce snapshot (default): RO clone, manifest, originals untouched, list column"
+grep -Fq "captured 2" "$WORK/list.stdout" \
+  || fail "list: VOLUMES column should say 'captured 2' (hidden + .cache)"
+pass "dce snapshot (default): RO clone incl. managed .cache, manifest, originals untouched"
 
 # ===========================================================================
 # C. copy failure -> empty snapvol + WARNING, snapshot still created
 # ===========================================================================
-snapvol_fail="$(dce_snapshot_volume_name "$PROJECT" "flaky" "node_modules")"
+snapvol_fail="$(dce_snapshot_volume_name "$PROJECT" "flaky" "$HIDDEN_P")"
 snap_ref_fail="$(dce_snapshot_ref "$PROJECT" "flaky")"
 manifest_fail="$(dce_snapshot_volumes_manifest "$PROJECT" "flaky")"
 : > "$LOG"
@@ -283,47 +294,37 @@ DC_STUB_FAIL_COPY_DST="$snapvol_fail" run_script "$ROOT_DIR/scripts/snapshot.sh"
   || fail "snapshot (copy failure) must NOT abort (exit non-zero)"
 img_has "$snap_ref_fail" || fail "snapshot: FS image must be created even if volume copy fails"
 grep -Fqi 'WARNING' "$WORK/flaky.stdout" || fail "snapshot: copy failure must emit a WARNING"
-grep -Fxq "$(printf '%s\t%s\tfailed' "node_modules" "$snapvol_fail")" "$manifest_fail" \
+grep -Fxq "$(printf '%s\t%s\tfailed' "$HIDDEN_P" "$snapvol_fail")" "$manifest_fail" \
   || fail "snapshot: failed manifest row wrong
 $(cat "$manifest_fail")"
 vol_has "$orig_vol" || fail "snapshot: original must survive a failed copy"
 pass "dce snapshot: copy failure -> empty snapvol + WARNING, FS image created"
 
 # ===========================================================================
-# D. selective --exclude-volume: one path excluded, another captured
+# D. selective --exclude-volume: the managed .cache volume is excludable by
+# path, and a user hidden volume stays capturable alongside it (C4).
 # ===========================================================================
-# Add a second hidden path so selective exclusion is observable.
-chmod 600 "$CONFIG" 2>/dev/null || true
-dce_set_config_array "$CONFIG" CONTAINER_HIDDEN_PATHS "node_modules" ".cache"
-chmod 600 "$CONFIG" 2>/dev/null || true
-printf '%s\n' "$(dce_hidden_volume_name "$PROJECT" ".cache")" >> "$VOLUMES"
-
 : > "$LOG"
-run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" sel --exclude-volume node_modules --yes \
+run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" sel --exclude-volume .cache --yes \
   >"$WORK/sel.stdout" 2>"$WORK/sel.stderr" \
-  || fail "dce snapshot --exclude-volume exited non-zero"
+  || fail "dce snapshot --exclude-volume .cache exited non-zero"
 manifest_sel="$(dce_snapshot_volumes_manifest "$PROJECT" "sel")"
-snapvol_sel_nm="$(dce_snapshot_volume_name "$PROJECT" "sel" "node_modules")"
+snapvol_sel_nm="$(dce_snapshot_volume_name "$PROJECT" "sel" "$HIDDEN_P")"
 snapvol_sel_cache="$(dce_snapshot_volume_name "$PROJECT" "sel" ".cache")"
-# node_modules excluded (no copy, manifest excluded); .cache captured.
-grep -Fxq "$(printf '%s\t%s\texcluded' "node_modules" "$snapvol_sel_nm")" "$manifest_sel" \
-  || fail "selective: node_modules should be excluded
+# .cache excluded (no copy, manifest excluded); the user hidden volume captured.
+grep -Fxq "$(printf '%s\t%s\texcluded' ".cache" "$snapvol_sel_cache")" "$manifest_sel" \
+  || fail "selective: .cache should be excludable
 $(cat "$manifest_sel")"
-grep -Fxq "$(printf '%s\t%s\tcaptured' ".cache" "$snapvol_sel_cache")" "$manifest_sel" \
-  || fail "selective: .cache should be captured
+grep -Fxq "$(printf '%s\t%s\tcaptured' "$HIDDEN_P" "$snapvol_sel_nm")" "$manifest_sel" \
+  || fail "selective: hidden volume should still be captured
 $(cat "$manifest_sel")"
 # The excluded volume was NOT copied; the captured one WAS.
-if grep -Fq -- "-v $orig_vol:/from:ro" "$LOG"; then
-  fail "selective: excluded volume must not be copied"
+if grep -Fq -- "-v $cache_vol:/from:ro" "$LOG"; then
+  fail "selective: excluded .cache volume must not be copied"
 fi
-grep -Fq -- "-v $(dce_hidden_volume_name "$PROJECT" ".cache"):/from:ro" "$LOG" \
+grep -Fq -- "-v $orig_vol:/from:ro" "$LOG" \
   || fail "selective: non-excluded volume must be copied"
-pass "dce snapshot --exclude-volume <path>: selective exclusion (others still captured)"
-
-# Reset to a single hidden path for the remaining sections.
-chmod 600 "$CONFIG" 2>/dev/null || true
-dce_set_config_array "$CONFIG" CONTAINER_HIDDEN_PATHS "node_modules"
-chmod 600 "$CONFIG" 2>/dev/null || true
+pass "dce snapshot --exclude-volume .cache: managed volume excludable, user volume captured"
 
 # ===========================================================================
 # E. restore --from-snap: mounts populated snapshot volume, leaves originals
@@ -335,11 +336,21 @@ printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" 
 -- stderr:$(cat "$WORK/restore.stderr")"
 rb_create="$(grep -E 'create --name myapp' "$LOG" | head -n1)"
 [[ -n "$rb_create" ]] || fail "restore: no create call"
-grep -Fq -- "--volume $snapvol:/workspace/node_modules" <<<"$rb_create" \
+grep -Fq -- "--volume $snapvol:/workspace/$HIDDEN_P" <<<"$rb_create" \
   || fail "restore: must mount the snapshot volume
 $rb_create"
 if grep -Fq -- "--volume $orig_vol:" <<<"$rb_create"; then
   fail "restore: must NOT mount the original hidden volume
+$rb_create"
+fi
+# The managed .cache volume mounts from its snapshot copy too (isolated
+# restore), never the live original.
+snapvol_pre_cache="$(dce_snapshot_volume_name "$PROJECT" "pre" ".cache")"
+grep -Fq -- "--volume $snapvol_pre_cache:/workspace/.cache" <<<"$rb_create" \
+  || fail "restore: managed .cache must mount from the snapshot volume
+$rb_create"
+if grep -Fq -- "--volume $cache_vol:" <<<"$rb_create"; then
+  fail "restore: must NOT mount the live .cache volume
 $rb_create"
 fi
 grep -Fqi 'populated' "$WORK/restore.stdout" || fail "restore: should report node_modules populated"
@@ -349,24 +360,24 @@ pass "rebuild --from-snap: mounts populated snapshot volume, leaves originals, r
 # F. uncovered path -> empty snapshot volume + report (no fail-fast, no original)
 # ===========================================================================
 chmod 600 "$CONFIG" 2>/dev/null || true
-dce_set_config_array "$CONFIG" CONTAINER_HIDDEN_PATHS "node_modules" "apps/web/.cache"
+dce_set_config_array "$CONFIG" CONTAINER_HIDDEN_PATHS "$HIDDEN_P" "$PROJECT/apps/web/dist"
 chmod 600 "$CONFIG" 2>/dev/null || true
-new_snapvol="$(dce_snapshot_volume_name "$PROJECT" "pre" "apps/web/.cache")"
+new_snapvol="$(dce_snapshot_volume_name "$PROJECT" "pre" "$PROJECT/apps/web/dist")"
 : > "$LOG"
 printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" --from-snap pre \
   >"$WORK/restore2.stdout" 2>"$WORK/restore2.stderr" \
   || fail "rebuild --from-snap must NOT fail fast on an uncovered path
 -- stderr:$(cat "$WORK/restore2.stderr")"
 rb_create2="$(grep -E 'create --name myapp' "$LOG" | head -n1)"
-grep -Fq -- "--volume $snapvol:/workspace/node_modules" <<<"$rb_create2" \
+grep -Fq -- "--volume $snapvol:/workspace/$HIDDEN_P" <<<"$rb_create2" \
   || fail "restore: covered path must mount its snapshot volume"
-grep -Fq -- "--volume $new_snapvol:/workspace/apps/web/.cache" <<<"$rb_create2" \
+grep -Fq -- "--volume $new_snapvol:/workspace/$PROJECT/apps/web/dist" <<<"$rb_create2" \
   || fail "restore: uncovered path must mount an (empty) snapshot volume, not the original
 $rb_create2"
 grep -Fqi 'empty' "$WORK/restore2.stdout" || fail "restore: should report the uncovered volume empty"
 pass "rebuild --from-snap: uncovered path -> empty snapshot volume + report"
 chmod 600 "$CONFIG" 2>/dev/null || true
-dce_set_config_array "$CONFIG" CONTAINER_HIDDEN_PATHS "node_modules"
+dce_set_config_array "$CONFIG" CONTAINER_HIDDEN_PATHS "$HIDDEN_P"
 chmod 600 "$CONFIG" 2>/dev/null || true
 
 # ===========================================================================
@@ -422,7 +433,7 @@ run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" byebye --yes >/dev/null 2>
   || fail "snapshot (default) for rm-sweep failed"
 run_script "$ROOT_DIR/scripts/snapshot.sh" "$PROJECT" keep --yes >/dev/null 2>&1 \
   || fail "snapshot (default) for rm-sweep failed"
-snapvol_keep="$(dce_snapshot_volume_name "$PROJECT" "keep" "node_modules")"
+snapvol_keep="$(dce_snapshot_volume_name "$PROJECT" "keep" "$HIDDEN_P")"
 snap_ref_bye="$(dce_snapshot_ref "$PROJECT" "byebye")"
 vol_has "$snapvol_keep" || fail "setup: keep snapvol missing"
 img_has "$snap_ref_bye" || fail "setup: byebye image missing"

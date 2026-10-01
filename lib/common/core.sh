@@ -99,7 +99,7 @@ dce_resolve_path() {
 }
 
 # Expand a leading ~ to $HOME; when $base is "config", also resolve a relative
-# path against the dce config dir (~/.config/dce-enclave). When $base is empty
+# path against the dce config dir (~/.config/dc-enclave). When $base is empty
 # or any value other than "config", relative paths are left untouched. Pure
 # string handling, no I/O.
 dce_expand_tilde() {
@@ -111,7 +111,7 @@ dce_expand_tilde() {
   if [[ "$val" == "~" || "$val" == "~/"* ]]; then
     printf '%s' "$HOME${val#\~}"
   elif [[ "$base" == "config" && -n "$val" && "$val" != /* ]]; then
-    printf '%s/%s' "$HOME/.config/dce-enclave" "$val"
+    printf '%s/%s' "$HOME/.config/dc-enclave" "$val"
   else
     printf '%s' "$val"
   fi

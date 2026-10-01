@@ -41,7 +41,7 @@ chmod 700 "$WORK"
 # Stub harness (shared by B-I): fakes docker/container/podman.
 # ===========================================================================
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -139,8 +139,7 @@ printf 'mynet\nobs\n' > "$NETWORKS"   # both networks exist
 : > "$CONTAINERS"
 
 PROJECT="webproj"
-REPOS_DIR="$WORK/home/repos/$PROJECT"
-SECRET_DIR="$WORK/home/.config/dce-enclave/$PROJECT"
+SECRET_DIR="$WORK/home/.config/dc-enclave/projects/$PROJECT"
 CONFIG="$SECRET_DIR/config"
 
 : > "$LOG"
@@ -151,7 +150,7 @@ run_script "$ROOT_DIR/scripts/new-container.sh" \
 
 # config persistence
 chmod 600 "$CONFIG" 2>/dev/null || true
-PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
+PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=(); REPO_NAMES=(); REPO_PATHS=()
 dce_load_project_config "$CONFIG"
 [[ "${CONTAINER_NETWORKS[*]}" == "mynet:10.0.0.5 obs" ]] || fail "config CONTAINER_NETWORKS (got [${CONTAINER_NETWORKS[*]}])"
 
@@ -172,7 +171,7 @@ obs_con="$(first_call 'network connect obs webproj')"
 
 # devcontainer.json carries runArgs so a Reopen-in-Container build reattaches the
 # primary network (+ its static IP) and extras.
-dce_json="$REPOS_DIR/.devcontainer/devcontainer.json"
+dce_json="$SECRET_DIR/devcontainer.json"
 [[ -f "$dce_json" ]] || fail "devcontainer.json missing"
 grep -Fq '"runArgs"' "$dce_json" || fail "devcontainer.json: runArgs block"
 grep -Fq '"--network"' "$dce_json" || fail "devcontainer.json: --network in runArgs"
@@ -199,7 +198,7 @@ fi
 grep -Fqi 'does not exist' "$WORK/c.stderr" || fail "missing-network error should mention 'does not exist' (stderr)"
 grep -Fqi 'dce network create ghost' "$WORK/c.stderr" || fail "missing-network error should suggest dce network create (stderr)"
 if grep -qE 'create --name cproj' "$LOG"; then fail "dce new: must not create container when network missing"; fi
-if [[ -d "$WORK/home/.config/dce-enclave/$CPROJ" ]]; then
+if [[ -d "$WORK/home/.config/dc-enclave/projects/$CPROJ" ]]; then
   fail "dce new: must not leave a project config dir when network missing"
 fi
 pass "Section C: missing network fails fast"
@@ -327,10 +326,11 @@ pass "Section G: apple network create/ls (header parse)"
 BACKEND=docker
 printf 'rmnet\n' > "$NETWORKS"
 # webproj references... no. Build a project that references rmnet.
-RP="$WORK/home/.config/dce-enclave/rmhost"
+RP="$WORK/home/.config/dc-enclave/projects/rmhost"
 mkdir -p "$RP"; chmod 700 "$RP"
 {
-  echo 'CONTAINER_PROJECT="rmhost"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
+  echo 'CONTAINER_PROJECT="rmhost"'; echo 'CONFIG_SCHEMA_VERSION="2"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
+  echo 'REPO_NAMES=(rmhost)'; echo "REPO_PATHS=($WORK/home/repos/rmhost)"
   echo 'PORTS=()'; echo 'CONTAINER_HIDDEN_PATHS=()'; echo 'CONTAINER_NETWORKS=(rmnet)'
 } > "$RP/config"; chmod 600 "$RP/config"
 
@@ -358,12 +358,14 @@ pass "Section H: dce network rm membership guard + --force"
 BACKEND=docker
 printf 'addnet\n' > "$NETWORKS"
 IPROJ="iprod"
-ICONFIG="$WORK/home/.config/dce-enclave/$IPROJ/config"
+ICONFIG="$WORK/home/.config/dc-enclave/projects/$IPROJ/config"
 mkdir -p "$(dirname "$ICONFIG")"; chmod 700 "$(dirname "$ICONFIG")"
 {
-  echo 'CONTAINER_PROJECT="iprod"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
+  echo 'CONTAINER_PROJECT="iprod"'; echo 'CONFIG_SCHEMA_VERSION="2"'; echo 'CONTAINER_BACKEND="docker"'; echo 'CONTAINER_IMAGE="dce-base:latest"'
+  echo 'REPO_NAMES=(iprod)'; echo "REPO_PATHS=($WORK/home/repos/iprod)"
   echo 'PORTS=()'; echo 'CONTAINER_HIDDEN_PATHS=()'; echo 'CONTAINER_NETWORKS=()'
 } > "$ICONFIG"; chmod 600 "$ICONFIG"
+# shellcheck disable=SC2034  # REPO_* reset before load, repopulated by it
 printf 'iprod\n' > "$CONTAINERS"
 
 : > "$LOG"
@@ -371,7 +373,14 @@ run_script "$ROOT_DIR/scripts/network.sh" add addnet "$IPROJ" --ip 10.9.0.3 \
   >"$WORK/i.stdout" 2>"$WORK/i.stderr" || fail "network add failed
 -- stderr:$(cat "$WORK/i.stderr")"
 grep -Fq 'CALL docker network connect --ip 10.9.0.3 addnet iprod' "$LOG" || fail "add: connect argv"
-PORTS=(); CONTAINER_HIDDEN_PATHS=(); CONTAINER_NETWORKS=()
+# shellcheck disable=SC2034
+PORTS=()
+CONTAINER_HIDDEN_PATHS=()
+CONTAINER_NETWORKS=()
+# shellcheck disable=SC2034
+REPO_NAMES=()
+# shellcheck disable=SC2034
+REPO_PATHS=()
 dce_load_project_config "$ICONFIG"
 [[ "${CONTAINER_NETWORKS[*]}" == "addnet:10.9.0.3" ]] || fail "add: config persisted (got [${CONTAINER_NETWORKS[*]}])"
 

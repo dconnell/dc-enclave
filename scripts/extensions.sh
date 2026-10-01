@@ -6,7 +6,8 @@
 # Extensions are declared in manifests under
 #   $DC_TEAM_DIR/extensions/<editor>/<scope>.txt  (layered first per scope)
 #   $DC_USER_DIR/extensions/<editor>/<scope>.txt  (layered second per scope)
-# and seeded/synced into .devcontainer/devcontainer.json by `dce new` /
+# and seeded/synced into the managed devcontainer.json at
+# ~/.config/dc-enclave/projects/<project>/devcontainer.json by `dce new` /
 # `dce config sync-vscode`. This command is the operational surface for
 # bootstrapping those manifests and inspecting runtime vs declared state.
 #
@@ -50,7 +51,7 @@ source "$ROOT_DIR/lib/extensions.sh"
 
 USAGE() {
   cat <<'EOF'
-Usage: dce extensions <subcommand> [flags] [<project>] [ids...]
+Usage: dce extensions <subcommand> [<project>] [flags] [ids...]
 
 Inspect, compare, and capture editor extensions for a project against per-scope
 manifests under $DC_{TEAM,USER}_DIR/extensions/<editor>/<scope>.txt.
@@ -93,8 +94,8 @@ EOF
 
 usage_die() {
   local msg="$1"
-  dce_die "$msg
-Usage: dce extensions <subcommand> [flags] [<project>] [ids...]"
+dce_die "$msg
+Usage: dce extensions <subcommand> [<project>] [flags] [ids...]"
 }
 
 # ---------------------------------------------------------------------------
@@ -114,6 +115,13 @@ WANT_HELP=false
 SET_USER=false
 SET_TEAM=false
 
+case "$SUBACTION" in
+  show|list|available|diff|capture)
+    PROJECT="${1:-}"
+    [[ $# -gt 0 ]] && shift
+    ;;
+esac
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --editor)        [[ $# -ge 2 ]] || dce_die "--editor requires a value"; EDITOR_OPT="$2"; shift 2 ;;
@@ -128,8 +136,12 @@ while [[ $# -gt 0 ]]; do
     -h|--help|help)  WANT_HELP=true; shift ;;
     --*)             usage_die "Unknown option: $1" ;;
     *)
-      if [[ -z "$PROJECT" ]]; then
-        PROJECT="$1"
+      if [[ "$SUBACTION" == "host" ]]; then
+        if [[ -z "$PROJECT" ]]; then
+          PROJECT="$1"
+        else
+          IDS+=("$1")
+        fi
       else
         IDS+=("$1")
       fi
@@ -174,7 +186,8 @@ fi
 # IDs) must not require backend selection/CLI availability.
 _load_project() {
   local project="$1"
-  local config="$HOME/.config/dce-enclave/$project/config"
+  local config=""
+  config="$(dce_project_config_path "$project")"
   if [[ ! -f "$config" ]]; then
     dce_die "No config for project '$project'.
        Run 'dce new $project ...' first, or 'dce config ls' for projects."

@@ -61,7 +61,7 @@ mkdir -p "$IT_REPOS_DIR" "$IT_ARTIFACTS_ROOT"
 export DC_REPOS_DIR="$IT_REPOS_DIR"
 
 # Isolate HOME + the global config too, not just repos. `dce new` calls
-# dce_load_global_config, which hard-requires ~/.config/dce-enclave/config: it
+# dce_load_global_config, which hard-requires ~/.config/dc-enclave/config: it
 # IGNORES env DC_TEAM_DIR (roots are unset first) and dce_die's if the file or
 # the team/user roots are missing. A host that never ran scripts/setup.sh (e.g.
 # CI) therefore sees every `dce new` fail. Two modes:
@@ -75,9 +75,9 @@ export DC_REPOS_DIR="$IT_REPOS_DIR"
 #     is left intact. This is auto-detected; DCE_TEST_REAL_HOME=1 forces it on.
 _it_ensure_global_config() {  # <home>
   local h="$1" team user cfg
-  team="$h/.config/dce-enclave/team"
-  user="$h/.config/dce-enclave/user"
-  cfg="$h/.config/dce-enclave/config"
+  team="$h/.config/dc-enclave/team"
+  user="$h/.config/dc-enclave/user"
+  cfg="$h/.config/dc-enclave/config"
   if [[ -f "$cfg" ]]; then
     return 0
   fi

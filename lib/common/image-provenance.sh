@@ -258,7 +258,7 @@ dce_provenance_scopes_json() {
 
 # Path to a project's provenance log.
 dce_provenance_log_path() {
-  printf '%s/.config/dce-enclave/%s/provenance.jsonl\n' "$HOME" "$1"
+  printf '%s/provenance.jsonl\n' "$(dce_project_dir "$1")"
 }
 
 # Append one provenance entry to the project's JSONL log, deduping on change.

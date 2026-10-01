@@ -4,9 +4,11 @@
 # flag flows that do NOT fit the generic data-driven matrix engine.
 #
 # Covers the documented flags the matrix leaves to bespoke cases:
-#   --config --repo-path --from-snap --rotate-keys --network --ip --follow
+#   --config --repo --hide --from-snap --rotate-keys --network --ip --follow
 #   network: --subnet --subnet-v6 --force (create/add/remove/rm/members/ls)
-# plus the full baseline lifecycle per backend and `rebuild-image base`.
+# plus the full baseline lifecycle per backend, `rebuild-image base`, and the
+# two-repo schema-v2 flow (repo-prefixed hidden volume + persistent managed
+# /workspace/.cache across `rebuild-container`).
 #
 # Every case creates its project(s) via it_dce new + it_register_project, so the
 # harness per-case + global finalizer remove them. Networks are registered via
@@ -60,16 +62,150 @@ _it_lc_new_config() {  # <backend> <case_id>
   return 0
 }
 
-# --repo-path: override the repo mount location.
-_it_lc_new_repo_path() {  # <backend> <case_id>
-  local b="$1" c="$2" path p rc
+# --repo: override the repo mount location.
+_it_lc_new_repo() {  # <backend> <case_id>
+  local b="$1" c="$2" path p out rc repo_name
   path="$IT_REPOS_DIR/$c-repo"
   mkdir -p "$path"
   p="$(it_project_name "$b" "$c")"
-  it_dce "$b" "$c" new "$p" --repo-path "$path" >/dev/null && rc=0 || rc=$?
-  [[ $rc -eq 0 ]] || { it_case_fail "dce new --repo-path exited $rc"; return 1; }
+  it_dce "$b" "$c" new "$p" --repo "$path" >/dev/null && rc=0 || rc=$?
+  [[ $rc -eq 0 ]] || { it_case_fail "dce new --repo exited $rc"; return 1; }
   it_register_project "$p" "$b"
-  [[ -d "$path" ]] || { it_case_fail "--repo-path target not used: $path"; return 1; }
+  repo_name="$(basename "$path")"
+  out="$(it_dce_capture "$b" "$c" repo list "$p")" && rc=0 || rc=$?
+  [[ $rc -eq 0 ]] || { it_case_fail "repo list after --repo exited $rc"; return 1; }
+  [[ "$out" == *"$repo_name=$path"* ]] \
+    || { it_case_fail "repo list does not report the explicit --repo path (got: $out)"; return 1; }
+  return 0
+}
+
+# --repo <name>=<path> (repeatable): a two-repo schema-v2 project. `repo list`
+# must report both entries (one `name=path` line per repo), and exec must land
+# in the right cwd: with no --repo a multi-repo project defaults to the project
+# root /workspace, and --repo <name> cds to that repo's /workspace/<name> mount.
+#
+# The same project also carries a repo-prefixed hidden volume and proves the
+# managed-cache contract on a real backend:
+#   --hide web/node_modules -> a dedicated named volume at
+#     /workspace/web/node_modules. On a multi-repo project the unprefixed
+#     shorthand is ambiguous and MUST be repo-prefixed (normalization rules are
+#     pinned by unit/contract tiers; here we prove the real mount + lifecycle).
+#   /workspace/.cache       -> the dce-managed volume whose content MUST
+#     survive `dce rebuild-container` (default clean rebuild).
+# Three markers with different fates across the rebuild discriminate the mount
+# kinds: .cache content persists, the user hidden volume gets the documented
+# clean-slate wipe and returns as a fresh mount (create/rebuild mount parity),
+# and the repo bind keeps showing host state (host-side marker).
+#
+# Capability gate: named volumes are backend-VM-internal and are asserted on
+# EVERY backend. Repo-bind CONTENT flow (host<->container) additionally needs
+# the backend VM to share the host repos dir; stock colima only mounts ~ and
+# /tmp/colima into its VM, so /tmp test repos are invisible inside the
+# container there. That is an environment capability gap, not a dce bug, so
+# only the bind-content assertions are skip-gated (two-way probe, actionable
+# guidance), and the gate is decided BEFORE the rebuild so the volume/rebuild
+# assertions always run -- the skip can never mask them.
+_it_lc_new_repos_multi() {  # <backend> <case_id>
+  local b="$1" c="$2" web api p out rc bind_shared
+  web="$IT_REPOS_DIR/$c-web"
+  api="$IT_REPOS_DIR/$c-api"
+  mkdir -p "$web" "$api"
+  # Host-side repo marker: visible in-container through the bind (where the
+  # backend shares the path), and it must still be there after a rebuild
+  # (repos are host state, never container FS).
+  printf 'repo-bind\n' > "$web/.dce-it-repo-marker"
+  p="$(it_project_name "$b" "$c")"
+  it_dce "$b" "$c" new "$p" --repo "web=$web" --repo "api=$api" \
+    --hide web/node_modules >/dev/null && rc=0 || rc=$?
+  [[ $rc -eq 0 ]] || { it_case_fail "dce new --repo x2 --hide exited $rc"; return 1; }
+  it_register_project "$p" "$b"
+
+  # Config layer: both named entries exist for the project, and the hidden
+  # path was persisted repo-prefixed.
+  out="$(it_dce_capture "$b" "$c" repo list "$p")" && rc=0 || rc=$?
+  [[ $rc -eq 0 && "$out" == *"web="* && "$out" == *"api="* ]] \
+    || { it_case_fail "repo list missing web/api entries (got: $out)"; return 1; }
+  out="$(it_dce_capture "$b" "$c" status "$p")" && rc=0 || rc=$?
+  [[ $rc -eq 0 && "$out" == *"web/node_modules"* ]] \
+    || { it_case_fail "status does not report hidden path web/node_modules (got: $out)"; return 1; }
+
+  # Runtime layer: default cwd is the multi-repo root; --repo pins the cwd to
+  # that repo's in-container mount.
+  it_dce "$b" "$c" start "$p" >/dev/null || { it_case_fail "start"; return 1; }
+  out="$(it_dce_capture "$b" "$c" exec "$p" pwd)" && rc=0 || rc=$?
+  [[ $rc -eq 0 ]] || { it_case_fail "exec pwd exited $rc (got: $out)"; return 1; }
+  printf '%s\n' "$out" | grep -Fxq '/workspace' \
+    || { it_case_fail "exec pwd not under /workspace (got: $out)"; return 1; }
+  out="$(it_dce_capture "$b" "$c" exec "$p" --repo web pwd)" && rc=0 || rc=$?
+  [[ $rc -eq 0 ]] || { it_case_fail "exec --repo web pwd exited $rc (got: $out)"; return 1; }
+  printf '%s\n' "$out" | grep -Fxq '/workspace/web' \
+    || { it_case_fail "exec --repo web pwd not /workspace/web (got: $out)"; return 1; }
+  out="$(it_dce_capture "$b" "$c" exec "$p" --repo api pwd)" && rc=0 || rc=$?
+  [[ $rc -eq 0 ]] || { it_case_fail "exec --repo api pwd exited $rc (got: $out)"; return 1; }
+  printf '%s\n' "$out" | grep -Fxq '/workspace/api' \
+    || { it_case_fail "exec --repo api pwd not /workspace/api (got: $out)"; return 1; }
+
+  # Hidden-volume layer: the repo-prefixed path is a REAL mount point (same
+  # findmnt check the product itself runs at create/start) and both in-volume
+  # markers seed cleanly. All backend-VM-internal -- no host-sharing needed.
+  it_dce "$b" "$c" exec "$p" sh -c 'findmnt -M /workspace/web/node_modules >/dev/null' \
+    || { it_case_fail "web/node_modules is not a mount point"; return 1; }
+  it_dce "$b" "$c" exec "$p" sh -c 'findmnt -M /workspace/.cache >/dev/null' \
+    || { it_case_fail "/workspace/.cache is not a mount point"; return 1; }
+  it_dce "$b" "$c" exec "$p" sh -c \
+    'printf "hidden-vol\n" > /workspace/web/node_modules/.dce-it-marker' \
+    || { it_case_fail "cannot write into web/node_modules hidden volume"; return 1; }
+  it_dce "$b" "$c" exec "$p" sh -c \
+    'printf "cache-vol\n" > /workspace/.cache/.dce-it-marker' \
+    || { it_case_fail "cannot write into managed /workspace/.cache volume"; return 1; }
+
+  # Repo-bind content probe (BOTH directions, pre-rebuild): write through the
+  # bind VM->host, and read the host marker host->VM. Decides bind_shared
+  # BEFORE the rebuild; the gated assertions below run only when both ways
+  # work, so a skip here never masks the volume/rebuild assertions.
+  bind_shared=1
+  it_dce "$b" "$c" exec "$p" sh -c \
+    'printf "vm-probe\n" > /workspace/web/.dce-it-vm-marker' || bind_shared=0
+  if [[ $bind_shared -eq 1 && ! -f "$web/.dce-it-vm-marker" ]]; then
+    bind_shared=0
+  fi
+  if [[ $bind_shared -eq 1 ]]; then
+    out="$(it_dce_capture "$b" "$c" exec "$p" cat /workspace/web/.dce-it-repo-marker)" \
+      && rc=0 || rc=$?
+    [[ $rc -eq 0 && "$out" == *"repo-bind"* ]] || bind_shared=0
+  fi
+
+  # Rebuild on the live volumes (default clean slate). The recreated container
+  # is left running by rebuild-container, so exec works immediately.
+  it_dce "$b" "$c" rebuild-container "$p" --yes >/dev/null \
+    || { it_case_fail "rebuild-container"; return 1; }
+
+  # The managed /workspace/.cache volume is deliberately preserved...
+  out="$(it_dce_capture "$b" "$c" exec "$p" cat /workspace/.cache/.dce-it-marker)" \
+    && rc=0 || rc=$?
+  [[ $rc -eq 0 && "$out" == *"cache-vol"* ]] \
+    || { it_case_fail ".cache did not persist across rebuild (got: $out)"; return 1; }
+  # ...while user hidden volumes get the documented clean-slate wipe...
+  it_dce "$b" "$c" exec "$p" sh -c 'test ! -e /workspace/web/node_modules/.dce-it-marker' \
+    || { it_case_fail "hidden volume web/node_modules was NOT wiped by clean rebuild"; return 1; }
+  # ...and return as a fresh mount (create/rebuild mount parity).
+  it_dce "$b" "$c" exec "$p" sh -c 'findmnt -M /workspace/web/node_modules >/dev/null' \
+    || { it_case_fail "web/node_modules not re-mounted after rebuild"; return 1; }
+
+  # Repo-bind content assertions (gated; see the capability-gate comment).
+  if [[ $bind_shared -eq 0 ]]; then
+    it_case_skip \
+      "backend VM does not share the host repos dir ($IT_REPOS_DIR) with the container (bind content invisible in one or both directions); repo-bind content checks skipped -- cwd, hidden-volume and .cache checks all ran. Fix the backend mount config to run them (e.g. colima: add the repos dir to the VM mounts)."
+    return 0
+  fi
+  # ...repo binds are host state: the VM->host marker survives the rebuild on
+  # the host, and host content is still visible in the recreated container.
+  [[ -f "$web/.dce-it-vm-marker" ]] \
+    || { it_case_fail "VM->host bind marker lost after rebuild: $web/.dce-it-vm-marker"; return 1; }
+  out="$(it_dce_capture "$b" "$c" exec "$p" cat /workspace/web/.dce-it-repo-marker)" \
+    && rc=0 || rc=$?
+  [[ $rc -eq 0 && "$out" == *"repo-bind"* ]] \
+    || { it_case_fail "repo bind web/ lost host marker after rebuild (got: $out)"; return 1; }
   return 0
 }
 
@@ -135,7 +271,7 @@ _it_lc_snapshot_restore() {  # <backend> <case_id>
 _it_lc_rebuild_rotate_keys() {  # <backend> <case_id>
   local b="$1" c="$2" p pub_before pub_after secret
   p="$(_it_mkproj "$b" "$c")" || { it_case_fail "dce new (baseline) failed"; return 1; }
-  secret="$HOME/.config/dce-enclave/$p/ssh_key.pub"
+  secret="$HOME/.config/dc-enclave/projects/$p/ssh_key.pub"
   [[ -f "$secret" ]] || { it_case_fail "no ssh_key.pub for $p"; return 1; }
   pub_before="$(cat "$secret")"
 
@@ -242,7 +378,8 @@ it_cases_lifecycle() {  # <backend>
   local b="$1"
   it_run_case "$b" "lifecycle-full"         _it_lc_full
   it_run_case "$b" "new-config"             _it_lc_new_config
-  it_run_case "$b" "new-repo-path"          _it_lc_new_repo_path
+  it_run_case "$b" "new-repo"               _it_lc_new_repo
+  it_run_case "$b" "new-repos-multi"        _it_lc_new_repos_multi
   it_run_case "$b" "logs-follow"            _it_lc_logs_follow
   it_run_case "$b" "snapshot-restore"       _it_lc_snapshot_restore
   it_run_case "$b" "rebuild-rotate-keys"    _it_lc_rebuild_rotate_keys

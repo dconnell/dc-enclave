@@ -4,9 +4,9 @@ Short definitions for the terms used across these docs. Follow the links for ful
 
 ## The project model
 
-- **Project** — one isolated dev container plus its host-side config and secrets. Created by `dce new <name>`; lives under `~/.config/dce-enclave/<name>/`. Each project gets its own container, SSH key, optional PAT, and optional `.npmrc`.
+- **Project** — one isolated dev container plus its host-side config and secrets. Created by `dce new <name>`; lives under `~/.config/dc-enclave/projects/<name>/`. Each project gets its own container, SSH key, optional PAT, and optional `.npmrc`.
 - **Backend** — the container runtime `dce` drives: `apple` (apple/container), `docker`, `orbstack`, `colima`, or `podman`. Auto-detected or forced with `CONTAINER_BACKEND`. Details in [backends](backends.md).
-- **Workspace** — the directory mounted at `/workspace` inside the container. A read-write bind mount of `${DC_REPOS_DIR:-$HOME/repos}/<project>` on the host.
+- **Workspace** — the project root at `/workspace` inside the container. Repo binds live under `/workspace/<repo-name>` and the managed cache volume lives at `/workspace/.cache`.
 
 ## Images and overlays
 
@@ -20,8 +20,8 @@ Short definitions for the terms used across these docs. Follow the links for ful
 - **Team root** (`$DC_TEAM_DIR`) — shared team directory holding `overlays/`, `container-recipes/`, and `extensions/`. Typically a git checkout.
 - **User root** (`$DC_USER_DIR`) — same layout as team root, but personal. Typically a git checkout.
 - **Recipe** — a `key=value` file under `container-recipes/<name>` that supplies defaults for `dce new`. Loaded automatically by project name. Details in [configuration](configuration.md#container-recipes).
-- **Project config** — `~/.config/dce-enclave/<name>/config`, written by `dce new` and edited via `dce config set`. Source of truth for the project's ports, scopes, mounts, resource limits, and backend.
-- **Global config** — `~/.config/dce-enclave/config`, written by `setup.sh`. Holds `DC_TEAM_DIR` and `DC_USER_DIR`.
+- **Project config** — `~/.config/dc-enclave/projects/<name>/config`, written by `dce new` and edited via `dce config set`. Source of truth for the project's ports, scopes, mounts, resource limits, and backend.
+- **Global config** — `~/.config/dc-enclave/config`, written by `setup.sh`. Holds `DC_TEAM_DIR` and `DC_USER_DIR`.
 
 ## Volumes and mounts
 
@@ -30,7 +30,7 @@ Short definitions for the terms used across these docs. Follow the links for ful
 
 ## Editor integration
 
-- **Managed field** — a field in `.devcontainer/devcontainer.json` that `dce` owns (e.g. `build.dockerfile`, `mounts`, `forwardPorts`, `customizations.vscode.extensions`). User-edited keys are preserved; managed keys are reconciled by `dce config sync-vscode`.
+- **Managed field** — a field in `~/.config/dc-enclave/projects/<project>/devcontainer.json` that `dce` owns (e.g. `build.dockerfile`, `mounts`, `forwardPorts`, `customizations.vscode.extensions`). User-edited keys are preserved; managed keys are reconciled by `dce config sync-vscode`.
 - **Extension manifest** — plain-text file under `extensions/<editor>/<scope>.txt` declaring one editor extension ID per line. Layered like overlays.
 
 ## Trust and recovery

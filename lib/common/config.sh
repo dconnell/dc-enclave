@@ -8,10 +8,18 @@
 # syntax or unescaped command substitution) BEFORE sourcing, then validates the
 # loaded values. Also exposes the schema arrays (_DC_CONFIG_*_KEYS,
 # _DC_KNOWN_BACKENDS), the typed validators (cpus/memory/network/ip/subnet),
-# the value serializer/parser pair (escape_config_value / extract_scalar), and
-# the atomic key/array setters used by maintenance commands. Depends on core.sh
-# (dce_die) and -- at call time only -- on scopes.sh / hidden-volumes.sh /
-# git-host.sh for cross-cutting validators inside dce_validate_config_values.
+# the schema-v2 repo validators (dce_validate_repo_name / dce_validate_repo_path
+# / dce_validate_repo_entries), the value serializer/parser pair
+# (escape_config_value / extract_scalar), and the atomic key/array setters used
+# by maintenance commands. Depends on core.sh (dce_die) and -- at call time
+# only -- on scopes.sh / hidden-volumes.sh / git-host.sh for cross-cutting
+# validators inside dce_validate_config_values.
+#
+# Schema policy (clean break): this loader understands ONLY schema version 2
+# (CONFIG_SCHEMA_VERSION="2" plus the REPO_NAMES/REPO_PATHS repo arrays).
+# Configs carrying the retired single-repo REPOS_DIR key are rejected with an
+# explicit pointer to the legacy-single-repo branch; there is no dual-runtime
+# or migration support here.
 # =============================================================================
 
 if [[ -n "${_DC_COMMON_CONFIG_SH_LOADED:-}" ]]; then
@@ -22,13 +30,37 @@ declare -gr _DC_COMMON_CONFIG_SH_LOADED=1
 # Known scalar and array keys permitted in a project config file. The loader
 # rejects any key outside these sets so an attacker cannot introduce arbitrary
 # assignments. Keep in sync with scripts/new-container.sh config emission.
+#
+# REPOS_DIR is retained ONLY so legacy single-repo configs pass the line-shape
+# gate and reach the targeted legacy rejection in dce_validate_config_values
+# (which prints the explicit legacy-single-repo pointer) instead of the generic
+# "unknown key" error. It is never a valid value: the loader flags the key's
+# PRESENCE (_DC_CONFIG_LEGACY_REPOS_DIR_SEEN), so even an empty REPOS_DIR=""
+# line is rejected as legacy.
 declare -gra _DC_CONFIG_SCALAR_KEYS=(
   CONTAINER_PROJECT CONTAINER_OVERLAY_SCOPES CONTAINER_IMAGE CONTAINER_BACKEND
   CONTAINER_GIT_HOST
   CONTAINER_CPUS CONTAINER_MEMORY REPOS_DIR SECRET_DIR
   SSH_KEY_PATH TOKEN_FILE NPMRC_PATH
+  CONFIG_SCHEMA_VERSION
 )
-declare -ga _DC_CONFIG_ARRAY_KEYS=(PORTS CONTAINER_HIDDEN_PATHS CONTAINER_NETWORKS)
+declare -ga _DC_CONFIG_ARRAY_KEYS=(
+  PORTS CONTAINER_HIDDEN_PATHS CONTAINER_NETWORKS
+  REPO_NAMES REPO_PATHS
+)
+
+# The only config schema version this loader understands (the multi-repo
+# project model). Configs omitting the key or carrying any other value fail.
+declare -gr _DC_CONFIG_SCHEMA_VERSION="2"
+
+# Set to true by dce_load_project_config when the scanned config file contains
+# a REPOS_DIR assignment (any value, including empty). Consumed by the schema
+# gate in dce_validate_config_values so legacy detection is presence-based.
+declare -g _DC_CONFIG_LEGACY_REPOS_DIR_SEEN=false
+
+# Repo names reserved for dce-managed paths inside /workspace. `.cache` is the
+# dce-managed persistent cache volume target; users cannot claim it as a repo.
+declare -gra _DC_RESERVED_REPO_NAMES=(".cache")
 
 # Supported container backend names (mirrors lib/container-backend.sh selection).
 declare -ga _DC_KNOWN_BACKENDS=(apple docker orbstack colima podman)
@@ -145,6 +177,252 @@ dce_validate_subnet_value() {
     printf 'ERROR: Invalid subnet address in %s\n' "$value" >&2
     return 1
   fi
+
+  return 0
+}
+
+# --- schema-v2 repo validation helpers -----------------------------------------
+# Shared by the config loader and the repo-facing CLI surfaces. Repo
+# names follow the same conservative identifier grammar as project names;
+# repo paths are host bind-mount sources, so they must be absolute and free of
+# control characters, unique canonically, and non-overlapping within a project.
+
+# Return 0 (true) if NAME collides with a dce-managed path inside /workspace.
+dce_repo_name_is_reserved() {
+  local name="$1"
+  local reserved=""
+  for reserved in "${_DC_RESERVED_REPO_NAMES[@]}"; do
+    [[ "$reserved" == "$name" ]] && return 0
+  done
+  return 1
+}
+
+# Validate one repo name: non-empty, not reserved, and matching the same
+# conservative identifier grammar as project names (alphanumeric first
+# character, then alphanumerics/dot/underscore/dash; no whitespace or shell
+# metacharacters). Prints a diagnostic and returns 1 on rejection.
+dce_validate_repo_name() {
+  local name="$1"
+
+  if [[ -z "$name" ]]; then
+    printf 'ERROR: Repo name must not be empty.\n' >&2
+    return 1
+  fi
+
+  if dce_repo_name_is_reserved "$name"; then
+    printf 'ERROR: Repo name %q is reserved for dce-managed paths in /workspace.\n' "$name" >&2
+    return 1
+  fi
+
+  if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    printf 'ERROR: Invalid repo name: %q\n' "$name" >&2
+    printf '  Expected alphanumerics, dot, underscore, or dash, starting with an alphanumeric.\n' >&2
+    return 1
+  fi
+
+  return 0
+}
+
+# Echo the lexical canonical form of a repo path used for duplicate/overlap
+# comparison and sensitive-root rejection: duplicate slashes collapsed, '.'
+# and '..' segments resolved lexically (clamped at the root), trailing slashes
+# trimmed. Deliberately NO filesystem access -- configs must load (or be
+# rejected) identically whether or not the host directories exist yet, and a
+# symlinked alias must not change the lexical trust decision (the recipe gate
+# does canonical symlink resolution separately at create time).
+dce_repo_path_canonical() {
+  local path="$1"
+  local out=""
+  local seg=""
+  local -a segs=()
+
+  if [[ "$path" != /* ]]; then
+    # Only absolute paths are valid repo paths; leave relative input intact so
+    # the validator's absolute-path rejection still fires with a clear message.
+    printf '%s' "$path"
+    return 0
+  fi
+
+  # '/'-split + lexical stack: '.' drops, '..' pops (clamped at the root),
+  # empty segments (duplicate slashes) drop.
+  local -a raw_segs=()
+  IFS=/ read -r -a raw_segs <<< "$path"
+  for seg in "${raw_segs[@]}"; do
+    [[ -z "$seg" || "$seg" == "." ]] && continue
+    if [[ "$seg" == ".." ]]; then
+      [[ ${#segs[@]} -gt 0 ]] && unset 'segs[${#segs[@]}-1]'
+      continue
+    fi
+    segs+=("$seg")
+  done
+
+  out=""
+  for seg in "${segs[@]}"; do
+    out+="/$seg"
+  done
+  [[ -n "$out" ]] || out="/"
+  printf '%s' "$out"
+}
+
+# Return 0 (true) if canonical repo paths A and B are equal or nested (one is
+# an ancestor of the other). Nested bind mounts inside one project make
+# ownership and intent ambiguous, so they are rejected.
+dce_repo_paths_overlap() {
+  local a="$1"
+  local b="$2"
+  [[ "$a" == "$b" ]] && return 0
+  [[ "$b" == "$a"/* ]] && return 0
+  [[ "$a" == "$b"/* ]] && return 0
+  return 1
+}
+
+# Validate one persisted repo path: non-empty, absolute, free of control
+# characters, and — after LEXICAL canonicalization — neither the host root
+# (/) nor the user's home ($HOME). Mounting either would expose everything
+# under it to the container, so they are rejected for every source (CLI,
+# recipe, persisted config). Prints a diagnostic and returns 1 on rejection.
+dce_validate_repo_path() {
+  local path="$1"
+  local canon=""
+  local home_canon=""
+
+  if [[ -z "$path" ]]; then
+    printf 'ERROR: Repo path must not be empty.\n' >&2
+    return 1
+  fi
+
+  if [[ "$path" != /* ]]; then
+    printf 'ERROR: Invalid repo path: must be an absolute path (%q)\n' "$path" >&2
+    return 1
+  fi
+
+  if [[ "$path" =~ [[:cntrl:]] ]]; then
+    printf 'ERROR: Invalid repo path: contains control characters (%q)\n' "$path" >&2
+    return 1
+  fi
+
+  canon="$(dce_repo_path_canonical "$path")"
+
+  if [[ "$canon" == "/" ]]; then
+    printf 'ERROR: Invalid repo path: must not be the host root (/) (%q)\n' "$path" >&2
+    return 1
+  fi
+
+  if [[ -n "${HOME:-}" ]]; then
+    home_canon="$(dce_resolve_path "$HOME" 2>/dev/null || dce_repo_path_canonical "$HOME")"
+  fi
+  if [[ -n "$home_canon" && "$canon" == "$home_canon" ]]; then
+    printf 'ERROR: Invalid repo path: must not be your home directory (%q)\n' "$path" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+# Return 0 (true) when CANON is equal to the default repos root or one of its
+# ancestors. A schema-v2 repo entry must point at one checkout, not at the repos
+# root or one of its parents.
+dce_repo_path_is_repos_root_or_ancestor() {
+  local canon="$1"
+  local default_root=""
+  local default_root_canon=""
+
+  default_root="$(dce_default_repos_root)"
+  default_root_canon="$(dce_resolve_path "$default_root" 2>/dev/null || dce_repo_path_canonical "$default_root")"
+
+  [[ -n "$default_root_canon" && "$default_root_canon" != "/" ]] || return 1
+  [[ "$canon" == "$default_root_canon" || "$default_root_canon" == "$canon/"* ]]
+}
+
+# Reject a repo path that is too broad for the schema-v2 explicit-repo model:
+# the repos root itself or any parent of it. Prints a diagnostic and returns 1
+# on rejection.
+dce_validate_repo_path_not_repos_root_or_ancestor() {
+  local path="$1"
+  local canon=""
+
+  canon="$(dce_resolve_path "$path" 2>/dev/null || dce_repo_path_canonical "$path")"
+  if dce_repo_path_is_repos_root_or_ancestor "$canon"; then
+    printf 'ERROR: Invalid repo path: must not be the repos root or a parent of it (%q)\n' "$path" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+# Validate the schema-v2 repo set held in the REPO_NAMES / REPO_PATHS globals:
+# equal lengths, at least one entry, per-entry name/path validity, unique repo
+# names, and unique non-overlapping canonical repo paths. Prints diagnostics
+# and returns 1 on any violation.
+dce_validate_repo_entries() {
+  local -a names=()
+  local -a paths=()
+
+  if declare -p REPO_NAMES >/dev/null 2>&1; then
+    names=("${REPO_NAMES[@]}")
+  fi
+  if declare -p REPO_PATHS >/dev/null 2>&1; then
+    paths=("${REPO_PATHS[@]}")
+  fi
+
+  if [[ ${#names[@]} -ne ${#paths[@]} ]]; then
+    printf 'ERROR: REPO_NAMES (%d entries) and REPO_PATHS (%d entries) must have the same length.\n' \
+      "${#names[@]}" "${#paths[@]}" >&2
+    return 1
+  fi
+
+  if [[ ${#names[@]} -eq 0 ]]; then
+    printf 'ERROR: REPO_NAMES/REPO_PATHS must list at least one repo.\n' >&2
+    return 1
+  fi
+
+  local -A seen_names=()
+  local -a canons=()
+  local i=0
+  local j=0
+  local name=""
+  local path=""
+  local canon=""
+
+  for ((i = 0; i < ${#names[@]}; i++)); do
+    name="${names[i]}"
+    path="${paths[i]}"
+
+    if ! dce_validate_repo_name "$name" >&2; then
+      printf '  in REPO_NAMES entry %d\n' "$i" >&2
+      return 1
+    fi
+
+     if ! dce_validate_repo_path "$path" >&2; then
+       printf '  in REPO_PATHS entry %d (repo "%s")\n' "$i" "$name" >&2
+       return 1
+     fi
+
+      if ! dce_validate_repo_path_not_repos_root_or_ancestor "$path" >&2; then
+        printf '  in REPO_PATHS entry %d (repo "%s")\n' "$i" "$name" >&2
+        return 1
+      fi
+
+     if [[ -n "${seen_names[$name]:-}" ]]; then
+       printf 'ERROR: Duplicate repo name: %s (repo names must be unique within a project).\n' "$name" >&2
+       return 1
+    fi
+    seen_names["$name"]=1
+
+    canon="$(dce_repo_path_canonical "$path")"
+    for ((j = 0; j < ${#canons[@]}; j++)); do
+      if dce_repo_paths_overlap "${canons[j]}" "$canon"; then
+        if [[ "${canons[j]}" == "$canon" ]]; then
+          printf 'ERROR: Duplicate canonical repo path: %s (each repo needs its own path).\n' "$canon" >&2
+        else
+          printf 'ERROR: Overlapping repo paths: %s and %s (nested repo mounts are ambiguous).\n' \
+            "${canons[j]}" "$canon" >&2
+        fi
+        return 1
+      fi
+    done
+    canons+=("$canon")
+  done
 
   return 0
 }
@@ -328,6 +606,37 @@ dce_config_line_is_safe() {
 dce_validate_config_values() {
   local config_file="$1"
 
+  # --- schema gate ---------------------------------------------------------------
+  # Old single-repo configs are rejected with an explicit pointer to the
+  # legacy-single-repo branch; main has no dual-runtime or migration support.
+  # This check runs first so a legacy config gets the actionable message instead
+  # of the generic missing-schema-version error it would also trigger.
+  # Detection is presence-based (loader flag), not value-based, so a legacy
+  # config with an empty REPOS_DIR="" is rejected exactly like a populated one
+  # (the sourced variable alone cannot express that: it is reset to "" before
+  # the source, indistinguishable from an explicit empty value).
+  if [[ -n "${REPOS_DIR:-}" || "${_DC_CONFIG_LEGACY_REPOS_DIR_SEEN:-}" == "true" ]]; then
+    printf 'ERROR: Legacy single-repo config detected in %s: REPOS_DIR is no longer supported.\n' "$config_file" >&2
+    printf '  This project was created for the old single-repo model, which main does not\n' >&2
+    printf '  support anymore. Use the legacy-single-repo branch for this project:\n' >&2
+    printf '    git checkout legacy-single-repo\n' >&2
+    printf '  or recreate it with the schema-v2 REPO_NAMES/REPO_PATHS config format.\n' >&2
+    return 1
+  fi
+
+  if [[ "${CONFIG_SCHEMA_VERSION:-}" != "$_DC_CONFIG_SCHEMA_VERSION" ]]; then
+    printf 'ERROR: Unsupported CONFIG_SCHEMA_VERSION in %s: got %q, expected %q.\n' \
+      "$config_file" "${CONFIG_SCHEMA_VERSION:-}" "$_DC_CONFIG_SCHEMA_VERSION" >&2
+    printf '  Only schema-v2 projects (REPO_NAMES/REPO_PATHS) load on main; single-repo\n' >&2
+    printf '  configs need the legacy-single-repo branch.\n' >&2
+    return 1
+  fi
+
+  if ! dce_validate_repo_entries >&2; then
+    printf '  in %s\n' "$config_file" >&2
+    return 1
+  fi
+
   if ! dce_validate_cpus_value "${CONTAINER_CPUS:-}" >&2; then
     printf '  in %s\n' "$config_file" >&2
     return 1
@@ -473,12 +782,16 @@ dce_load_project_config() {
   fi
 
   local line=""
+  _DC_CONFIG_LEGACY_REPOS_DIR_SEEN=false
   while IFS= read -r line || [[ -n "$line" ]]; do
     if ! dce_config_line_is_safe "$line"; then
       dce_die "Unsafe or invalid line in config $config_file:
   $line
 Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
     fi
+    # Flag the retired single-repo key by presence (exact assignment prefix, so
+    # comments and lookalike keys do not match) before any value is sourced.
+    [[ "$line" == REPOS_DIR=* ]] && _DC_CONFIG_LEGACY_REPOS_DIR_SEEN=true
   done < "$config_file"
 
   # Reset all schema-defined scalars/arrays so a config lacking any key (or a
@@ -491,6 +804,8 @@ Only blank lines, comments, and known KEY=\"value\" assignments are allowed."
   PORTS=()
   CONTAINER_HIDDEN_PATHS=()
   CONTAINER_NETWORKS=()
+  REPO_NAMES=()
+  REPO_PATHS=()
 
   # shellcheck disable=SC1090
   source "$config_file"
@@ -633,6 +948,101 @@ dce_set_config_array() {
       printf '%s=(' "$key"
       if [[ $# -gt 0 ]]; then
         printf ' %q' "$@"
+      fi
+      printf ' )\n'
+    fi
+  } > "$tmp_file"
+
+  chmod "${orig_mode:-600}" "$tmp_file"
+  mv "$tmp_file" "$config_file"
+}
+
+# Replace the coupled schema-v2 repo arrays (REPO_NAMES / REPO_PATHS) in one
+# atomic rewrite so repo-set mutations can never leave the config with only one
+# side updated. Usage:
+#   dce_set_repo_entries <config> <name1> [name2 ...] -- <path1> [path2 ...]
+# Returns non-zero when the separator is missing or the lengths differ.
+dce_set_repo_entries() {
+  local config_file="$1"
+  shift
+
+  local -a names=()
+  local -a paths=()
+  local in_paths=false
+  local arg=""
+
+  for arg in "$@"; do
+    if [[ "$arg" == "--" ]]; then
+      in_paths=true
+      continue
+    fi
+    if [[ "$in_paths" == false ]]; then
+      names+=("$arg")
+    else
+      paths+=("$arg")
+    fi
+  done
+
+  if [[ "$in_paths" == false ]]; then
+    printf 'ERROR: dce_set_repo_entries requires a -- separator between names and paths.\n' >&2
+    return 1
+  fi
+
+  if [[ ${#names[@]} -ne ${#paths[@]} ]]; then
+    printf 'ERROR: dce_set_repo_entries requires matching REPO_NAMES/REPO_PATHS lengths (%d vs %d).\n' \
+      "${#names[@]}" "${#paths[@]}" >&2
+    return 1
+  fi
+
+  local orig_mode=""
+  orig_mode="$(dce_file_mode_octal "$config_file" 2>/dev/null || true)"
+
+  local tmp_file=""
+  tmp_file="$(mktemp "${config_file}.tmp.XXXXXX")" || return 1
+  local wrote_names=0
+  local wrote_paths=0
+  local line=""
+
+  {
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in
+        REPO_NAMES=*)
+          if [[ "$wrote_names" -eq 0 ]]; then
+            printf 'REPO_NAMES=(' 
+            if [[ ${#names[@]} -gt 0 ]]; then
+              printf ' %q' "${names[@]}"
+            fi
+            printf ' )\n'
+          fi
+          wrote_names=1
+          ;;
+        REPO_PATHS=*)
+          if [[ "$wrote_paths" -eq 0 ]]; then
+            printf 'REPO_PATHS=(' 
+            if [[ ${#paths[@]} -gt 0 ]]; then
+              printf ' %q' "${paths[@]}"
+            fi
+            printf ' )\n'
+          fi
+          wrote_paths=1
+          ;;
+        *)
+          printf '%s\n' "$line"
+          ;;
+      esac
+    done < "$config_file"
+
+    if [[ "$wrote_names" -eq 0 ]]; then
+      printf 'REPO_NAMES=(' 
+      if [[ ${#names[@]} -gt 0 ]]; then
+        printf ' %q' "${names[@]}"
+      fi
+      printf ' )\n'
+    fi
+    if [[ "$wrote_paths" -eq 0 ]]; then
+      printf 'REPO_PATHS=(' 
+      if [[ ${#paths[@]} -gt 0 ]]; then
+        printf ' %q' "${paths[@]}"
       fi
       printf ' )\n'
     fi

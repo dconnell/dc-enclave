@@ -212,7 +212,8 @@ do_create() {
     fi
   fi
 
-  local config="$HOME/.config/dce-enclave/$project/config"
+  local config=""
+  config="$(dce_project_config_path "$project")"
   if [[ ! -f "$config" ]]; then
     dce_die "No project '$project' (config not found)."
   fi
@@ -242,14 +243,17 @@ do_create() {
        Reclaim it first with: dce snapshot rm $project $label"
   fi
 
-  # Resolve the per-path exclusion set from --exclude-volume args. Each must be a
-  # configured hidden path; an unknown one is warned and ignored (no-op). Bare
-  # --exclude-volumes excludes all (handled separately via $exclude_volumes).
+  # Resolve the per-path exclusion set from --exclude-volume args. Each must be
+  # a configured hidden path or the managed .cache path; an unknown one is
+  # warned and ignored (no-op). Bare --exclude-volumes excludes all (handled
+  # separately via $exclude_volumes).
   declare -A exclude_set=()
   if [[ ${#exclude_volume_args[@]} -gt 0 ]]; then
+    local -a known_paths=()
+    mapfile -t known_paths < <(dce_managed_volume_paths "${CONTAINER_HIDDEN_PATHS[@]:-}")
     declare -A known_hidden=()
     local _hp=""
-    for _hp in "${CONTAINER_HIDDEN_PATHS[@]:-}"; do
+    for _hp in "${known_paths[@]}"; do
       [[ -n "$_hp" ]] && known_hidden["$_hp"]=1
     done
     local _arg="" _part=""
@@ -269,13 +273,16 @@ do_create() {
     done
   fi
 
-  # The set of hidden volumes that will actually be copied (drives the
-  # confirmation prompt and the copy loop). Empty when --exclude-volumes or when
-  # every path is selectively excluded.
+  # The set of managed volume paths that will actually be copied (drives the
+  # confirmation prompt and the copy loop): user hidden paths PLUS the managed
+  # .cache volume by default, each excludable via --exclude-volume. Empty when
+  # --exclude-volumes or when every path is selectively excluded.
+  local -a snapshot_paths=()
+  mapfile -t snapshot_paths < <(dce_managed_volume_paths "${CONTAINER_HIDDEN_PATHS[@]:-}")
   local -a copy_paths=()
   if ! $exclude_volumes; then
     local _cp=""
-    for _cp in "${CONTAINER_HIDDEN_PATHS[@]:-}"; do
+    for _cp in "${snapshot_paths[@]}"; do
       [[ -z "$_cp" ]] && continue
       [[ -n "${exclude_set[$_cp]:-}" ]] && continue
       copy_paths+=("$_cp")
@@ -286,7 +293,7 @@ do_create() {
   # part). Skipped for --exclude-volumes / no hidden paths / all selectively
   # excluded, and with --yes/-y. Mirrors rebuild-container / dce rm.
   if [[ ${#copy_paths[@]} -gt 0 ]] && ! $assume_yes; then
-    echo "This snapshot will copy ${#copy_paths[@]} hidden volume(s):"
+    echo "This snapshot will copy ${#copy_paths[@]} managed volume(s):"
     local _vp=""
     for _vp in "${copy_paths[@]}"; do
       echo "  - $_vp"
@@ -310,13 +317,13 @@ do_create() {
   echo "    Injected credentials are scrubbed before commit; snapshot images are"
   echo "    shareable, so treat them as sensitive if you export or share one."
   if [[ ${#copy_paths[@]} -eq 0 ]]; then
-    if $exclude_volumes || [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
-      echo "    Filesystem image only (hidden volumes excluded; restored empty)."
+    if $exclude_volumes || [[ ${#snapshot_paths[@]} -gt 0 ]]; then
+      echo "    Filesystem image only (managed volumes excluded; restored empty)."
     else
-      echo "    Filesystem image (no hidden volumes to capture)."
+      echo "    Filesystem image (no managed volumes to capture)."
     fi
   else
-    echo "    Filesystem image + hidden volumes."
+    echo "    Filesystem image + managed volumes (incl. /workspace/.cache)."
   fi
 
   # Injected credentials (the SSH deploy key at ~/.ssh/id_ed25519 and, under PAT
@@ -363,20 +370,21 @@ do_create() {
     dce_die "snapshot commit failed."
   fi
 
-  # --- Hidden-volume capture (DEFAULT; --exclude-volumes / --exclude-volume) -
-  # Volumes are part of an overall snapshot: by default each hidden volume is
-  # cloned into a snapshot-specific volume with the source mounted READ-ONLY, in
-  # the SAME stop window as the FS commit (no second stop). The filesystem image
-  # is the primary artifact and already succeeded, so volume capture is
-  # best-effort: a copy failure does NOT abort -- it records the path as
-  # `failed` (restore mounts an empty volume + WARNING). Excluded paths
-  # (--exclude-volumes for all, or --exclude-volume for specific ones) are
-  # recorded `excluded` (no copy; restore mounts empty + note). The manifest is
-  # the COMPLETE per-path disposition so a restore never silently reuses the
-  # live originals and can report populated vs empty per path.
+  # --- Managed-volume capture (DEFAULT; --exclude-volumes / --exclude-volume)
+  # Managed volumes are part of an overall snapshot: by default each user
+  # hidden volume AND the managed /workspace/.cache volume are cloned into a
+  # snapshot-specific volume with the source mounted READ-ONLY, in the SAME
+  # stop window as the FS commit (no second stop). The filesystem image is the
+  # primary artifact and already succeeded, so volume capture is best-effort:
+  # a copy failure does NOT abort -- it records the path as `failed` (restore
+  # mounts an empty volume + WARNING). Excluded paths (--exclude-volumes for
+  # all, or --exclude-volume for specific ones) are recorded `excluded` (no
+  # copy; restore mounts empty + note). The manifest is the COMPLETE per-path
+  # disposition so a restore never silently reuses the live originals and can
+  # report populated vs empty per path.
   local vol_captured=0 vol_failed=0 vol_excluded=0
 
-  if [[ ${#CONTAINER_HIDDEN_PATHS[@]} -gt 0 ]]; then
+  if [[ ${#snapshot_paths[@]} -gt 0 ]]; then
     local manifest_dir="" manifest_file=""
     manifest_dir="$(dce_snapshot_volumes_dir "$project")"
     manifest_file="$(dce_snapshot_volumes_manifest "$project" "$label")"
@@ -384,15 +392,15 @@ do_create() {
 
     if [[ ${#copy_paths[@]} -eq 0 ]]; then
       echo ""
-      echo "==> Skipping hidden volumes (excluded; restored empty)..."
+      echo "==> Skipping managed volumes (excluded; restored empty)..."
     else
       echo ""
-      echo "==> Capturing hidden volumes (source mounted read-only)..."
+      echo "==> Capturing managed volumes (source mounted read-only)..."
     fi
     local manifest_tmp=""
     manifest_tmp="$(mktemp)"
     local hp="" src_vol="" dst_vol=""
-    for hp in "${CONTAINER_HIDDEN_PATHS[@]}"; do
+    for hp in "${snapshot_paths[@]}"; do
       [[ -z "$hp" ]] && continue
       dst_vol="$(dce_snapshot_volume_name "$project" "$label" "$hp")"
 
@@ -410,7 +418,7 @@ do_create() {
         # on reference) -- isolated, never the original.
         printf '%s\t%s\t%s\n' "$hp" "$dst_vol" "failed" >> "$manifest_tmp"
         vol_failed=$((vol_failed + 1))
-        echo "  WARNING: hidden volume '$src_vol' not present for '$hp';"
+        echo "  WARNING: managed volume '$src_vol' not present for '$hp';"
         echo "           restored with an empty volume (reinstall deps there)."
         continue
       fi
@@ -539,22 +547,19 @@ do_list() {
   # attributed to its project and labeled. Snapshots whose project is gone
   # (orphan) fall back to their slug.
   declare -A slug_to_project=()
-  local cfg_dir="$HOME/.config/dce-enclave"
-  local d="" pname="" pslug=""
-  if [[ -d "$cfg_dir" ]]; then
-    for d in "$cfg_dir"/*; do
-      [[ -d "$d" && -f "$d/config" ]] || continue
-      pname="$(basename "$d")"
-      pslug="$(dce_project_slug "$pname")"
-      # First project wins on slug collision (slugs truncate at 24 chars).
-      [[ -n "${slug_to_project[$pslug]:-}" ]] || slug_to_project["$pslug"]="$pname"
-    done
-  fi
+  local config_file="" pname="" pslug=""
+  while IFS= read -r config_file; do
+    [[ -f "$config_file" ]] || continue
+    pname="$(basename "$(dirname "$config_file")")"
+    pslug="$(dce_project_slug "$pname")"
+    # First project wins on slug collision (slugs truncate at 24 chars).
+    [[ -n "${slug_to_project[$pslug]:-}" ]] || slug_to_project["$pslug"]="$pname"
+  done < <(dce_project_config_paths)
 
   local target_slug=""
   if [[ -n "$project" ]]; then
     target_slug="$(dce_project_slug "$project")"
-    if [[ ! -d "$cfg_dir/$project" ]]; then
+    if [[ ! -d "$(dce_project_dir "$project")" ]]; then
       dce_die "No project '$project' (config not found)."
     fi
   fi

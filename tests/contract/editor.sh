@@ -38,7 +38,7 @@ chmod 700 "$WORK"
 # Stub harness: fake docker + fake editor binary.
 # ===========================================================================
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -343,15 +343,17 @@ ORIG_PATH="$PATH"
 make_project() {
   local project="$1"
   local running="${2:-}"
-  local cfg_dir="$DC_ROOT/$project"
+  local cfg_dir="$DC_ROOT/projects/$project"
   local repos="$WORK/home/repos/$project"
   mkdir -p "$cfg_dir" "$repos"
   chmod 700 "$cfg_dir"
   cat > "$cfg_dir/config" <<CFG
 CONTAINER_PROJECT="$project"
+CONFIG_SCHEMA_VERSION="2"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-base:latest"
-REPOS_DIR="$repos"
+REPO_NAMES=("$project")
+REPO_PATHS=("$repos")
 SECRET_DIR="$cfg_dir"
 PORTS=()
 CONTAINER_HIDDEN_PATHS=()
@@ -376,7 +378,7 @@ make_project_token() {
   local project="$1"
   local running="${2:-}"
   local provider="${3:-github}"
-  local cfg_dir="$DC_ROOT/$project"
+  local cfg_dir="$DC_ROOT/projects/$project"
   local repos="$WORK/home/repos/$project"
   local sentinel="" real_token="" token_file=""
   sentinel="$(dce_git_host_field "$provider" sentinel)"
@@ -389,10 +391,12 @@ make_project_token() {
   chmod 700 "$cfg_dir"
   cat > "$cfg_dir/config" <<CFG
 CONTAINER_PROJECT="$project"
+CONFIG_SCHEMA_VERSION="2"
 CONTAINER_BACKEND="docker"
 CONTAINER_GIT_HOST="$provider"
 CONTAINER_IMAGE="dce-base:latest"
-REPOS_DIR="$repos"
+REPO_NAMES=("$project")
+REPO_PATHS=("$repos")
 SECRET_DIR="$cfg_dir"
 SSH_KEY_PATH="$cfg_dir/ssh_key"
 TOKEN_FILE="$token_file"
@@ -501,11 +505,11 @@ grep -Eq '^CALL code --folder-uri' "$CODE_LOG" \
 # Override to vscode-insiders. No code-insiders stub on PATH -> the override
 # must hard-error with the missing-binary guidance, proving the override took
 # effect (default vscode would have found the `code` stub).
-if run_editor --editor vscode-insiders gamma >/dev/null 2>&1; then
+if run_editor gamma --editor vscode-insiders >/dev/null 2>&1; then
   fail "override: vscode-insiders should hard-error (binary absent) but editor exited 0"
 fi
 # Verify it failed at binary discovery, not at backend/editor selection.
-err_out="$(run_editor --editor vscode-insiders gamma 2>&1 >/dev/null || true)"
+err_out="$(run_editor gamma --editor vscode-insiders 2>&1 >/dev/null || true)"
 grep -Fq "Editor binary not found for 'vscode-insiders'" <<<"$err_out" \
   || fail "override: missing-binary guidance not shown (got: $err_out)"
 
@@ -519,7 +523,7 @@ make_project "delta" running
 
 # $DCE_EDITOR=vscode-insiders would hard-error (no code-insiders stub); an
 # explicit --editor vscode must override it and succeed via the `code` stub.
-DCE_EDITOR=vscode-insiders run_editor --editor vscode delta >"$WORK/d.out" 2>"$WORK/err" \
+DCE_EDITOR=vscode-insiders run_editor delta --editor vscode >"$WORK/d.out" 2>"$WORK/err" \
   || fail "precedence: --editor should override \$DCE_EDITOR
 -- stderr:$(cat "$WORK/err")"
 grep -Eq '^CALL code --folder-uri' "$CODE_LOG" \
@@ -531,10 +535,10 @@ pass "Section 4: --editor precedence over \$DCE_EDITOR"
 # Section 5 - unknown explicit editor hard-errors cleanly
 # ===========================================================================
 make_project "epsilon" running
-if run_editor --editor acme epsilon 2>/dev/null; then
+if run_editor epsilon --editor acme 2>/dev/null; then
   fail "unknown editor: --editor acme should hard-error"
 fi
-err_out="$(run_editor --editor acme epsilon 2>&1 || true)"
+err_out="$(run_editor epsilon --editor acme 2>&1 || true)"
 grep -Fq "Unknown editor 'acme'" <<<"$err_out" \
   || fail "unknown editor: missing guidance (got: $err_out)"
 grep -Eq 'Known editors:.*vscode' <<<"$err_out" \
@@ -551,8 +555,8 @@ pass "Section 5: unknown explicit editor hard-errors with guidance"
 # known {id, image}; the fake `code` captures the --folder-uri argv.
 # ===========================================================================
 make_project "zeta" running
-sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/zeta/config"
-rm -f "$DC_ROOT/zeta/config.bak"
+sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/projects/zeta/config"
+rm -f "$DC_ROOT/projects/zeta/config.bak"
 
 : > "$DOCKER_LOG"; : > "$CODE_LOG"
 DC_STUB_APPLE_INSPECT_IMAGE="dce-base:latest" \
@@ -701,13 +705,13 @@ make_project "kappa" running
 # Inject a placeholder-only token file + SSH path so the project has a token
 # slot, but dce_read_git_token filters the sentinel out -> auth method "none".
 kappa_sentinel="$(dce_git_host_field github sentinel)"
-kappa_cfg="$DC_ROOT/kappa/config"
+kappa_cfg="$DC_ROOT/projects/kappa/config"
 kappa_token="$WORK/github-token-kappa"
 printf '%s\n' "$kappa_sentinel" > "$kappa_token"
 chmod 600 "$kappa_token"
 {
   printf 'TOKEN_FILE="%s"\n' "$kappa_token"
-  printf 'SSH_KEY_PATH="%s/ssh_key"\n' "$DC_ROOT/kappa"
+  printf 'SSH_KEY_PATH="%s/ssh_key"\n' "$DC_ROOT/projects/kappa"
 } >> "$kappa_cfg"
 : > "$DOCKER_LOG"; : > "$CODE_LOG"
 run_editor kappa >"$WORK/sec12.out" 2>"$WORK/err" || fail "editor kappa exited non-zero
@@ -805,7 +809,7 @@ seed_ext_manifest() {  # <scope> <content>
 # (a) Declared set has two IDs; one already installed -> only the missing one
 # is installed. Idempotent: the already-installed id is never re-installed.
 make_project "nu" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/nu/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/nu/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 CONTAINER_EXT_FILE="$WORK/nu-installed.txt"
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
@@ -845,7 +849,7 @@ pass "Section 15c: pre-adoption (no manifests) -> no enforcement, editor launche
 # (d) Per-id install failure is reported but not fatal: the editor still
 # launches, the failing id is surfaced, the succeeding id is installed.
 make_project "pi" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/pi/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/pi/config"
 seed_ext_manifest nodejs $'good.id\nbad.id\n'
 : > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -989,7 +993,7 @@ run_watcher() {
 # the join guarantee before this section ends.
 # ---------------------------------------------------------------------------
 make_project "rho" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/rho/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/rho/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1046,7 +1050,7 @@ pass "Section 16a: server absent + declared set -> detached watcher, non-blockin
 # watcher: the already-installed id is never re-installed.
 # ---------------------------------------------------------------------------
 make_project "sigma" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/sigma/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/sigma/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1082,7 +1086,7 @@ pass "Section 16b: watcher converges when the server lands; idempotence preserve
 # attempted along the way.
 # ---------------------------------------------------------------------------
 make_project "tau" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/tau/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/tau/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 : > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1126,7 +1130,7 @@ pass "Section 16c: watcher times out with the retry hint; no installs attempted"
 # exactly-once assertions loudly instead of hanging on a timeout.
 # ---------------------------------------------------------------------------
 make_project "upsilon" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/upsilon/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/upsilon/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\ngamma.missing\n'
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1270,7 +1274,7 @@ pass "Section 16f: pre-adoption + server absent -> nothing spawned, nothing prin
 # the very first probe) and no "already active" line is ever logged.
 # ---------------------------------------------------------------------------
 make_project "psi" running
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/psi/config"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/psi/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 : > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"
@@ -1306,9 +1310,9 @@ pass "Section 16g: stale lock is removed and retaken; the watcher converges"
 # assertion carries over, with the apple-container launch URI.
 # ---------------------------------------------------------------------------
 make_project "omega" running
-sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/omega/config"
-rm -f "$DC_ROOT/omega/config.bak"
-printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/omega/config"
+sed -i.bak 's/CONTAINER_BACKEND="docker"/CONTAINER_BACKEND="apple"/' "$DC_ROOT/projects/omega/config"
+rm -f "$DC_ROOT/projects/omega/config.bak"
+printf 'CONTAINER_OVERLAY_SCOPES="nodejs"\n' >> "$DC_ROOT/projects/omega/config"
 seed_ext_manifest nodejs $'alpha.installed\nbeta.missing\n'
 printf 'alpha.installed\n' > "$CONTAINER_EXT_FILE"
 : > "$INSTALL_LOG"

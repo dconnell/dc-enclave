@@ -35,7 +35,7 @@ chmod 700 "$WORK"
 # =============================================================================
 export HOME_F="$WORK/home"
 HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
+DC_ROOT="$HOME/.config/dc-enclave"
 TEAM_DIR="$DC_ROOT/team"
 USER_DIR="$DC_ROOT/user"
 mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
@@ -45,25 +45,27 @@ mkdir -p "$TEAM_DIR/overlays" "$USER_DIR/overlays"
 } > "$DC_ROOT/config"
 
 PROJ2="cfgproj"
-SECRET2="$DC_ROOT/$PROJ2"
+SECRET2="$DC_ROOT/projects/$PROJ2"
 REPOS2="$WORK/home/repos/$PROJ2"
-mkdir -p "$SECRET2" "$REPOS2/.devcontainer"
+mkdir -p "$SECRET2" "$REPOS2"
 chmod 700 "$SECRET2"
 # base project config (docker backend, no scopes -> dockerfile = Containerfile.base).
 {
   echo "CONTAINER_PROJECT=\"$PROJ2\""
+  echo "CONFIG_SCHEMA_VERSION=\"2\""
   echo "CONTAINER_BACKEND=\"docker\""
   echo "CONTAINER_IMAGE=\"dce-base:latest\""
   echo "CONTAINER_OVERLAY_SCOPES=\"\""
-  echo "REPOS_DIR=\"$REPOS2\""
   echo "SECRET_DIR=\"$SECRET2\""
+  echo "REPO_NAMES=($PROJ2)"
+  echo "REPO_PATHS=($REPOS2)"
   echo "PORTS=(3000:3000)"
-  echo "CONTAINER_HIDDEN_PATHS=(node_modules)"
+  echo "CONTAINER_HIDDEN_PATHS=($PROJ2/node_modules)"
   echo "CONTAINER_NETWORKS=()"
 } > "$SECRET2/config"
 chmod 600 "$SECRET2/config"
 
-DC2="$REPOS2/.devcontainer/devcontainer.json"
+DC2="$SECRET2/devcontainer.json"
 printf '{\n  "forwardPorts": [1111],\n  "extensions": ["x"]\n}\n' > "$DC2"
 chmod 600 "$DC2"
 
@@ -88,8 +90,15 @@ else
     || fail "config sync-vscode exited non-zero ($(cat "$WORK/c.err"))"
   RDC="$(cat "$DC2")"
   echo "$RDC" | jq -e '.forwardPorts==[3000]' >/dev/null || fail "config sync-vscode: forwardPorts not synced"
-  echo "$RDC" | jq -e '[.mounts[]|capture("source=(?<s>[^,]+)").s]|index("'"$(dce_hidden_volume_name "$PROJ2" node_modules)"'")!=null' >/dev/null \
+  echo "$RDC" | jq -e '[.mounts[]|capture("source=(?<s>[^,]+)").s]|index("'"$(dce_hidden_volume_name "$PROJ2" "$PROJ2/node_modules")"'")!=null' >/dev/null \
     || fail "config sync-vscode: hidden mount not synced"
+  # The managed mount shape is repo binds + the /workspace/.cache volume.
+  echo "$RDC" | jq -e '.mounts | index("source='"$REPOS2"',target=/workspace/'"$PROJ2"',type=bind") != null' >/dev/null \
+    || fail "config sync-vscode: repo bind not synced"
+  echo "$RDC" | jq -e '[.mounts[]|capture("source=(?<s>[^,]+)").s]|index("'"$(dce_cache_volume_name "$PROJ2")"'")!=null' >/dev/null \
+    || fail "config sync-vscode: managed .cache volume not synced"
+  echo "$RDC" | jq -e '.workspaceMount == null' >/dev/null \
+    || fail "config sync-vscode: workspaceMount must be removed"
   echo "$RDC" | jq -e '.extensions==["x"]' >/dev/null || fail "config sync-vscode: user extensions lost"
 
   # (F1b) With a PAT configured, sync must inject github.gitAuthentication=false
@@ -214,7 +223,7 @@ RB_PROJ="rbproj"
 : > "$RLOG"
 run_dce "$ROOT_DIR/scripts/new-container.sh" "$RB_PROJ" \
   >"$WORK/n.out" 2>"$WORK/n.err" || fail "new (rbproj) exited non-zero ($(cat "$WORK/n.err"))"
-RB_DC="$WORK/home/repos/$RB_PROJ/.devcontainer/devcontainer.json"
+RB_DC="$DC_ROOT/projects/$RB_PROJ/devcontainer.json"
 [[ -f "$RB_DC" ]] || fail "new (rbproj): devcontainer.json not created"
 
 # Mutate ports via `dce config set` (the canonical drift trigger).
@@ -234,9 +243,8 @@ pass "dce rebuild-container: emits drift notice (ports) after config change, exi
 # H. `dce new` pre-existing devcontainer.json: preserve file + emit drift notice
 # =============================================================================
 PRE_PROJ="preexistproj"
-PRE_REPO="$WORK/home/repos/$PRE_PROJ"
-PRE_DC="$PRE_REPO/.devcontainer/devcontainer.json"
-mkdir -p "$PRE_REPO/.devcontainer"
+PRE_DC="$DC_ROOT/projects/$PRE_PROJ/devcontainer.json"
+mkdir -p "$(dirname "$PRE_DC")"
 cat > "$PRE_DC" <<EOF
 {
   "name": "dce-$PRE_PROJ",
@@ -273,7 +281,7 @@ SNAP_PROJ="fromsnapdrift"
 run_dce "$ROOT_DIR/scripts/new-container.sh" "$SNAP_PROJ" \
   >"$WORK/fs.new.out" 2>"$WORK/fs.new.err" \
   || fail "new (from-snap fixture) exited non-zero ($(cat "$WORK/fs.new.err"))"
-SNAP_DC="$WORK/home/repos/$SNAP_PROJ/.devcontainer/devcontainer.json"
+SNAP_DC="$DC_ROOT/projects/$SNAP_PROJ/devcontainer.json"
 [[ -f "$SNAP_DC" ]] || fail "from-snap fixture: devcontainer.json missing"
 
 # Canonical drift trigger: mutate config ports only.
@@ -332,23 +340,25 @@ else
   printf 'a.b\nc.d\n' > "$EXT_USER_DIR/all.txt"
 
   EXT_PROJ="extproj"
-  EXT_SECRET="$DC_ROOT/$EXT_PROJ"
+  EXT_SECRET="$DC_ROOT/projects/$EXT_PROJ"
   EXT_REPO="$WORK/home/repos/$EXT_PROJ"
-  mkdir -p "$EXT_SECRET" "$EXT_REPO/.devcontainer"
+  mkdir -p "$EXT_SECRET" "$EXT_REPO"
   chmod 700 "$EXT_SECRET"
   {
     echo "CONTAINER_PROJECT=\"$EXT_PROJ\""
+    echo "CONFIG_SCHEMA_VERSION=\"2\""
     echo "CONTAINER_BACKEND=\"docker\""
     echo "CONTAINER_IMAGE=\"dce-base:latest\""
     echo "CONTAINER_OVERLAY_SCOPES=\"\""
-    echo "REPOS_DIR=\"$EXT_REPO\""
     echo "SECRET_DIR=\"$EXT_SECRET\""
+    echo "REPO_NAMES=($EXT_PROJ)"
+    echo "REPO_PATHS=($EXT_REPO)"
     echo "PORTS=()"
     echo "CONTAINER_HIDDEN_PATHS=()"
     echo "CONTAINER_NETWORKS=()"
   } > "$EXT_SECRET/config"
   chmod 600 "$EXT_SECRET/config"
-  EXT_DC="$EXT_REPO/.devcontainer/devcontainer.json"
+  EXT_DC="$EXT_SECRET/devcontainer.json"
   printf '{ "customizations": { "vscode": { "extensions": ["hand.curated"] } } }\n' > "$EXT_DC"
   chmod 600 "$EXT_DC"
 

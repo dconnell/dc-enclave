@@ -6,11 +6,13 @@ You bring the runtime — apple/container, Docker Desktop, OrbStack, Colima, or 
 
 > **\* Platform support:** I develop and manually test on macOS. Linux and WSL2 are covered by the integration suite in CI (Ubuntu 24.04 and Windows/WSL2 runners, against real Docker, Podman, and Colima backends). If you hit something on Linux or Windows that looks platform-specific, please open an issue.
 
+> **Multi-repo projects on `main`:** every project is a set of one or more repos (`REPO_NAMES` / `REPO_PATHS` in the project config). Configs written for the original single-repo schema (`REPOS_DIR`) are rejected. For the old behavior, use the [`legacy-single-repo`](https://github.com/dconnell/dc-enclave/tree/legacy-single-repo) branch, which preserves the single-repo model unchanged.
+
 ## Why
 
 Every developer now runs tools that execute code on their machine — AI agents in VS Code extensions, TUI runners like Claude Code, OpenCode, or Pi launched from the terminal, build scripts, and dependency installers whose post-install hooks can run more or less anything. On the host, that code runs with your user privileges: it can read your global credentials, write outside the project, and leave state that survives the session. The container is the boundary; DC Enclave is the backend-agnostic way to spin it up — and to throw it away and rebuild safely when something goes wrong.
 
-- **Whatever runs in the container, stays in the container.** Processes and state you create inside run only there. Your project repo is bind-mounted read-write at `/workspace` (so your editor and builds can read and write it), but everything outside that mount — your home directory, shell history, and global credentials — stays out of reach.
+- **Whatever runs in the container, stays in the container.** Processes and state you create inside run only there. Your project repos are bind-mounted read-write at `/workspace/<repo-name>` (so your editor and builds can read and write them), but everything outside those mounts — your home directory, shell history, and global credentials — stays out of reach.
 - **Each project is its own trust zone.** A container for project A holds only what you've put in it; project B is invisible to it.
 - **A bad session is one command to undo.** `dce rebuild-container <name>` destroys the container filesystem and recreates it from a known-good image — and `dce snapshot <name>` / `dce rebuild-container <name> --from-snap <label>` give you a rollback point first.
 - **Your checkout survives every rebuild.** Your repo lives on the host and bind-mounts in read-write; destroying or rebuilding the container leaves your checkout exactly where it was.
@@ -46,7 +48,7 @@ dce editor myapp
 > download from <https://github.com/docker/buildx/releases>). `scripts/setup.sh`
 > verifies this and prints the fix if it's missing.
 
-You now have a container named `myapp` running your chosen toolchain, your repo bind-mounted at `/workspace`, your per-project credentials injected, and a generated `devcontainer.json` so VS Code can open the project.
+You now have a container named `myapp` running your chosen toolchain, your project repos mounted under `/workspace/<repo-name>`, your per-project credentials injected, and a managed `devcontainer.json` so VS Code can attach to the project root at `/workspace`.
 
 > **VS Code — attach, don't reopen.**
 > 
@@ -59,7 +61,7 @@ You now have a container named `myapp` running your chosen toolchain, your repo 
 
 The generated `devcontainer.json` follows the [dev container spec](https://containers.dev), so other spec-compliant clients (Codespaces, etc.) can attach too — only VS Code Dev Containers is tested.
 
-`dce new` also generates a per-project SSH keypair and creates placeholder files for a git-host token (GitHub PAT by default; use `--git-host gitlab` for GitLab) and `.npmrc` under `~/.config/dce-enclave/<name>/`. Completing them is optional hardening — see [isolation and security](docs/explanation/isolation-and-security.md).
+`dce new` also generates a per-project SSH keypair and creates placeholder files for a git-host token (GitHub PAT by default; use `--git-host gitlab` for GitLab) and `.npmrc` under `~/.config/dc-enclave/projects/<name>/`. Completing them is optional hardening — see [isolation and security](docs/explanation/isolation-and-security.md).
 
 ## Documentation
 

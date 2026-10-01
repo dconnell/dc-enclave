@@ -81,60 +81,73 @@ chmod +x "$STUB_DIR/docker"
 # owner-only dir (chmod 700), as dce_load_project_config requires.
 # ---------------------------------------------------------------------------
 export HOME="$WORK/home"
-DC_ROOT="$HOME/.config/dce-enclave"
-mkdir -p "$DC_ROOT"
+DC_ROOT="$HOME/.config/dc-enclave"
+PROJECTS_ROOT="$DC_ROOT/projects"
+mkdir -p "$PROJECTS_ROOT"
 
 # fresh: running, container id == desired id -> not stale
-mkdir -p "$DC_ROOT/fresh"
-cat > "$DC_ROOT/fresh/config" <<'CFG'
+mkdir -p "$PROJECTS_ROOT/fresh"
+cat > "$PROJECTS_ROOT/fresh/config" <<'CFG'
 CONTAINER_PROJECT="fresh"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-img-fresh:latest"
 CONTAINER_OVERLAY_SCOPES="nodejs"
+CONFIG_SCHEMA_VERSION="2"
+REPO_NAMES=(fresh)
+REPO_PATHS=("/tmp/repos/fresh")
 CFG
-chmod 700 "$DC_ROOT/fresh"
-chmod 600 "$DC_ROOT/fresh/config"
+chmod 700 "$PROJECTS_ROOT/fresh"
+chmod 600 "$PROJECTS_ROOT/fresh/config"
 printf 'fresh\n' >> "$STATE/running"
 printf 'fresh\n' >> "$STATE/exists"
 printf 'dce-img-fresh:latest\tsha-fresh-aaa\n' >> "$STATE/images"
 printf 'fresh\tsha-fresh-aaa\n' >> "$STATE/containers"
 
 # stale: stopped, container id != desired id -> STALE
-mkdir -p "$DC_ROOT/stale"
-cat > "$DC_ROOT/stale/config" <<'CFG'
+mkdir -p "$PROJECTS_ROOT/stale"
+cat > "$PROJECTS_ROOT/stale/config" <<'CFG'
 CONTAINER_PROJECT="stale"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-img-stale:latest"
 CONTAINER_OVERLAY_SCOPES="nodejs"
+CONFIG_SCHEMA_VERSION="2"
+REPO_NAMES=(stale)
+REPO_PATHS=("/tmp/repos/stale")
 CFG
-chmod 700 "$DC_ROOT/stale"
-chmod 600 "$DC_ROOT/stale/config"
+chmod 700 "$PROJECTS_ROOT/stale"
+chmod 600 "$PROJECTS_ROOT/stale/config"
 printf 'stale\n' >> "$STATE/exists"
 printf 'dce-img-stale:latest\tsha-stale-new\n' >> "$STATE/images"
 printf 'stale\tsha-stale-old\n' >> "$STATE/containers"
 
 # missing: container does not exist -> not stale (no entries in running/exists)
-mkdir -p "$DC_ROOT/missing"
-cat > "$DC_ROOT/missing/config" <<'CFG'
+mkdir -p "$PROJECTS_ROOT/missing"
+cat > "$PROJECTS_ROOT/missing/config" <<'CFG'
 CONTAINER_PROJECT="missing"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-img-miss:latest"
 CONTAINER_OVERLAY_SCOPES="nodejs"
+CONFIG_SCHEMA_VERSION="2"
+REPO_NAMES=(missing)
+REPO_PATHS=("/tmp/repos/missing")
 CFG
-chmod 700 "$DC_ROOT/missing"
-chmod 600 "$DC_ROOT/missing/config"
+chmod 700 "$PROJECTS_ROOT/missing"
+chmod 600 "$PROJECTS_ROOT/missing/config"
 printf 'dce-img-miss:latest\tsha-miss-aaa\n' >> "$STATE/images"
 
 # unknown: desired image id unavailable (no images entry) -> not stale
-mkdir -p "$DC_ROOT/unknown"
-cat > "$DC_ROOT/unknown/config" <<'CFG'
+mkdir -p "$PROJECTS_ROOT/unknown"
+cat > "$PROJECTS_ROOT/unknown/config" <<'CFG'
 CONTAINER_PROJECT="unknown"
 CONTAINER_BACKEND="docker"
 CONTAINER_IMAGE="dce-img-unk:latest"
 CONTAINER_OVERLAY_SCOPES="nodejs"
+CONFIG_SCHEMA_VERSION="2"
+REPO_NAMES=(unknown)
+REPO_PATHS=("/tmp/repos/unknown")
 CFG
-chmod 700 "$DC_ROOT/unknown"
-chmod 600 "$DC_ROOT/unknown/config"
+chmod 700 "$PROJECTS_ROOT/unknown"
+chmod 600 "$PROJECTS_ROOT/unknown/config"
 printf 'unknown\n' >> "$STATE/running"
 printf 'unknown\n' >> "$STATE/exists"
 printf 'unknown\tsha-unk-aaa\n' >> "$STATE/containers"

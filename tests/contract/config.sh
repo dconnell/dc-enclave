@@ -11,7 +11,7 @@
 #   and that every successful set leaves a loadable, mode-600 file behind.
 #
 # The command is backend-free and global-config-free: it touches only the
-# project config under $HOME/.config/dce-enclave/<name>/config, so the test
+# project config under $HOME/.config/dc-enclave/projects/<name>/config, so the test
 # points $HOME at a temp tree and never needs a container runtime.
 # =============================================================================
 set -euo pipefail
@@ -45,10 +45,11 @@ mode_is() {
   [[ -n "$(find "$file" -maxdepth 0 -perm "$want" -print 2>/dev/null)" ]]
 }
 
-# Write a loadable project config at the canonical path (mode 600 / dir 700).
+# Write a loadable schema-v2 project config at the canonical path
+# (mode 600 / dir 700).
 write_project_config() {
   local project="$1"
-  local dir="$FAKE_HOME/.config/dce-enclave/$project"
+  local dir="$FAKE_HOME/.config/dc-enclave/projects/$project"
   mkdir -p "$dir"
   chmod 700 "$dir"
   {
@@ -59,6 +60,9 @@ write_project_config() {
     echo 'CONTAINER_CPUS=""'
     echo 'CONTAINER_MEMORY=""'
     echo 'CONTAINER_OVERLAY_SCOPES=""'
+    echo 'CONFIG_SCHEMA_VERSION="2"'
+    echo "REPO_NAMES=(\"$project\")"
+    echo "REPO_PATHS=(\"$FAKE_HOME/repos/$project\")"
     echo 'PORTS=()'
     echo 'CONTAINER_HIDDEN_PATHS=()'
     echo 'CONTAINER_NETWORKS=()'
@@ -67,7 +71,7 @@ write_project_config() {
 }
 
 config_path() {
-  printf '%s/.config/dce-enclave/%s/config\n' "$FAKE_HOME" "$1"
+  printf '%s/.config/dc-enclave/projects/%s/config\n' "$FAKE_HOME" "$1"
 }
 
 # ============================================================================
@@ -176,10 +180,16 @@ pass "set/get ports array + validation + clear"
 # set: array hide + networks (name and name:ip)
 # ============================================================================
 write_project_config netproj
-dce_config set netproj 'hide=node_modules,.cache' >/dev/null || fail "set hide exited non-zero"
+# Single-repo shorthand: unprefixed hide paths are persisted repo-prefixed, and
+# the managed .cache path is rejected (it is a dce-owned volume target).
+dce_config set netproj 'hide=node_modules,apps/web/dist' >/dev/null || fail "set hide exited non-zero"
 mapfile -t got < <(dce_config get netproj hide)
-[[ "${got[0]:-}" == "node_modules" && "${got[1]:-}" == ".cache" ]] \
+[[ "${got[0]:-}" == "netproj/node_modules" && "${got[1]:-}" == "netproj/apps/web/dist" ]] \
   || fail "hide array wrong (got ${got[*]:-})"
+
+if dce_config set netproj 'hide=.cache' >/dev/null 2>&1; then
+  fail "hide=.cache must be rejected (managed volume path)"
+fi
 
 dce_config set netproj 'networks=appnet,dbnet:10.0.0.5' >/dev/null \
   || fail "set networks exited non-zero"
@@ -211,10 +221,18 @@ pass "read-only and unknown keys rejected"
 # ============================================================================
 write_project_config ls-a
 write_project_config ls-b
+mkdir -p "$FAKE_HOME/.config/dc-enclave/flat-legacy"
+touch "$FAKE_HOME/.config/dc-enclave/flat-legacy/config"
 mapfile -t listed < <(dce_config ls 2>/dev/null)
 found_a=0; found_b=0
-for n in "${listed[@]}"; do [[ "$n" == "ls-a" ]] && found_a=1; [[ "$n" == "ls-b" ]] && found_b=1; done
+found_flat=0
+for n in "${listed[@]}"; do
+  [[ "$n" == "ls-a" ]] && found_a=1
+  [[ "$n" == "ls-b" ]] && found_b=1
+  [[ "$n" == "flat-legacy" ]] && found_flat=1
+done
 [[ $found_a -eq 1 && $found_b -eq 1 ]] || fail "ls must list configured projects (got ${listed[*]:-})"
+[[ $found_flat -eq 0 ]] || fail "ls must ignore legacy flat project dirs (got ${listed[*]:-})"
 pass "config ls lists configured projects"
 
 # ============================================================================

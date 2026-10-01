@@ -2,7 +2,7 @@
 # =============================================================================
 # scripts/config.sh - `dce config`: thin validating wrapper over project config.
 #
-# The per-project config (~/.config/dce-enclave/<name>/config) is the source of
+# The per-project config (~/.config/dc-enclave/projects/<name>/config) is the source of
 # truth. This command never edits any other state and needs NO container backend
 # and NO global config: it loads, validates, and rewrites that one file through
 # the hardened helpers in lib/common.sh (dce_load_project_config, the per-key
@@ -57,10 +57,11 @@ declare -A _CFG_READONLY_REAL=(
   [project]=CONTAINER_PROJECT
   [backend]=CONTAINER_BACKEND
   [image]=CONTAINER_IMAGE
-  [repos]=REPOS_DIR
 )
 
 _CFG_MUTABLE_ORDER=(cpus memory scopes ports hide networks)
+# `repos` is read-only and special-cased (it renders the schema-v2
+# REPO_NAMES/REPO_PATHS pair as "<name>=<path>" lines).
 _CFG_READONLY_ORDER=(project backend image repos)
 
 # Echo all valid friendly key names (mutable then read-only), space-separated.
@@ -72,7 +73,7 @@ USAGE() {
   cat <<EOF
 Usage: dce config <subcommand> [args]
 
-Inspect and edit a project's config file (~/.config/dce-enclave/<name>/config)
+Inspect and edit a project's config file (~/.config/dc-enclave/projects/<name>/config)
 without leaving the CLI. The file stays the source of truth; this is a thin,
 validating wrapper. Needs no container backend.
 
@@ -84,13 +85,16 @@ Subcommands:
         dce config set <name> <key> <value>   prove the file still loads.
                                     Arrays take a comma-separated value.
   sync-vscode <name> [--dry-run]    Rewrite the MANAGED fields of the project's
-                                    .devcontainer/devcontainer.json to match the
-                                    current config, preserving user edits.
-                                    Requires jq + a docker-compatible backend.
+                                    managed devcontainer.json
+                                    (~/.config/dc-enclave/projects/<name>/devcontainer.json)
+                                    to match the current config, preserving user
+                                    edits. Requires jq + a docker-compatible
+                                    backend.
   ls                                List projects that have a config (no backend).
 
 Mutable keys (set/get): $(_cfg_all_keys_multiline)
-Read-only keys (get only): ${_CFG_READONLY_ORDER[*]}
+Read-only keys (get only): ${_CFG_READONLY_ORDER[*]} ('repos' prints one
+<name>=<host-path> line per repo)
 
 Set clears a key by giving an empty value (e.g. \`cpus=\` -> backend default).
 Resource/scope/network/hidden-path changes take effect only after:
@@ -159,11 +163,18 @@ _cfg_normalize_value() {
       if [[ ${#elems[@]} -gt 0 ]]; then
         local norm=""
         norm="$(dce_normalize_hidden_paths_values "${elems[@]}")" || return 1
+        if [[ -n "$norm" ]]; then
+          local -a arr=()
+          IFS=',' read -r -a arr <<< "$norm"
+          # Project-aware pass: prefix unprefixed shorthand with the repo name
+          # (single-repo) or reject it as ambiguous (multi-repo).
+          norm="$(dce_hidden_paths_for_project "${arr[@]}")" || return 1
+        fi
         local IFS=','
-        local -a arr=()
-        read -r -a arr <<< "$norm"
+        local -a arr2=()
+        read -r -a arr2 <<< "$norm"
         local e
-        for e in "${arr[@]}"; do [[ -n "$e" ]] && printf '%s\n' "$e"; done
+        for e in "${arr2[@]}"; do [[ -n "$e" ]] && printf '%s\n' "$e"; done
       fi
       ;;
     networks)
@@ -192,7 +203,7 @@ _cfg_normalize_value() {
 _cfg_require_config() {
   local project="$1"
   local config=""
-  config="$HOME/.config/dce-enclave/$project/config"
+  config="$(dce_project_config_path "$project")"
   if [[ ! -f "$config" ]]; then
     dce_die "No config for project '$project'.
 Run 'dce new $project ...' first, or 'dce config ls' to see configured projects."
@@ -242,8 +253,15 @@ Usage: dce config show <name>"
   done
   [[ $_any -eq 1 ]] || echo "  (none)"
   echo ""
-  echo "Paths:"
-  echo "  Repos:   ${REPOS_DIR:-(unset)}"
+  echo "Repos (mounted under /workspace/<name>):"
+  local _repos_any=0
+  while IFS= read -r _repo_line; do
+    [[ -z "$_repo_line" ]] && continue
+    echo "  ${_repo_line%%$'\t'*}: ${_repo_line#*$'\t'}"
+    _repos_any=1
+  done < <(dce_repo_entries_lines)
+  [[ $_repos_any -eq 1 ]] || echo "  (none)"
+  echo "  Managed cache volume: /workspace/.cache"
 }
 
 # --- get ---------------------------------------------------------------------
@@ -258,7 +276,14 @@ do_get() {
   dce_load_project_config "$config"
 
   local real="" kind="scalar"
-  if [[ -n "${_CFG_MUTABLE_REAL[$friendly]:-}" ]]; then
+  if [[ "$friendly" == "repos" ]]; then
+    # Schema-v2 repo set: one "<name>=<host-path>" line per repo.
+    while IFS= read -r _repo_line; do
+      [[ -z "$_repo_line" ]] && continue
+      printf '%s=%s\n' "${_repo_line%%$'\t'*}" "${_repo_line#*$'\t'}"
+    done < <(dce_repo_entries_lines)
+    return 0
+  elif [[ -n "${_CFG_MUTABLE_REAL[$friendly]:-}" ]]; then
     real="${_CFG_MUTABLE_REAL[$friendly]}"
     kind="${_CFG_MUTABLE_KIND[$friendly]}"
   elif [[ -n "${_CFG_READONLY_REAL[$friendly]:-}" ]]; then
@@ -312,6 +337,9 @@ Usage: dce config set <name> <key>=<value>
   if [[ -n "${_CFG_MUTABLE_REAL[$friendly]:-}" ]]; then
     real="${_CFG_MUTABLE_REAL[$friendly]}"
     kind="${_CFG_MUTABLE_KIND[$friendly]}"
+  elif [[ "$friendly" == "repos" ]]; then
+    dce_die "'repos' is read-only (owned by 'dce new' / 'dce rebuild-container').
+  Writable keys: ${_CFG_MUTABLE_ORDER[*]}."
   elif [[ -n "${_CFG_READONLY_REAL[$friendly]:-}" ]]; then
     dce_die "'$friendly' is read-only (owned by 'dce new' / 'dce rebuild-container').
   Writable keys: ${_CFG_MUTABLE_ORDER[*]}."
@@ -322,6 +350,13 @@ Usage: dce config set <name> <key>=<value>
 
   local config=""
   config="$(_cfg_require_config "$project")"
+
+  # `hide` shorthand depends on the repo set, so load the config first: the
+  # project-aware normalization helper reads REPO_NAMES to prefix unprefixed
+  # single-segment paths on single-repo projects (see _cfg_normalize_value).
+  if [[ "$friendly" == "hide" ]]; then
+    dce_load_project_config "$config"
+  fi
 
   # Validate + canonicalize BEFORE touching the file. Capture stdout and the
   # exit status together: `mapfile < <(cmd)` would NOT propagate cmd's failure
@@ -358,22 +393,20 @@ Usage: dce config set <name> <key>=<value>
 
 # --- ls ----------------------------------------------------------------------
 do_ls() {
-  local base="$HOME/.config/dce-enclave"
-  [[ -d "$base" ]] || return 0
-  local d name
-  while IFS= read -r d; do
-    [[ -d "$d" ]] || continue
-    [[ -f "$d/config" ]] || continue
-    name="$(basename "$d")"
+  local config="" name=""
+  while IFS= read -r config; do
+    [[ -f "$config" ]] || continue
+    name="$(basename "$(dirname "$config")")"
     printf '%s\n' "$name"
-  done < <(find "$base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+  done < <(dce_project_config_paths | sort)
 }
 
 # --- sync-vscode -------------------------------------------------------------
 # Carved-out exception to config's "never edits other state / needs no backend"
-# invariant: this subcommand rewrites the project's .devcontainer/devcontainer.json
-# (outside the config file) and loads global config (to re-derive the managed
-# dockerfile path). It still performs NO container-backend call. Requires jq.
+# invariant: this subcommand rewrites the managed devcontainer.json at
+# ~/.config/dc-enclave/projects/<project>/devcontainer.json (outside the config file)
+# and loads global config (to re-derive the managed dockerfile path). It still
+# performs NO container-backend call. Requires jq.
 do_sync_vscode() {
   local project="${1:-}"
   local dry_run="false"
@@ -405,9 +438,6 @@ Usage: dce config sync-vscode <name> [--dry-run]"
     dce_die "sync-vscode requires jq (it is optional everywhere else).
   Install jq, then rerun."
   fi
-  if [[ -z "${REPOS_DIR:-}" ]]; then
-    dce_die "Project '$project' config has no REPOS_DIR; cannot locate devcontainer.json."
-  fi
 
   # Re-derive the managed dockerfile (needs the overlay dirs -> global config).
   dce_load_global_config
@@ -417,9 +447,12 @@ Usage: dce config sync-vscode <name> [--dry-run]"
   build_file="$(dce_devcontainer_build_file "$ROOT_DIR" "$scopes_csv")" \
     || dce_die "Could not derive the managed Containerfile path for scopes '$scopes_csv'."
 
-  local dc_file="$REPOS_DIR/.devcontainer/devcontainer.json"
+  # The managed devcontainer.json lives in the project config dir (never in a
+  # repo): sync-vscode reconciles an existing file, it does not create one.
+  local dc_file=""
+  dc_file="$(dce_managed_devcontainer_file "$project")"
   if [[ ! -f "$dc_file" ]]; then
-    dce_die "No devcontainer.json to sync at: $dc_file
+    dce_die "No managed devcontainer.json to sync at: $dc_file
   Run 'dce new $project' first (sync-vscode reconciles an existing file)."
   fi
 
@@ -452,7 +485,7 @@ Usage: dce config sync-vscode <name> [--dry-run]"
   # SECRET_DIR is a global populated by dce_load_project_config (not a typo).
   dce_devcontainer_sync "$project" "$dc_file" "$build_file" "$ROOT_DIR" "$SECRET_DIR" \
     "$hidden_csv" "$nets_csv" "$ports_csv" "$tz" "$dry_run" "$(dce_git_auth_method)" \
-    "vscode" "$ext_csv" "$ext_manifests"
+    "vscode" "$ext_csv" "$ext_manifests" "$(dce_repo_entries_lines)"
 }
 
 # --- dispatch ----------------------------------------------------------------

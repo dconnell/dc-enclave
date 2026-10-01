@@ -4,14 +4,14 @@
 `setup.sh` bootstraps global configuration in:
 
 ```
-~/.config/dce-enclave/config
+~/.config/dc-enclave/config
 ```
 
 Required keys:
 
 ```bash
-DC_TEAM_DIR="$HOME/.config/dce-enclave/team"
-DC_USER_DIR="$HOME/.config/dce-enclave/user"
+DC_TEAM_DIR="$HOME/.config/dc-enclave/team"
+DC_USER_DIR="$HOME/.config/dc-enclave/user"
 ```
 
 `dce new`, `dce rebuild-image`, and `dce rebuild-container` load `DC_TEAM_DIR` and `DC_USER_DIR` from this config file. If the global config file is missing, either root is unset, or a root does not exist, the command fails fast with remediation guidance.
@@ -51,29 +51,32 @@ Recipe files are plain `key=value` lines. Supported keys:
 - `hide` (repeatable)
 - `network` (repeatable)
 - `ip`
-- `repo-path`
+- `repo` (repeatable)
 - `port` (repeatable)
 
 Merge and override rules:
 
 - user recipe overrides team recipe per key
-- list keys (`hide`, `network`, `port`) replace as a whole (not union)
+- list keys (`hide`, `network`, `port`, `repo`) replace as a whole (not union)
 - CLI args override recipe values for that run
 
-### `repo-path` trust boundary
+### `repo` trust boundary
 
-Recipes are untrusted input, so `repo-path` is the one key that is **not** applied
-verbatim. An auto-loaded recipe cannot silently widen the host bind mount:
+Repo entries are gated, not applied verbatim, so a recipe (or a stray CLI flag)
+cannot silently widen the host bind mount:
 
-- A recipe-sourced `repo-path` that resolves **outside** the default repos dir
-  (`$DC_REPOS_DIR` or `~/repos`) asks for confirmation before it is mounted
-  read-write as `/workspace`. `--yes`/`-y` honors it and prints a visible notice.
-- A recipe-sourced `repo-path` that resolves to `/`, your home directory, the
-  repos root, or a parent of it is **rejected** outright (too broad to expose),
-  as is any value containing characters that are unsafe in a bind-mount source.
-- A recipe-sourced `repo-path` **inside** the default repos dir needs no
-  confirmation.
-- CLI `--repo-path` is the power-user escape hatch and is **never** gated.
+- A recipe-sourced `repo=<path>` / `repo=<name>=<path>` entry — or a CLI
+  `--repo <path>` / `--repo <name>=<path>` — that resolves **outside** the
+  default repos dir (`$DC_REPOS_DIR` or `~/repos`) asks for confirmation before
+  it is mounted read-write under `/workspace/<repo-name>`. `--yes`/`-y` honors
+  it and prints a visible notice.
+- A repo path that resolves to `/`, your home directory, the repos root, or a
+  parent of it is **rejected** outright for every repo-entry surface (`dce new`,
+  recipe `repo=`, `dce repo add`, or a persisted config). Those paths are too
+  broad for the schema-v2 explicit-repo model: they would expose the repos root
+  or one of its parents instead of a single declared checkout. Values with
+  characters unsafe in a bind-mount source are also rejected.
+- A repo path **inside** the default repos dir needs no confirmation.
 
 You can load one explicit recipe file with `--config <path>`.
 
@@ -90,13 +93,31 @@ Example:
 
 ```bash
 dce new api nodejs,golang --cpus 2 --memory 4g --hide node_modules 3000:3000 --save-team
-dce new api --cpus 3 --hide .cache --save-user
+dce new workspace --repo api=~/code/api --repo web=~/code/web --save-team
 ```
 
 ## Project config keys
 
-Each project's config lives at `~/.config/dce-enclave/<name>/config` and is
+Each project's config lives at `~/.config/dc-enclave/projects/<name>/config` and is
 written by `dce new`. The hardened loader rejects unknown keys, unsafe shell
 syntax, and out-of-contract value combinations.
 
+### Repos and cross-project sharing
 
+A project owns one or more repos (`REPO_NAMES` / `REPO_PATHS`); each is
+bind-mounted read-write at `/workspace/<repo-name>` under the project root
+`/workspace`. Repo paths must be unique and non-overlapping **within** a
+project. The same host repo path may appear in **different** projects by
+design. There is no locking or coordination: two projects mounting the same
+host repo share one checkout — tracked files, untracked files, branch state,
+and `.git` metadata — so an edit or commit from one is immediately visible in
+the other. Per-project state stays separate regardless: credentials, hidden
+volumes, and the managed `/workspace/.cache` volume are never shared across
+projects. See [isolation and security](../explanation/isolation-and-security.md#the-same-host-repo-in-multiple-projects).
+
+### Legacy single-repo configs
+
+Configs written for the original single-repo schema (`REPOS_DIR`) are rejected
+by the loader with a pointer to the `legacy-single-repo` branch, which
+preserves the old single-repo model unchanged. There is no dual-schema runtime
+and no migration tooling on `main`.

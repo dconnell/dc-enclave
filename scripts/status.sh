@@ -46,14 +46,21 @@ echo "Containers (active backend):"
 backend_list_all 2>/dev/null || echo "  (none)"
 echo ""
 
-PROJECTS=("$HOME"/.config/dce-enclave/*/config)
+mapfile -t PROJECTS < <(dce_project_config_paths)
 STALE_PROJECTS=()
 if [[ ${#PROJECTS[@]} -gt 0 ]]; then
   echo "Project details:"
   for config_file in "${PROJECTS[@]}"; do
     PORTS=()
     CONTAINER_HIDDEN_PATHS=()
-    dce_load_project_config "$config_file"
+    # Skip (don't abort) projects whose config is rejected by the loader (e.g.
+    # a legacy single-repo config): one bad project must not hide the others.
+    if ! dce_load_project_config "$config_file"; then
+      _bad_proj="$(basename "$(dirname "$config_file")")"
+      echo "  [$_bad_proj]  BAD CONFIG (run: dce doctor $_bad_proj)"
+      echo ""
+      continue
+    fi
 
     project="${CONTAINER_PROJECT:-$(basename "$(dirname "$config_file")")}"
     project_backend="${CONTAINER_BACKEND:-$DEFAULT_BACKEND}"
@@ -101,7 +108,16 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
     echo "    Backend:      $resolved_backend"
     echo "    Image:        ${CONTAINER_IMAGE:-(none)}"
     echo "    Scopes:       $scope_value"
-    echo "    Repos dir:    ${REPOS_DIR:-unknown}"
+    _repo_lines="$(dce_repo_entries_lines)"
+    if [[ -n "$_repo_lines" ]]; then
+      echo "    Repos:        $(printf '%s\n' "$_repo_lines" | wc -l | tr -d ' ') repo(s) under /workspace"
+      while IFS= read -r _repo_line; do
+        [[ -z "$_repo_line" ]] && continue
+        echo "      ${_repo_line%%$'\t'*}: ${_repo_line#*$'\t'}"
+      done <<< "$_repo_lines"
+    else
+      echo "    Repos:        (none)"
+    fi
     if [[ -n "${CONTAINER_CPUS:-}" || -n "${CONTAINER_MEMORY:-}" ]]; then
       echo "    Resources:    ${CONTAINER_CPUS:-(default)} CPU, ${CONTAINER_MEMORY:-(default)} memory"
     fi
@@ -116,7 +132,7 @@ if [[ ${#PROJECTS[@]} -gt 0 ]]; then
 
     # One-line image provenance from the project log (team/user commit + built
     # time), when present. Skipped silently for projects with no log yet.
-    prov_log="$HOME/.config/dce-enclave/$project/provenance.jsonl"
+    prov_log="$(dce_provenance_log_path "$project")"
     if [[ -s "$prov_log" ]]; then
       prov_last="$(tail -n1 "$prov_log" 2>/dev/null || true)"
       if [[ -n "$prov_last" ]] && command -v jq >/dev/null 2>&1; then

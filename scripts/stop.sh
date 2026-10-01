@@ -27,7 +27,8 @@ source "$ROOT_DIR/lib/container-backend.sh"
 # Stop a single project; already-stopped containers are reported, not errored.
 _stop_container() {
   local project="$1"
-  local config="$HOME/.config/dce-enclave/$project/config"
+  local config=""
+  config="$(dce_project_config_path "$project")"
 
   if [[ ! -f "$config" ]]; then
     echo "✗ No config found for '$project' at $config"
@@ -54,7 +55,7 @@ if [[ $# -gt 0 ]]; then
     _stop_container "$project"
   done
 else
-  PROJECTS=("$HOME"/.config/dce-enclave/*/config)
+  mapfile -t PROJECTS < <(dce_project_config_paths)
   if [[ ${#PROJECTS[@]} -eq 0 ]]; then
     echo "No containers configured."
     exit 0

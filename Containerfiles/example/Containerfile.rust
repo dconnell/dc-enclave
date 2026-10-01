@@ -76,12 +76,31 @@ RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dce-rust-entrypo
 #!/bin/sh
 set -eu
 
-APP_DIR="${APP_DIR:-/workspace}"
+log() { printf '%s\n' "[rust-hide] $*"; }
+
+# Resolve APP_DIR: explicit APP_DIR env wins; else /workspace when the manifest
+# sits directly there (custom layouts); else the first /workspace/<repo> child
+# containing the manifest (repos bind at /workspace/<repo-name>, never /workspace).
+APP_DIR="${APP_DIR:-}"
+MANIFEST="Cargo.toml"
+if [ -z "$APP_DIR" ]; then
+  if [ -f "/workspace/$MANIFEST" ]; then
+    APP_DIR="/workspace"
+  else
+    for d in /workspace/*/; do
+      if [ -f "${d}${MANIFEST}" ]; then
+        APP_DIR="${d%/}"
+        break
+      fi
+    done
+  fi
+fi
+: "${APP_DIR:=/workspace}"
+log "app dir: $APP_DIR"
+
 STRICT="${DC_RUST_INSTALL_STRICT:-0}"
 CARGO_REGISTRY="${CARGO_HOME:-/home/dev/.cargo}/registry"
 HASH_FILE="$CARGO_REGISTRY/.dce-install-hash"
-
-log() { printf '%s\n' "[rust-hide] $*"; }
 
 # True when a target dir is missing OR empty -- the install trigger fires
 # regardless of WHY it is empty (hidden volume or a fresh volume).

@@ -310,7 +310,7 @@ dce_ext_minus() {
 
 # Log file for a project's detached extension watcher. Under ${TMPDIR:-/tmp}:
 # watch logs are transient diagnostics (truncated per run, never tokens/PII),
-# so they deliberately stay out of the persistent ~/.config/dce-enclave tree
+# so they deliberately stay out of the persistent ~/.config/dc-enclave tree
 # and vanish with the platform's temp cleaning. Fails closed (return 1, no
 # output) when the project name contains '/' -- the only real path-escape
 # character -- so a name can never point the log outside TMPDIR (names are

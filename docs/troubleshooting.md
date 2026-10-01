@@ -19,7 +19,7 @@ dce doctor myapp        # one project + its backend
 | "No backend detected" | [No backend detected](#no-backend-detected) |
 | Need to force a specific backend | [Forcing a specific backend](#forcing-a-specific-backend) |
 | Colima context or runtime errors | [Colima backend issues](#colima-backend-issues) |
-| `devcontainer.json` not updated after a `dce new`/`rebuild` | [`devcontainer.json` or `settings.json` not overwritten](#devcontainerjson-or-settingsjson-not-overwritten) |
+| managed `devcontainer.json` not updated after a `dce new`/`rebuild` | [Managed `devcontainer.json` not overwritten](#managed-devcontainerjson-not-overwritten) |
 | Port or memory change didn't take effect | [Changed ports or resource limits](#changed-ports-or-resource-limits) |
 | `git pull` / SSH fails inside the container | [SSH auth issues](#ssh-auth-issues) |
 | A name resolves on the host but not inside the container | [Hostname doesn't resolve inside my container](#hostname-doesnt-resolve-inside-my-container) |
@@ -66,7 +66,7 @@ You aliased a name in your **host** `/etc/hosts` (a corporate registry, an inter
 
 **Cause:** `/etc/hosts` is per-machine. Container runtimes regenerate the container's `/etc/hosts` at every start from their own state, so host-only aliases are not part of it. (OrbStack follows the macOS resolver and usually picks host aliases up; the other backends don't.)
 
-**Fix:** put the entry in the project's hosts fragment, `~/.config/dce-enclave/<name>/hosts` (`dce new` scaffolds a template). dce reconciles it into the container at the next entry point — `dce start`, `dce shell`, `dce editor`, … — and leaves the rest of `/etc/hosts` alone. See [custom host entries](how-to/custom-host-entries.md), then verify:
+**Fix:** put the entry in the project's hosts fragment, `~/.config/dc-enclave/projects/<name>/hosts` (`dce new` scaffolds a template). dce reconciles it into the container at the next entry point — `dce start`, `dce shell`, `dce editor`, … — and leaves the rest of `/etc/hosts` alone. See [custom host entries](how-to/custom-host-entries.md), then verify:
 
 ```
 dce exec <name> getent hosts internal.corp
@@ -97,11 +97,13 @@ docker context use colima
 colima status
 ```
 
-## `devcontainer.json` or `settings.json` not overwritten
+## Managed `devcontainer.json` not overwritten
 
-- expected behavior to avoid clobbering local config
-- on Docker-compatible projects, `dce new` / `dce rebuild-container` print a
-  drift notice when managed fields diverge from config (scopes/hide/networks/ports)
+- expected behavior to avoid clobbering local config: the managed file lives
+  at `~/.config/dc-enclave/projects/<project>/devcontainer.json` (repo-local
+  `.vscode/settings.json` is never written)
+- `dce new` / `dce rebuild-container` print a drift notice when managed fields
+  diverge from config (scopes/hide/networks/ports)
 - reconcile on demand with:
 
 ```
@@ -111,12 +113,12 @@ dce config sync-vscode <name> --dry-run   # preview only
 
 ## Changed ports or resource limits
 
-- update ~/.config/dce-enclave/<name>/config
+- update ~/.config/dc-enclave/projects/<name>/config
 - run dce rebuild-container <name>
 
 ## SSH auth issues
 
-- verify ~/.config/dce-enclave/<name>/ssh_key and the git-host token file (github-token / gitlab-token)
+- verify ~/.config/dc-enclave/projects/<name>/ssh_key and the git-host token file (github-token / gitlab-token)
 - restart with dce start or recreate with dce rebuild-container
 
 ## Podman on macOS not starting
