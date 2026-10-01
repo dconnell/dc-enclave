@@ -69,6 +69,8 @@ docker/orbstack/colima/podman backends:
 - `dce new` and `dce rebuild-container` also seed VS Code attached-container **named** config (`workspaceFolder=/workspace`) for that container name, so attach behavior stays consistent across image rebuilds/re-tags (existing named config is preserved)
 - `dce editor <name>` is the CLI shortcut for **Dev Containers: Attach to Running Container...**: it starts the container if needed, launches VS Code attached to `/workspace`, and syncs the attached-container named config's managed fields.
 - Under PAT auth that named config carries a Git `remoteEnv` override (`credential.helper = ""`, then `store`), so attached terminals/UI use the container's PAT-backed `~/.git-credentials` instead of VS Code's host-credential forwarding helper.
+- That named config also carries a managed `remoteEnv` `PS1` (`[<project>] %~ %# `, every auth mode), so VS Code integrated terminals show the same prompt as `dce shell`.
+- Because the project's `CONTAINER_IMAGE` is its per-project image alias (`dce-<project>:latest`, see [concepts](concepts.md)), the attached-container label shows that friendly name — `Container dce-<project>:latest (<project>)` — instead of the scope-hash `dce-img-<hash>` ref.
 - Use `--editor vscode-insiders` for Insiders, or set `DCE_EDITOR` / `$VISUAL` / `$EDITOR`. Run `dce help editor` for full precedence and discovery rules.
 - Runtime extension drift is surfaced via `dce doctor <project>` (informational),
   `dce extensions diff <project>` (focused), and a pre-destroy warning from

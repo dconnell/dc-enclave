@@ -105,7 +105,7 @@ dce rebuild-container myapp-monorepo
 Notes:
 
 - `dce rebuild-image` is backend-agnostic (apple/colima/docker/orbstack/podman via `CONTAINER_BACKEND` detection/override).
-- `dce rebuild-image all` rebuilds `dce-base` and all configured derived images.
+- `dce rebuild-image all` rebuilds `dce-base` and all configured derived images, refreshing each project's `dce-<project>:latest` alias tag onto the result. Project configs are NOT rewritten: an existing project adopts the alias into `CONTAINER_IMAGE` on its next `dce rebuild-container`.
 - `dce rebuild-container <project>` never rebuilds images. If the required image is missing, it fails and instructs you to run `dce rebuild-image all`.
 
 
@@ -126,10 +126,11 @@ dce clean --dry-run
 Safety and cleanup scope:
 
 - `dce clean` is backend-agnostic and uses the active backend (apple/colima/docker/orbstack/podman).
-- It targets managed image repositories (`dce-base` and `dce-img-<hash>`) discovered from current project configs and backend image state.
+- It targets managed image repositories (`dce-base`, `dce-img-<hash>`, and the per-project `dce-<project>` aliases) discovered from current project configs and backend image state.
 - For expected managed repos, it preserves `:latest` and removes non-latest tags.
-- For orphan managed repos, it removes all tags (including `:latest`).
+- For orphan managed repos, it removes all tags (including `:latest`) — this reclaims the aliases of deleted projects.
 - It does not remove unrelated images (for example VS Code `vsc-*` images).
+- dce claims the `dce-` image namespace (`dce-base`, `dce-img-*`, `dce-snap-*`, `dce-<project>` aliases) and reclaims unrecognized repos in it — your own image named `dce-mysite` lives in that namespace and is not protected by name alone.
 - If a tag is still referenced by a container, removal may fail and is reported (no force delete).
 
 

@@ -86,6 +86,13 @@ Description:
     $DC_USER_DIR/overlays/Containerfile.<scope>; a scope missing from both
     fails fast.
 
+  Derived-image projects whose names are valid docker repo names also get
+  a per-project alias tag (dce-<project>:latest) on that shared image; the
+  alias becomes the project's CONTAINER_IMAGE, so `docker images` and the
+  VS Code attach picker display the friendly name. Base-image projects run
+  dce-base directly; uppercase or reserved names (base, img-*, snap-*,
+  snapvol-*) keep the canonical dce-img-<hash> ref everywhere.
+
 Arguments:
   <name>     Project name (letters, numbers, dot, underscore, hyphen). Must
              not already exist as a config or container.
@@ -677,6 +684,8 @@ Notes:
   - To recreate a removed project: `dce new <name> [scope] ...`.
   - To wipe only the container filesystem while keeping config and code:
     `dce rebuild-container <name>`.
+  - Derived images (dce-img-<hash>) and their per-project alias tags
+    (dce-<project>) are NOT removed; reclaim orphans with `dce clean`.
 EOF
 }
 
@@ -697,8 +706,10 @@ Description:
 
   This command does not build images. It re-derives the image from current
   overlay state and project scopes, updates config if needed, then
-  recreates the container from that image. Afterwards hidden mounts are
-  re-verified and credentials re-injected (the same wiring as `dce new`).
+  recreates the container from that image. Aliased projects adopt their
+  dce-<project>:latest tag into CONTAINER_IMAGE here. Afterwards hidden
+  mounts are re-verified and credentials re-injected (the same wiring as
+  `dce new`).
 
   Hidden volumes (node_modules, caches) are removed by default for a
   clean slate; --keep-hidden-volumes preserves them across rebuilds.
@@ -706,7 +717,8 @@ Description:
   --from-snap <label> switches the image source to a saved snapshot
   (dce-snap-<slug>-<label>:latest, created by `dce snapshot`; slug =
   lowercased project name, non-alphanumerics collapsed to '-', truncated
-  to 24 chars). Scope derivation and the CONTAINER_IMAGE
+  to 24 chars -- a family distinct from the dce-<project> image aliases).
+  Scope derivation and the CONTAINER_IMAGE
   config rewrite are skipped: the snapshot is a one-off restore source,
   never the project's configured image. Hidden volumes are ALWAYS isolated
   on restore: each is mounted from its snapshot volume (populated where
@@ -746,7 +758,9 @@ Options:
 
   --from-snap <label>
               Recreate from the snapshot dce-snap-<slug>-<label>:latest
-              instead of the scope-derived image. The snapshot must exist
+              instead of the project's configured image (the
+              dce-<project> alias or the canonical dce-img-<hash> ref).
+              The snapshot must exist
               (`dce snapshots list <name>`). See Description for volume
               isolation and credential semantics.
 
@@ -784,8 +798,10 @@ Description:
   Rebuilds managed images on the active backend (starting the backend if
   it is down):
 
-    all   dce-base:latest plus every derived image currently selected by
-          configured projects (scans project configs, dedupes). Default.
+    all   dce-base:latest plus every derived image (dce-img-<hash>)
+          currently selected by configured projects (scans project
+          configs, dedupes), and refreshes each project's
+          dce-<project>:latest alias tag onto the result. Default.
     base  dce-base:latest only.
 
 Arguments:
@@ -800,6 +816,9 @@ Notes:
   - Derived-image builds require buildx.
   - Builds are logged to each affected project's provenance log
     (`dce provenance <name>`).
+  - Alias refresh never rewrites project configs; the next
+    `dce rebuild-container <name>` adopts the refreshed
+    dce-<project>:latest into CONTAINER_IMAGE.
   - After rebuilding images, run `dce rebuild-container <name>` for each
     container you want recreated.
 EOF
@@ -872,9 +891,10 @@ Description:
 
   Image tags (default):
   - Expected managed repos (dce-base + currently configured derived
-    repos): keep latest, remove other tags.
+    repos + the dce-<project> aliases of live projects): keep latest,
+    remove other tags.
   - Orphan managed repos (no longer expected): remove all tags, including
-    latest.
+    latest (reclaiming the aliases of deleted projects).
 
   Hidden volumes (--hidden-volumes):
   - Remove orphan managed hidden volumes (dce-hide-* no longer referenced
@@ -882,7 +902,8 @@ Description:
 
   Snapshots (--snapshots):
   - Remove dce-snap-* snapshot images AND their dce-snapvol-* volumes
-    (created by `dce snapshot`). Optional [name] scopes to one project's
+    (created by `dce snapshot`; a family distinct from the per-project
+    dce-<project> image aliases). Optional [name] scopes to one project's
     snapshots. Default `dce clean` NEVER touches snapshots -- only this
     flag reclaims them.
 
@@ -910,7 +931,11 @@ Examples:
   dce clean --snapshots myproject
 
 Notes:
-  - Managed image repos are dce-base and dce-img-<16-hex>.
+  - Managed image repos are dce-base, dce-img-<16-hex>, and the
+    per-project aliases dce-<project>.
+  - dce claims the dce- image namespace (dce-base, dce-img-*, dce-snap-*,
+    dce-<project> aliases) and reclaims unrecognized repos in it;
+    images outside that namespace (e.g. VS Code vsc-*) are never touched.
   - Images currently in use may fail to remove; those failures are
     reported.
 EOF
@@ -1252,7 +1277,9 @@ Usage: dce snapshot <project> [<label>]
 Description:
   A snapshot commits a project container's filesystem to a tagged image
   (dce-snap-<slug>-<label>:latest; slug = project name lowercased,
-  non-alphanumerics collapsed to '-', truncated to 24 chars). It is an
+  non-alphanumerics collapsed to '-', truncated to 24 chars; the
+  dce-snap-* family is distinct from the per-project dce-<project> image
+  aliases). It is an
   independent operation you can run at any time -- before a risky change,
   before a rebuild, or to preserve a state. Restoring is opt-in via
   `dce rebuild-container --from-snap`.

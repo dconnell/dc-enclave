@@ -178,11 +178,14 @@ fi
 [[ "${CONTAINER_HIDDEN_PATHS[0]:-}" == "$PROJECT/node_modules" ]] || fail "config: hidden paths (got [${CONTAINER_HIDDEN_PATHS[*]:-}])"
 [[ "${CONTAINER_IMAGE:-}" == dce-*:latest ]] || fail "config: derived image"
 
-# Persisted image is exactly what the helper derives from the scopes -> the
-# new/rebuild bridge is deterministic by construction.
-expected_img="$(dce_image_ref_from_scopes "$TEAM_OD" "$USER_OD" "nodejs,golang")"
-[[ "$CONTAINER_IMAGE" == "$expected_img" ]] \
-  || fail "config: image [$CONTAINER_IMAGE] != derived [$expected_img]"
+# Persisted image is the per-project alias (dce-<project>:latest), not the
+# canonical scope-derived ref: the alias is what VS Code / `docker images` /
+# `dce status` display. The canonical ref stays a build/GC-internal detail.
+canonical_img="$(dce_image_ref_from_scopes "$TEAM_OD" "$USER_OD" "nodejs,golang")"
+[[ "$canonical_img" == dce-img-*:latest ]] \
+  || fail "fixture: derived ref [$canonical_img] is not canonical dce-img-<hash>"
+[[ "$CONTAINER_IMAGE" == "dce-myapp:latest" ]] \
+  || fail "config: image should be the alias dce-myapp:latest (got [$CONTAINER_IMAGE])"
 
 # --- secrets bootstrap (perms) -------------------------------------------
 [[ -d "$SECRET_DIR" ]] || fail "secrets: dir missing"
@@ -200,7 +203,7 @@ for f in ssh_key github-token .npmrc; do
 done
 
 # --- generated Containerfile layer order (canonical) ---------------------
-hash16="$(dce_image_hash_from_ref "$CONTAINER_IMAGE")"
+hash16="$(dce_image_hash_from_ref "$canonical_img")"
 gen_cf="$ROOT_DIR/Containerfiles/generated/Containerfile.$hash16"
 [[ -f "$gen_cf" ]] || fail "dce new: generated Containerfile missing at $gen_cf"
 gen_markers="$(awk '/^# --- begin overlay:auto:/ { sub(/^overlay:auto:/, "", $4); print $4 }' "$gen_cf")"
@@ -209,8 +212,15 @@ user/nodejs
 team/golang" ]] || fail "dce new: generated layer order wrong [$gen_markers]"
 
 # --- image built once with the derived tag + generated file --------------
-grep -Fq "CALL docker build --tag $CONTAINER_IMAGE --file $gen_cf" "$LOG" \
+# The BUILD itself always uses the canonical dce-img-<hash> ref (that is the
+# shared, scope-set-addressed image); the alias is applied post-build.
+grep -Fq "CALL docker build --tag $canonical_img --file $gen_cf" "$LOG" \
   || fail "dce new: build call missing/wrong
+$(grep '^CALL' "$LOG")"
+
+# The per-project alias is tagged onto the canonical image (docker tag).
+grep -Fq "CALL docker tag $canonical_img $CONTAINER_IMAGE" "$LOG" \
+  || fail "dce new: alias tag call missing/wrong
 $(grep '^CALL' "$LOG")"
 
 # --- create argv shape: --name, volumes, publish, resources, image LAST ---
@@ -234,8 +244,10 @@ grep -Fq -- "--publish 3000:3000"         <<<"$NEW_CREATE" || fail "create: port
 grep -Fq -- "--publish 8080:8080"         <<<"$NEW_CREATE" || fail "create: port 8080"
 grep -Fq -- "--cpus 2"                    <<<"$NEW_CREATE" || fail "create: cpus"
 grep -Fq -- "--memory 4g"                 <<<"$NEW_CREATE" || fail "create: memory"
-# Image positional must trail every flag.
-[[ "${NEW_CREATE##* }" == "$CONTAINER_IMAGE" ]] || fail "create: image must be the last token (got [${NEW_CREATE##* }])"
+# Image positional must trail every flag -- and it must be the ALIAS ref: the
+# created container runs from dce-<project>:latest so `docker ps` shows the
+# friendly name.
+[[ "${NEW_CREATE##* }" == "$CONTAINER_IMAGE" ]] || fail "create: image must be the alias ($CONTAINER_IMAGE) as the last token (got [${NEW_CREATE##* }])"
 # Volume group precedes publish group precedes resource group (documented order).
 last_vol="$(grep -bo -- '--volume' <<<"$NEW_CREATE" | tail -1 | cut -d: -f1)"
 first_pub="$(grep -bo -- '--publish' <<<"$NEW_CREATE" | head -1 | cut -d: -f1)"
@@ -337,7 +349,7 @@ pass "dce new: derived-image build path fails fast when buildx is missing"
 # image reuse: a second project with the same scopes must NOT rebuild
 # ===========================================================================
 REUSE_PROJ="reuseproj"
-printf '%s\n' "$CONTAINER_IMAGE" >> "$IMAGES"   # derived image now "present"
+printf '%s\n' "$canonical_img" >> "$IMAGES"   # derived image now "present"
 : > "$LOG"
 run_script "$ROOT_DIR/scripts/new-container.sh" "$REUSE_PROJ" nodejs,golang 3000:3000 \
   >"$WORK/reuse.stdout" 2>"$WORK/reuse.stderr" \
@@ -346,12 +358,44 @@ if grep -qE 'build --tag dce-img-' "$LOG"; then
   fail "dce new: must not rebuild an existing derived image
 $(grep -E 'build' "$LOG")"
 fi
-grep -Fq "Reusing existing image: $CONTAINER_IMAGE" "$WORK/reuse.stdout" \
+# The reuse notice names the CANONICAL ref (alias adoption happens after the
+# reuse/build branch, so the existence probe + message predate it).
+grep -Fq "Reusing existing image: $canonical_img" "$WORK/reuse.stdout" \
   || fail "dce new: should report it is reusing the existing image"
 # Reset the image list to base-only for the rebuild sections below.
 printf 'dce-base:latest\n' > "$IMAGES"
 
 pass "dce new: reuses existing derived image (no rebuild)"
+
+# ===========================================================================
+# non-aliasable project name: keeps the canonical dce-img-<hash> ref in config
+# and issues NO tag call. The trailing-dash name 'edge-' is valid per dce's
+# project grammar (^[A-Za-z0-9][A-Za-z0-9._-]*$) but can never be a docker
+# repo component, so the alias branch must silently degrade to the canonical
+# ref (no mid-flight `docker tag` failure that would abort `dce new` after the
+# build). (An uppercase name is equally non-aliasable but is not usable here:
+# case-insensitive host filesystems collide 'MyApp' with the 'myapp' fixture.)
+# ===========================================================================
+NOALIAS_PROJ="edge-"
+NOALIAS_CONFIG="$WORK/home/.config/dc-enclave/projects/$NOALIAS_PROJ/config"
+printf '%s\n' "$canonical_img" >> "$IMAGES"   # same scope set -> reuse, no build
+: > "$LOG"
+run_script "$ROOT_DIR/scripts/new-container.sh" "$NOALIAS_PROJ" nodejs,golang \
+  >"$WORK/noalias.stdout" 2>"$WORK/noalias.stderr" \
+  || fail "dce new (non-aliasable name) exited non-zero
+-- stderr:$(cat "$WORK/noalias.stderr")"
+if grep -qE 'CALL docker tag ' "$LOG"; then
+  fail "dce new (non-aliasable name): must not issue an alias tag call
+$(grep 'tag' "$LOG")"
+fi
+[[ -f "$NOALIAS_CONFIG" ]] || fail "dce new (non-aliasable name): config not written"
+chmod 600 "$NOALIAS_CONFIG" 2>/dev/null || true
+noalias_image="$(dce_config_extract_scalar "$NOALIAS_CONFIG" CONTAINER_IMAGE)"
+[[ "$noalias_image" == "$canonical_img" ]] \
+  || fail "dce new (non-aliasable name): config must keep the canonical ref [$canonical_img] (got [$noalias_image])"
+printf 'dce-base:latest\n' > "$IMAGES"   # reset for the sections below
+
+pass "dce new: non-aliasable name keeps canonical ref, no tag call"
 
 # ===========================================================================
 # dce new --git-host gitlab: provider selection drives token file, sentinel,
@@ -386,6 +430,17 @@ if grep -q 'git-host' "$ROOT_DIR/scripts/config.sh"; then
   fail "gitlab: git-host must not appear as a mutable config key in v1"
 fi
 
+# No-scope `dce new` (glapp has no scopes -> dce-base) must never tag: the
+# alias branch is guarded on a derived image, so no `docker tag` call may
+# appear, and the config keeps dce-base:latest as CONTAINER_IMAGE.
+if grep -qE 'CALL docker tag ' "$LOG"; then
+  fail "dce new (no-scope): must not issue an alias tag call
+$(grep 'tag' "$LOG")"
+fi
+gl_image="$(dce_config_extract_scalar "$GL_CONFIG" CONTAINER_IMAGE)"
+[[ "$gl_image" == "dce-base:latest" ]] \
+  || fail "dce new (no-scope): CONTAINER_IMAGE must stay dce-base:latest (got [$gl_image])"
+
 # Unknown provider fails fast, before any backend work.
 if run_script "$ROOT_DIR/scripts/new-container.sh" "badhost" --git-host bitbucket \
   >"$WORK/bad.stdout" 2>"$WORK/bad.stderr"; then
@@ -404,17 +459,23 @@ dce_load_project_config "$CONFIG"
 # rebuild: never builds; stop->delete->create->start; create-argv parity
 # ===========================================================================
 cp "$IMAGES" "$IMAGES_BAK"
-printf '%s\n' "$CONTAINER_IMAGE" >> "$IMAGES"   # derived image now "present"
+# The derived image must be present under its CANONICAL ref: rebuild-container
+# probes existence with the scope-derived ref (the alias is retagged after).
+printf '%s\n' "$canonical_img" >> "$IMAGES"
 
 : > "$LOG"
 printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" \
   >"$WORK/rb.stdout" 2>"$WORK/rb.stderr" || fail "rebuild (default) exited non-zero"
 
-# Never builds an image.
+# Never builds an image (retagging the alias is not a build).
 if grep -qE 'build --tag (dce-base|dce-img-)' "$LOG"; then
   fail "rebuild: must never build an image
 $(grep -E 'build' "$LOG")"
 fi
+# The alias is refreshed onto the (possibly reused) canonical image.
+grep -Fq "CALL docker tag $canonical_img $CONTAINER_IMAGE" "$LOG" \
+  || fail "rebuild: alias tag call missing/wrong
+$(grep '^CALL' "$LOG")"
 
 # Order: delete (rm -f) < create < start. Stop is skipped because stub reports
 # the container not running (no `stop myapp` call expected).
@@ -470,7 +531,7 @@ pass "rebuild: fail-fast on missing image (no destructive calls)"
 # ===========================================================================
 # rebuild --keep-hidden-volumes: no volume rm
 # ===========================================================================
-printf '%s\n' "$CONTAINER_IMAGE" >> "$IMAGES"
+printf '%s\n' "$canonical_img" >> "$IMAGES"
 
 : > "$LOG"
 printf 'yes\n' | run_script "$ROOT_DIR/scripts/rebuild-container.sh" "$PROJECT" --keep-hidden-volumes \
@@ -561,7 +622,7 @@ pass "rebuild -y: short form skips prompt"
 # ===========================================================================
 # The myapp project has scopes nodejs,golang. Adopt manifests: declare a.b only.
 BACKEND=docker
-cp "$IMAGES_BAK" "$IMAGES"; printf '%s\n' "$CONTAINER_IMAGE" >> "$IMAGES"
+cp "$IMAGES_BAK" "$IMAGES"; printf '%s\n' "$canonical_img" >> "$IMAGES"
 EXT_USER_DIR="$WORK/home/.config/dc-enclave/user/extensions/vscode"
 mkdir -p "$EXT_USER_DIR"
 printf 'a.b\n' > "$EXT_USER_DIR/nodejs.txt"

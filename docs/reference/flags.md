@@ -65,14 +65,14 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 | `--rotate-keys` | Regenerate the SSH deploy key before recreating (old key backed up, new `.pub` printed, command pauses for you to update GitHub). Implies credential injection (the new key + current git token are written). |
 | `--inject-creds` | Inject the current SSH deploy key and git token into the rebuilt container, overwriting any credentials already present (idempotent: the token is rewritten only when it differs). Always in effect for a normal rebuild and for `--rotate-keys`; it matters with `--from-snap`, where a bare restore injects nothing so a (possibly suspect) snapshot's credential state is preserved for inspection. |
 | `--keep-hidden-volumes` | Preserve hidden volumes instead of removing them (the default removes them). Combining with `--rotate-keys` triggers a loud warning. |
-| `--from-snap <label>` | Recreate from the snapshot `dce-snap-<name>-<label>:latest` instead of the scope-derived image. Bypasses scope derivation and does NOT rewrite `CONTAINER_IMAGE`. Hidden volumes are ALWAYS isolated on restore: each is mounted from its snapshot volume (populated where captured, empty otherwise) and the live originals are left untouched, so `--keep-hidden-volumes` has no effect here. A restore does NOT inject credentials by default — the rebuilt container keeps exactly what the snapshot baked (nothing, for a scrubbed snapshot); pass `--inject-creds` to inject current credentials, or `--rotate-keys` to regenerate the SSH key. See [snapshots & rollback](../how-to/snapshot-and-rollback.md). |
+| `--from-snap <label>` | Recreate from the snapshot `dce-snap-<name>-<label>:latest` instead of the project's configured image (the `dce-<project>` alias or canonical `dce-img-<hash>` ref). Bypasses scope derivation and does NOT rewrite `CONTAINER_IMAGE`. Hidden volumes are ALWAYS isolated on restore: each is mounted from its snapshot volume (populated where captured, empty otherwise) and the live originals are left untouched, so `--keep-hidden-volumes` has no effect here. A restore does NOT inject credentials by default — the rebuilt container keeps exactly what the snapshot baked (nothing, for a scrubbed snapshot); pass `--inject-creds` to inject current credentials, or `--rotate-keys` to regenerate the SSH key. See [snapshots & rollback](../how-to/snapshot-and-rollback.md). |
 | `--yes`, `-y` | Skip the confirmation prompt (for scripted incident response). |
 
 ## `dce rebuild-image` — rebuild managed images
 
 | Arg | Description |
 |---|---|
-| `[all\|base]` | `all` (default): rebuild `dce-base:latest` and every configured derived image. `base`: rebuild `dce-base:latest` only. |
+| `[all\|base]` | `all` (default): rebuild `dce-base:latest` and every configured derived image, refreshing each project's `dce-<project>:latest` alias tag (configs are not rewritten; the next `dce rebuild-container` adopts the alias). `base`: rebuild `dce-base:latest` only. |
 
 ## `dce config` — inspect/edit config + sync managed devcontainer fields
 
@@ -99,13 +99,13 @@ A TTY is allocated automatically only when both stdin and stdout are interactive
 |---|---|
 | `--dry-run` | Show what would be removed (and how much space) without deleting. |
 | `--hidden-volumes [name]` | Operate on orphan hidden volumes instead of managed image tags. Optional trailing project name narrows scope to one project. |
-| `--snapshots [name]` | Operate on `dce-snap-*` snapshot images and their `dce-snapvol-*` snapshot volumes instead of managed image tags. Optional trailing project name narrows scope to one project. Default `dce clean` never touches snapshots. Mutually exclusive with `--hidden-volumes`. |
+| `--snapshots [name]` | Operate on `dce-snap-*` snapshot images and their `dce-snapvol-*` snapshot volumes instead of managed image tags (a family distinct from the `dce-<project>` image aliases, which the default mode manages). Optional trailing project name narrows scope to one project. Default `dce clean` never touches snapshots. Mutually exclusive with `--hidden-volumes`. |
 
 ## `dce snapshot` / `dce snapshots` — container snapshots
 
 | Form / arg | Description |
 |---|---|
-| `snapshot <name> [<label>]` | Stop → commit → restart the container, producing `dce-snap-<name>-<label>:latest`, AND clone each hidden volume into `dce-snapvol-<name>-<label>-<hash>`. `<label>` defaults to a sortable UTC timestamp (`YYYYmmdd-HHMMSS`); charset `[A-Za-z0-9_.-]`. Refuses to overwrite an existing label. The source volume is mounted **read-only** during the copy, so the live volume can't be corrupted. A failed copy does NOT abort — the path is restored empty with a WARNING. Because copying is slow/disk-heavy, the command lists the volumes to copy and **prompts for confirmation** first. |
+| `snapshot <name> [<label>]` | Stop → commit → restart the container, producing `dce-snap-<name>-<label>:latest`, AND clone each hidden volume into `dce-snapvol-<name>-<label>-<hash>`. The `dce-snap-*` family stays distinct from the per-project `dce-<project>` image aliases. `<label>` defaults to a sortable UTC timestamp (`YYYYmmdd-HHMMSS`); charset `[A-Za-z0-9_.-]`. Refuses to overwrite an existing label. The source volume is mounted **read-only** during the copy, so the live volume can't be corrupted. A failed copy does NOT abort — the path is restored empty with a WARNING. Because copying is slow/disk-heavy, the command lists the volumes to copy and **prompts for confirmation** first. |
 | `--exclude-volumes` | Skip ALL hidden-volume capture (filesystem image only). Excluded volumes come back EMPTY on restore — never silently reused from the live volumes. No confirmation prompt (nothing to copy). |
 | `--exclude-volume <path[,path...]>` | Exclude specific hidden volumes only (repeatable, comma-separated); the rest are captured. Useful for "everything except the huge `node_modules`". Unknown paths are warned and ignored. |
 | `--yes`, `-y` | Skip the confirmation prompt (for scripting). |
