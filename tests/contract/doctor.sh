@@ -41,6 +41,12 @@ source "$ROOT_DIR/lib/devcontainer.sh"
 #                                   DOCKER_CONTEXT is unset)
 #   DC_STUB_HAS_DEVBASE            (image ls emits dce-base:latest)
 #   DC_STUB_CONTAINERS             (newline list for `docker ps`)
+#   DC_STUB_APPLE_VERSION          (what `container --version` reports; default 1.0)
+#   DC_STUB_APPLE_DNS_DOMAIN       (1 = `system dns list` shows the gateway domain)
+#   DC_STUB_APPLE_PROBE            (doctor's in-container gateway probe outcome:
+#                                   refused|ok|timeout|noutil)
+#   DC_STUB_APPLE_CONTAINERS       (newline list for `container ls -q` (running))
+#   DC_STUB_APPLE_STOPPED          (extra stopped-only names for `ls -a -q`)
 # ---------------------------------------------------------------------------
 STUB_DIR="$WORK/bin"
 mkdir -p "$STUB_DIR"
@@ -99,15 +105,71 @@ case "$name" in
     exit 0 ;;
   container)
     case "${1:-}" in
-      system) [[ "${2:-}" == "info" ]] && { [[ "${DC_STUB_APPLE_UP:-1}" == "1" ]] && exit 0; exit 1; } ;;
-      --version) echo "container stub 1.0"; exit 0 ;;
+      system)
+        # Reachability is determined by `system status` (backend_system_info);
+        # `system info` is gated too so neither subcommand reads as up.
+        if [[ "${2:-}" == "status" || "${2:-}" == "info" ]]; then
+          [[ "${DC_STUB_APPLE_UP:-1}" == "1" ]] && exit 0
+          exit 1
+        fi
+        if [[ "${2:-}" == "dns" && "${3:-}" == "list" ]]; then
+          # backend_apple_dns_domain_present parses --format json first (bare
+          # array), falling back to the raw table; emit the matching shape.
+          if [[ "${DC_STUB_APPLE_DNS_DOMAIN:-1}" == "1" ]]; then
+            if [[ "${4:-}" == "--format" ]]; then
+              printf '["host.container.internal"]\n'
+            else
+              printf 'DOMAIN\nhost.container.internal\n'
+            fi
+          else
+            if [[ "${4:-}" == "--format" ]]; then printf '[]\n'; else printf 'DOMAIN\n'; fi
+          fi
+          exit 0
+        fi
+        exit 0 ;;
+      --version) printf 'container stub %s\n' "${DC_STUB_APPLE_VERSION:-1.0}"; exit 0 ;;
       image)
         if [[ "${2:-}" == "ls" ]]; then
           [[ "${DC_STUB_HAS_DEVBASE:-1}" == "1" ]] && printf 'dce-base:latest\n'
           exit 0
         fi
         exit 0 ;;
+      ls)
+        # `ls -q` (backend_is_running) vs `ls -a -q` (backend_exists): the
+        # stopped-only list is appended for -a so state probes can tell
+        # "stopped" from "never created".
+        printf '%s\n' "${DC_STUB_APPLE_CONTAINERS:-}"
+        if [[ "${2:-}" == "-a" && -n "${DC_STUB_APPLE_STOPPED:-}" ]]; then
+          printf '%s\n' "${DC_STUB_APPLE_STOPPED}"
+        fi
+        exit 0 ;;
       ps) exit 0 ;;
+      exec)
+        # Mirror the docker stub's credential probes (git-token drift check).
+        for _a in "$@"; do
+          case "$_a" in
+            *'test -f ~/.git-credentials'*) [[ -n "${DC_STUB_GIT_CREDS:-}" ]]; exit ;;
+            *'cat ~/.git-credentials'*) printf '%s' "${DC_STUB_GIT_CREDS:-}"; exit 0 ;;
+          esac
+        done
+        # doctor's host.docker.internal gateway probe (see
+        # _doctor_apple_gateway_probe in scripts/doctor.sh): the probe emits a
+        # __DCE_PROBE_RC__ marker when it actually ran, and its exit code
+        # carries the outcome -- refused (1), connect ok (0), timeout (124),
+        # tools missing (127, no marker). Knob per scenario.
+        for _a in "$@"; do
+          case "$_a" in
+            */dev/tcp/*)
+              case "${DC_STUB_APPLE_PROBE:-refused}" in
+                ok)      printf '__DCE_PROBE_RC__=0\n'; exit 0 ;;
+                refused) printf '__DCE_PROBE_RC__=1\n'; exit 1 ;;
+                timeout) exit 124 ;;
+                noutil)  exit 127 ;;
+              esac
+              ;;
+          esac
+        done
+        exit 0 ;;
     esac
     exit 0 ;;
   podman)
@@ -725,6 +787,139 @@ printf '%s' "$out" | grep -Eq 'rootless|systemctl' \
 $out"
 export DC_STUB_PODMAN_UP=1
 pass "podman-unreachable hint is OS-specific (machine vs rootless)"
+
+# ---------------------------------------------------------------------------
+# Section 7 - apple backend: host.docker.internal parity + live gateway probe
+# ---------------------------------------------------------------------------
+# apple/container gets host-loopback reachability only after (a) a CLI
+# >= 0.9.0 and (b) the one-time host bootstrap domain (`system dns create` +
+# pf redirect). Doctor gates (a)/(b) hard and probes the live redirect from
+# inside a running apple project container: fast-refuse = redirect alive,
+# timeout = redirect missing (e.g. after a host reboot).
+
+# Healthy apple: supported version + domain present -> pass, no bootstrap cmd.
+run_doctor apple; out="$RUN_OUT"
+[[ "$RUN_RC" -eq 0 ]] || fail "apple healthy: expected exit 0, got $RUN_RC
+$out"
+printf '%s' "$out" | grep -Fq '0.9.0' \
+  || fail "apple healthy: version-gate line (>= 0.9.0) missing
+$out"
+printf '%s' "$out" | grep -Fq 'host.docker.internal' \
+  || fail "apple healthy: domain check line missing
+$out"
+if printf '%s' "$out" | grep -Fq 'dns create'; then
+  fail "apple healthy: must not print the bootstrap command
+$out"
+fi
+pass "apple healthy: version + domain ok, no bootstrap command"
+
+# Domain absent -> deliberate hard failure with the exact bootstrap remedy
+# plus the caveats (sudo, host-global, Private Relay, lost on reboot).
+DC_STUB_APPLE_DNS_DOMAIN=0 run_doctor apple; out="$RUN_OUT"
+[[ "$RUN_RC" -ne 0 ]] || fail "apple domain absent: expected nonzero
+$out"
+printf '%s' "$out" | grep -Fq 'sudo container system dns create host.container.internal --localhost 203.0.113.113' \
+  || fail "apple domain absent: exact bootstrap command missing
+$out"
+printf '%s' "$out" | grep -Fqi 'Private Relay' \
+  || fail "apple domain absent: Private Relay caveat missing
+$out"
+printf '%s' "$out" | grep -Eiq 'reboot|restart' \
+  || fail "apple domain absent: reboot caveat missing
+$out"
+pass "apple domain absent: hard fail + exact remedy + caveats"
+
+# Stopped apple runtime (`container system status` fails): reachability is
+# probed FIRST, so the version/domain host-integration checks must be gated
+# behind it -- with the DNS domain also absent, the only failure is the
+# unreachable runtime, never the domain-absent misconfiguration.
+DC_STUB_APPLE_UP=0 DC_STUB_APPLE_DNS_DOMAIN=0 run_doctor apple; out="$RUN_OUT"
+[[ "$RUN_RC" -ne 0 ]] || fail "apple runtime down: expected nonzero
+$out"
+printf '%s' "$out" | grep -q 'Runtime reachable' \
+  || fail "apple runtime down: missing Runtime reachable failure
+$out"
+printf '%s' "$out" | grep -Eq 'container system start' \
+  || fail "apple runtime down: missing 'container system start' hint
+$out"
+if printf '%s' "$out" | grep -Fq 'host.docker.internal'; then
+  fail "apple runtime down: host-integration checks must not run when unreachable
+$out"
+fi
+pass "apple runtime down: unreachable reported, host-integration checks gated"
+
+# Version < 0.9.0 -> hard failure with an upgrade hint.
+DC_STUB_APPLE_VERSION=0.8.2 run_doctor apple; out="$RUN_OUT"
+[[ "$RUN_RC" -ne 0 ]] || fail "apple old version: expected nonzero
+$out"
+printf '%s' "$out" | grep -Eiq 'upgrade' \
+  || fail "apple old version: upgrade hint missing
+$out"
+pass "apple version < 0.9.0: hard fail + upgrade hint"
+
+# Version inside the pf-reload bug window (0.9.0 <= v < 1.5.0) with the domain
+# present: the < 1.5.0 note is INFORMATIONAL ONLY -> overall PASS, info shown.
+DC_STUB_APPLE_VERSION=1.4.1 run_doctor apple; out="$RUN_OUT"
+[[ "$RUN_RC" -eq 0 ]] || fail "apple 1.4.1: < 1.5.0 must not fail (got $RUN_RC)
+$out"
+printf '%s' "$out" | grep -Fq '1.5.0' \
+  || fail "apple 1.4.1: expected the < 1.5.0 informational line
+$out"
+pass "apple version < 1.5.0: info line only, still passes"
+
+# Project scope, running container, probe fast-refused -> path alive (pass).
+make_project applelive apple dce-base:latest "ghp_realtoken"
+DC_STUB_APPLE_CONTAINERS="applelive" DC_STUB_APPLE_PROBE=refused \
+  run_doctor applelive; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fq 'host.docker.internal path to host loopback reachable' \
+  || fail "apple probe refused: reachable line missing
+$out"
+[[ "$RUN_RC" -eq 0 ]] || fail "apple probe refused: expected exit 0, got $RUN_RC
+$out"
+pass "apple project, running + fast-refused probe: reachable ok"
+
+# Probe connect succeeds (gateway answered) -> the "(connected)" classification.
+DC_STUB_APPLE_CONTAINERS="applelive" DC_STUB_APPLE_PROBE=ok \
+  run_doctor applelive; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fq 'host.docker.internal path to host loopback reachable (connected)' \
+  || fail "apple probe ok: expected (connected) line
+$out"
+[[ "$RUN_RC" -eq 0 ]] || fail "apple probe ok: expected exit 0, got $RUN_RC
+$out"
+pass "apple project, probe connect ok: (connected) classification"
+
+# Probe times out (pf redirect missing) -> failure + re-run bootstrap/reboot hint.
+DC_STUB_APPLE_CONTAINERS="applelive" DC_STUB_APPLE_PROBE=timeout \
+  run_doctor applelive; out="$RUN_OUT"
+[[ "$RUN_RC" -ne 0 ]] || fail "apple probe timeout: expected nonzero
+$out"
+printf '%s' "$out" | grep -Fq 'sudo container system dns create host.container.internal --localhost 203.0.113.113' \
+  || fail "apple probe timeout: bootstrap hint missing
+$out"
+printf '%s' "$out" | grep -Eiq 'reboot' \
+  || fail "apple probe timeout: reboot hint missing
+$out"
+pass "apple project, probe timeout: fail + re-run bootstrap hint"
+
+# Probe tools unavailable in the container -> skipped with a reason.
+DC_STUB_APPLE_CONTAINERS="applelive" DC_STUB_APPLE_PROBE=noutil \
+  run_doctor applelive; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fq 'host.docker.internal path to host loopback reachable (skipped:' \
+  || fail "apple probe noutil: expected skipped-with-reason line
+$out"
+[[ "$RUN_RC" -eq 0 ]] || fail "apple probe noutil: skip must not fail (got $RUN_RC)
+$out"
+pass "apple project, probe tools missing: skipped with reason"
+
+# Container stopped -> probe skipped (a stopped project is normal, not a fail).
+DC_STUB_APPLE_CONTAINERS="" DC_STUB_APPLE_STOPPED="applelive" \
+  run_doctor applelive; out="$RUN_OUT"
+printf '%s' "$out" | grep -Fq 'host.docker.internal path to host loopback reachable (skipped: container not running)' \
+  || fail "apple stopped: expected probe skip with reason
+$out"
+[[ "$RUN_RC" -eq 0 ]] || fail "apple stopped: skip must not fail (got $RUN_RC)
+$out"
+pass "apple project, stopped container: probe skipped"
 
 echo ""
 echo "All doctor checks passed."

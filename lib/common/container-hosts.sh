@@ -5,8 +5,12 @@
 # Sourced (never executed directly) via lib/common.sh. Reads a project's hosts
 # fragment (~/.config/dc-enclave/projects/<project>/hosts) and reconciles it into the
 # container's /etc/hosts as a marker-delimited managed block at container entry
-# points (hooks/scaffolding that call dce_ensure_container_hosts land in later
-# tasks).
+# points (dce_ensure_container_hosts is invoked by every entry script: shell,
+# editor, start, new, rebuild, snapshot, and install-dotfiles). Backend-aware:
+# on the apple/container backend the reconcile also runs
+# when the fragment is absent, staging the dce-managed host-gateway line (see
+# the constants below) so containers can reach host-loopback services; every
+# other backend keeps the fragment-optional strict no-op.
 #
 # Why reconcile-not-append: container runtimes REGENERATE /etc/hosts on every
 # container start, so entries appended once would be lost on the next start --
@@ -39,6 +43,56 @@ declare -gr _DC_COMMON_CONTAINER_HOSTS_SH_LOADED=1
 # (inclusive) before appending the fresh block; keep the pair in sync.
 readonly _DCE_HOSTS_BLOCK_BEGIN='# >>> dc-enclave hosts (managed) >>>'
 readonly _DCE_HOSTS_BLOCK_END='# <<< dc-enclave hosts (managed) <<<'
+
+# Host-gateway constants. apple/container (>= 0.9.0) has no built-in
+# host.docker.internal; instead, after a one-time admin bootstrap
+# (`sudo container system dns create host.container.internal --localhost <ip>`,
+# see backend_apple_dns_bootstrap_command) the container system installs a
+# packet-filter rule that redirects container-bound traffic to <ip> into the
+# macOS host's 127.0.0.1. The redirect is IP-based, so a plain hosts-file entry
+# inside the container reaches host-loopback services even though dce passes
+# custom --dns at create time (which would bypass DNS resolution of a domain).
+#
+# The IP is Apple's documented example from TEST-NET-3 (203.0.113.0/24,
+# RFC 5737) -- documentation-range addresses are the least likely to collide
+# with real networks or reserved ranges in a user's environment. Both names are
+# listed on the one line: host.docker.internal gives docker-familiar tooling
+# and hardcoded connection strings parity across backends, and
+# host.container.internal is the domain the apple bootstrap actually creates.
+#
+# Exported (-grx) rather than just global: the IP and the apple domain are read
+# cross-file by the capability probes in lib/container-backend.sh
+# (backend_apple_dns_domain_present / backend_apple_dns_bootstrap_command), and
+# ShellCheck analyzes each module in isolation (external-sources=false). As
+# with DC_VERSION, exporting documents the cross-cutting intent and silences
+# SC2034 without a directive.
+declare -grx _DCE_HOSTS_GATEWAY_IP='203.0.113.113'
+declare -grx _DCE_HOSTS_GATEWAY_DOCKER_NAME='host.docker.internal'
+declare -grx _DCE_HOSTS_GATEWAY_APPLE_NAME='host.container.internal'
+# The composed managed entry. File-local by construction: only the driver below
+# stages it, and the atoms above stay the single source of truth.
+readonly _DCE_HOSTS_GATEWAY_LINE="${_DCE_HOSTS_GATEWAY_IP} ${_DCE_HOSTS_GATEWAY_DOCKER_NAME} ${_DCE_HOSTS_GATEWAY_APPLE_NAME}"
+
+# Internal: echo the project's configured backend (its CONTAINER_BACKEND), or
+# an empty string when it cannot be determined -- missing config, invalid
+# config, or the key simply absent. Determination goes through the hardened
+# loader (dce_load_project_config), never a hand parse, so a config that would
+# be rejected anywhere else is rejected here too. Runs in the caller's command
+# substitution subshell, so the loader's config globals can never clobber the
+# caller's, and any hard failure (dce_die on an unsafe file) degrades to "no
+# backend known" instead of aborting container entry. Stderr is swallowed (the
+# lib/network.sh scan precedent): this is a capability probe, and entry scripts
+# have already surfaced any real config errors by the time they get here.
+_dce_hosts_project_backend() {
+  local project="$1"
+  local config=""
+  config="$(dce_project_config_path "$project")"
+  [[ -f "$config" ]] || return 0
+
+  if dce_load_project_config "$config" 2>/dev/null; then
+    printf '%s\n' "${CONTAINER_BACKEND:-}"
+  fi
+}
 
 # Echo the normalized entry lines of a hosts fragment file, one per line:
 # trailing CR stripped (CRLF-authored fragments), leading/trailing whitespace
@@ -170,17 +224,25 @@ EOF
 }
 
 # Reconcile <project>'s hosts fragment into its container's /etc/hosts,
-# idempotently. The fragment lives at
-# ~/.config/dc-enclave/projects/<project>/hosts; when absent the function is a
-# strict no-op with ZERO backend calls, so pre-feature projects keep their exact
-# prior entry behavior.
+# idempotently. The fragment lives at ~/.config/dc-enclave/projects/<project>/hosts.
+#
+# Backend-aware gating: the project's backend is resolved from its config (via
+# the hardened loader, in a throwaway subshell). For the apple/container backend
+# the reconcile runs EVEN IF the fragment is absent, because apple gets no
+# built-in host.docker.internal -- dce stages a managed gateway line
+# ($_DCE_HOSTS_GATEWAY_LINE) that the container system's packet-filter rule
+# redirects into host loopback. For every other backend (or an undeterminable
+# backend) a missing fragment is still the strict pre-feature no-op with ZERO
+# backend calls. User fragments never see the gateway line unless the backend
+# is apple; the line is composed after the user's entries, inside the same
+# BEGIN/END block, so the in-container reconcile script needs no changes.
 #
 # Flow: normalize on the host (invalid lines warn here and never reach the
-# container), stream the normalized content -- possibly empty, which removes a
-# stale block -- into the container at /tmp/.dce-hosts via a root stdin exec,
-# then run the generated reconcile script (which re-validates, strips any
-# existing managed block, truncate-writes /etc/hosts in place, appends the
-# fresh block, and removes the staging file).
+# container), compose the staged content -- possibly just the gateway line,
+# which also refreshes a stale block -- stream it into the container at
+# /tmp/.dce-hosts via a root stdin exec, then run the generated reconcile
+# script (which re-validates, strips any existing managed block, truncate-writes
+# /etc/hosts in place, appends the fresh block, and removes the staging file).
 #
 # Best-effort by design: this runs inside dce shell/editor/start, so ANY
 # backend failure only warns (naming the project, noting that entry continues)
@@ -188,14 +250,35 @@ EOF
 dce_ensure_container_hosts() {
   local project="$1"
 
+  # Backend lookup happens BEFORE the fragment gate: "no fragment" no longer
+  # implies "no-op" once the backend is apple. The probe is best-effort -- `||
+  # true` keeps an unloadable config from aborting entry under set -e -- and an
+  # empty result falls through to the exact legacy behavior below.
+  local backend=""
+  backend="$(_dce_hosts_project_backend "$project" || true)"
+
   local fragment=""
   fragment="$(dce_project_hosts_file "$project")"
-  if [[ ! -f "$fragment" ]]; then
+
+  # Preserved contract: non-apple backends without a fragment keep the exact
+  # prior behavior -- a strict no-op with ZERO backend calls.
+  if [[ "$backend" != "apple" && ! -f "$fragment" ]]; then
     return 0
   fi
 
   local normalized=""
   normalized="$(dce_hosts_normalize "$fragment")"
+
+  # apple only: compose the managed gateway line AFTER any user fragment lines,
+  # so it lands last inside the same managed block. (Exact string match on the
+  # backend is safe: the config loader only accepts canonical backend ids.)
+  if [[ "$backend" == "apple" ]]; then
+    if [[ -n "$normalized" ]]; then
+      normalized+=$'\n'"${_DCE_HOSTS_GATEWAY_LINE}"
+    else
+      normalized="${_DCE_HOSTS_GATEWAY_LINE}"
+    fi
+  fi
 
   # Stage the normalized fragment inside the container; it crosses via stdin,
   # never argv, and lands root-owned/600 so non-root users cannot tamper with

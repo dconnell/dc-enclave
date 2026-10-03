@@ -18,6 +18,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck disable=SC1091  # lib include, runtime-resolved path
 source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/container-backend.sh"
 
 COMMAND="${1:-}"
 
@@ -1237,13 +1239,21 @@ Description:
 Scope:
   (none)        Every detected backend CLI, plus host checks. Each backend
                 gets its own section (CLI / runtime / Colima-specific /
-                dce-base checks).
+                dce-base checks; apple also checks host.docker.internal
+EOF
+  printf '                host-integration: CLI >= %s and the one-time host\n' \
+    "$_DC_APPLE_HOST_INTEGRATION_MIN_VERSION"
+  cat <<'EOF'
+                bootstrap domain).
   <backend>     One of: apple, docker, orbstack, colima, podman.
   <project>     A configured project name: that project's backend plus
                 project state -- config loads, image present, secrets
                 set, git-token drift, devcontainer.json drift, extension
                 drift, and container state (informational: a stopped
-                project is normal and never a failure).
+                project is normal and never a failure). Apple projects
+                with a running container additionally get a live
+                host.docker.internal path probe (a read-only TCP connect
+                to a closed port inside the container).
 
 Arguments:
   [backend|project]
