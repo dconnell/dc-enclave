@@ -1266,10 +1266,6 @@ backend_apple_attach_ref() {
   printf '%s\t%s\n' "$name" "$fallback_image"
 }
 
-# Create a container from an image with the given create flags.
-#
-# For Podman we add a host.docker.internal=host-gateway alias when supported,
-# so containers can reach the host by the same name as Docker backends; older
 # Resolve the DNS nameserver IPs to pass to a container at create time (--dns).
 # Prints one IP per line on stdout (empty output = pass no --dns). Semantics:
 #   - $DCE_DNS overrides on every backend (comma- or space-separated). An empty
@@ -1299,6 +1295,10 @@ backend_dns_servers() {
   fi
 }
 
+# Create a container from an image with the given create flags.
+#
+# For Podman we add a host.docker.internal=host-gateway alias when supported,
+# so containers can reach the host by the same name as Docker backends; older
 # Podman gets a one-time warning to use host.containers.internal instead.
 backend_create() {
   local name="$1"
