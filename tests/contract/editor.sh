@@ -883,9 +883,10 @@ pass "Section 15d: per-id install failure is non-fatal (editor still launches)"
 #   3. join it BEFORE the section's `pass` line, so the EXIT trap's
 #      `rm -rf "$WORK"` can never race a live watcher. Canonical join rules:
 #      (1) a watcher spawned in the background is joined with
-#      wait_watcher_done FIRST (lock appear -> disappear), and only then are
-#      one-shot content greps run -- once the lock is gone the process is
-#      proven exited and its log final;
+#      wait_watcher_done FIRST (terminal log line -> lock released), and only
+#      then are one-shot content greps run -- once the terminal line is in the
+#      log and the lock is gone, the process is proven exited and its log
+#      final;
 #      (2) a foreground/direct invocation needs no poll: the process
 #      exit/wait IS the join -- assert lock absence one-shot afterwards.
 # ===========================================================================
@@ -906,33 +907,61 @@ wait_for_pattern() {  # <file> <fixed-string> <timeout_seconds>
   [[ -f "$file" ]] && grep -Fq -- "$pattern" "$file"
 }
 
-# Join a spawned watcher with a two-phase bounded poll (0.1s cadence, one
-# deadline computed at entry and shared by both phases):
-#   Phase 1 -- wait for the lock dir to APPEAR. A just-spawned watcher (nohup
-#     child via run_editor, or a direct background invocation) needs ~50-200ms
-#     to start bash, source its libs, and mkdir the lock, so an immediate
-#     "is the lock gone" check would succeed before the watcher ever held the
-#     lock and silently turn the join into a no-op.
-#   Phase 2 -- wait for the lock dir to DISAPPEAR (= the watcher exited: it
-#     removes the lock via its EXIT trap).
-# Returns 0 when the lock appeared and was then released, 1 when the overall
-# <timeout> budget is exceeded in either phase. Callers must only use this for
-# watchers that are certain to spawn (all current call sites do).
+# Join a spawned watcher by waiting for PROOF of completion, not lock
+# absence alone:
+#   Phase 1 -- wait for the watcher's TERMINAL LOG LINE (<terminal-line>) to
+#     appear. The watcher writes exactly one terminal line per run (timeout
+#     hint, 'watch complete', or 'stopped') as its last act before its EXIT
+#     trap removes the lock, and the log file persists after the process
+#     exits, so the line is proof the watch reached its scheduled end. This
+#     is what makes the join race-free on a loaded CI runner: a watcher's
+#     whole lifecycle (lock mkdir -> terminal line -> lock removal) takes
+#     ~1-2s wall-clock and is mostly `sleep`, so it can complete BEFORE this
+#     helper is first scheduled (the harness itself being descheduled). A
+#     lock-appearance poll would then burn its whole budget waiting for a
+#     lock that is already gone and report a phantom "still held" failure --
+#     the intermittent Section 16c CI failure this helper shape fixed.
+#   Phase 2 -- wait for the lock dir to DISAPPEAR (= the EXIT trap ran, so
+#     the watcher process is proven exited), with its own budget. When the
+#     watcher finished before entry (the phase-1 race), the lock is already
+#     gone and this returns immediately.
+# Returns 0 when the terminal line is present and the lock is released,
+# 1 when either proof is missing within its budget. Callers must only use
+# this for watchers that are certain to spawn (all current call sites do).
+#
+# <watcher-timeout> is the scenario's own watcher timeout (the value passed
+# as DCE_EXT_WATCH_TIMEOUT / run_watcher's 4th arg); the join budget is that
+# timeout plus a generous fixed grace for nohup spawn latency, bash+lib
+# startup, and the EXIT trap on a 2-core runner. It must scale with the
+# watcher timeout: a flat budget smaller than the watcher's own timeout
+# (the old flat 10s vs Section 16b's 15s) could starve a healthy watcher.
 # TMPDIR may conventionally carry a trailing '/', so strip it before
 # concatenating -- the code under test joins
 # "${TMPDIR}/dce-ext-watch.<project>.lock", and POSIX collapses the doubled
 # slash either way, but the assertions below compare literal paths.
-wait_watcher_done() {  # <project> <timeout_seconds>
-  local project="$1" timeout="$2"
+wait_watcher_done() {  # <project> <watcher_timeout_seconds> <terminal_line>
+  local project="$1" wtimeout="$2" terminal="$3"
   local base="${TMPDIR:-/tmp}"
   base="${base%/}"
   local lock="$base/dce-ext-watch.${project}.lock"
-  local deadline=$(( SECONDS + timeout ))
-  while (( SECONDS < deadline )) && [[ ! -e "$lock" ]]; do
+  local log="$base/dce-ext-watch.${project}.log"
+  local grace=30
+  local deadline=$(( SECONDS + wtimeout + grace ))
+  # Phase 1: terminal line in the log. Must tolerate the log not existing
+  # yet: a just-spawned watcher may not have created it.
+  while (( SECONDS < deadline )); do
+    if [[ -f "$log" ]] && grep -Fq -- "$terminal" "$log"; then
+      break
+    fi
     sleep 0.1
   done
-  [[ -e "$lock" ]] || return 1 # lock never appeared within the budget
-  while (( SECONDS < deadline )) && [[ -e "$lock" ]]; do
+  if [[ ! -f "$log" ]] || ! grep -Fq -- "$terminal" "$log"; then
+    return 1 # watcher never reached its terminal line within the budget
+  fi
+  # Phase 2: lock released by the EXIT trap (the trap only fork+execs `rm`, so
+  # a small own-budget suffices even loaded).
+  local lock_deadline=$(( SECONDS + 10 ))
+  while (( SECONDS < lock_deadline )) && [[ -e "$lock" ]]; do
     sleep 0.1
   done
   [[ ! -e "$lock" ]]
@@ -1032,7 +1061,8 @@ grep -Fq "$rho_watch_log" "$WORK/sec16a.out" \
 
 # Join the watcher before the EXIT trap removes $WORK: the server never
 # appears, so the watcher must end on its 2s timeout with the retry hint.
-wait_watcher_done rho 10 || fail "rho: watcher lock still held 10s after spawn"
+wait_watcher_done rho 2 'not injected within' \
+  || fail "rho: watcher did not reach its timeout line and release its lock within its budget"
 # The watcher is proven exited, so its log is final: one-shot greps.
 grep -Fq 'not injected within' "$rho_watch_log" \
   || fail "rho: watcher log missing timeout line (got: $(cat "$rho_watch_log" 2>/dev/null || true))"
@@ -1068,10 +1098,11 @@ DC_STUB_EXT_SERVER_APPEAR_AFTER=2 DC_STUB_EXT_PROBE_COUNT="$WORK/sigma-count" \
 unset DC_STUB_EXT_SERVER_APPEAR_AFTER DC_STUB_EXT_PROBE_COUNT \
   DCE_EXT_WATCH_INTERVAL DCE_EXT_WATCH_TIMEOUT
 
-# Join the watcher first (lock appear -> disappear): once the lock is gone
-# the watcher is proven exited and its output is final, so the convergence
+# Join the watcher first (terminal line -> lock released): once joined, the
+# watcher is proven exited and its output final, so the convergence
 # and idempotence assertions below are one-shot greps.
-wait_watcher_done sigma 10 || fail "sigma: watcher lock still held 10s after spawn"
+wait_watcher_done sigma 15 'watch complete' \
+  || fail "sigma: watcher did not reach its completion line and release its lock within its budget"
 grep -Fq 'INSTALL beta.missing' "$INSTALL_LOG" \
   || fail "sigma: watcher never installed the missing id (install log: $(cat "$INSTALL_LOG" 2>/dev/null || true))"
 grep -Fq 'INSTALL alpha.installed' "$INSTALL_LOG" \
@@ -1102,7 +1133,8 @@ DC_STUB_EXT_SERVER_ABSENT=1 DC_STUB_CONTAINER_EXT="$CONTAINER_EXT_FILE" \
 -- stderr:$(cat "$WORK/err")"
 unset DCE_EXT_WATCH_INTERVAL DCE_EXT_WATCH_TIMEOUT
 
-wait_watcher_done tau 10 || fail "tau: watcher lock still held 10s after spawn"
+wait_watcher_done tau 1 'not injected within' \
+  || fail "tau: watcher did not reach its timeout line and release its lock within its budget"
 wait_for_pattern "$tau_watch_log" 'not injected within' 10 \
   || fail "tau: watcher log missing timeout line (got: $(cat "$tau_watch_log" 2>/dev/null || true))"
 grep -Fq 'dce editor' "$tau_watch_log" \
@@ -1340,7 +1372,8 @@ grep -Fq "$omega_watch_log" "$WORK/sec16h.out" \
   || fail "omega: install ran in the launch path despite absent server (log: $(cat "$INSTALL_LOG"))"
 [[ -e "${TMPDIR%/}/dce-ext-watch.omega.lock" || -f "$omega_watch_log" ]] \
   || fail "omega: no watcher lock or log -- nothing was spawned"
-wait_watcher_done omega 10 || fail "omega: watcher lock still held 10s after spawn"
+wait_watcher_done omega 2 'not injected within' \
+  || fail "omega: watcher did not reach its timeout line and release its lock within its budget"
 # The watcher is proven exited, so its log is final: one-shot greps.
 grep -Fq 'not injected within' "$omega_watch_log" \
   || fail "omega: watcher log missing timeout line (got: $(cat "$omega_watch_log" 2>/dev/null || true))"
