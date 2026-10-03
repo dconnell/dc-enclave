@@ -4,7 +4,9 @@ DC Enclave drives one of five container runtimes. Pick one and have it running b
 
 ## apple/container (macOS)
 
-apple/container ships with macOS 26+. Start the system daemon:
+apple/container ships with macOS 26+. Check `container --version` — 0.9.0 is the minimum for dce's `host.docker.internal` support, but 1.5.0 or newer is recommended: older versions can break container egress when the DNS host-integration domain is created/deleted (see the [Host integration note](../reference/backends.md#vs-code-behavior-by-backend)).
+
+Start the system daemon:
 
 ```
 container system start

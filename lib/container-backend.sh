@@ -355,6 +355,141 @@ _backend_podman_supports_host_gateway() {
   return 1
 }
 
+# =============================================================================
+# apple/container host-integration probes.
+#
+# docker-family backends give containers host-loopback reachability for free
+# (host.docker.internal). apple/container only does so after a ONE-TIME,
+# host-global admin bootstrap (see backend_apple_dns_bootstrap_command): the
+# container system then redirects container-bound traffic to a synthetic IP
+# into the macOS host's 127.0.0.1 via a packet-filter rule, and dce stages a
+# hosts entry for that IP inside every apple container (see
+# lib/common/container-hosts.sh, which owns the constants used here). The
+# probes below let callers (doctor / new-container guidance) detect whether the
+# host-side integration is present and report it accurately. They are strictly
+# read-only: dce never runs sudo and never issues mutating `system dns`
+# subcommands.
+# =============================================================================
+
+# Minimum apple/container CLI version with `container system dns` host
+# integration (the domain create/list surface and the localhost redirect).
+readonly _DC_APPLE_HOST_INTEGRATION_MIN_VERSION="0.9.0"
+
+# Internal: compare dotted-decimal version strings; return 0 when <have> is
+# greater than or equal to <need>. Component-wise numeric compare (0.10.0 >
+# 0.9.0); every position up to the LONGER of the two versions participates,
+# with missing trailing components counting as 0 (1.4 == 1.4.0, 0.9.0.1 >
+# 0.9.0). Fail-safe by design: any malformed, empty, or overlong-component
+# input returns 1 ("too old"), so an unparseable version can never let a gated
+# feature report success. Components are capped at 15 digits because bash
+# arithmetic is 64-bit -- a longer numeric component could overflow and invert
+# the comparison instead of failing safely. No version-compare helper existed
+# anywhere in lib/ before this one, hence the local definition.
+_backend_version_at_least() {  # <have> <need>
+  local have="$1" need="$2"
+
+  # Fail-safe: anything malformed (or empty, or with a component longer than 15
+  # digits) counts as unsupported; the cap keeps 10# arithmetic inside the
+  # 64-bit range so an absurd version can never overflow into a wrong answer.
+  if [[ ! "$have" =~ ^[0-9]{1,15}(\.[0-9]{1,15})*$ || ! "$need" =~ ^[0-9]{1,15}(\.[0-9]{1,15})*$ ]]; then
+    return 1
+  fi
+
+  local -a have_parts=() need_parts=()
+  IFS=. read -r -a have_parts <<< "$have"
+  IFS=. read -r -a need_parts <<< "$need"
+
+  # Compare every position of the longer version string; shorter inputs read
+  # as 0 past their end, so 4+ component versions compare correctly.
+  local i have_c need_c
+  local max_i=$(( ${#have_parts[@]} > ${#need_parts[@]} ? ${#have_parts[@]} : ${#need_parts[@]} ))
+  for ((i = 0; i < max_i; i++)); do
+    # 10# forces base-10 so a padded component (01) cannot parse as octal.
+    have_c=$(( 10#${have_parts[i]:-0} ))
+    need_c=$(( 10#${need_parts[i]:-0} ))
+    if (( have_c > need_c )); then
+      return 0
+    fi
+    if (( have_c < need_c )); then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Return 0 (supported) when the apple/container CLI's version is at least
+# _DC_APPLE_HOST_INTEGRATION_MIN_VERSION. Fail-safe: a missing CLI, a failing
+# `container --version`, or an unparseable version string all return 1. The
+# version line looks like "container CLI version 1.4.1 (build: release,
+# commit: 9a8917c)" -- the first dotted-numeric token is the version (the
+# build/commit tail carries none), so a defensive first-match parse beats
+# pinning the exact sentence across CLI versions.
+backend_apple_version_supported() {
+  local raw="" version=""
+  raw="$(container --version 2>/dev/null)" || return 1
+
+  version="$(printf '%s\n' "$raw" | grep -Eo '[0-9]+(\.[0-9]+)+' | head -n 1)" || true
+  [[ -n "$version" ]] || return 1
+
+  _backend_version_at_least "$version" "$_DC_APPLE_HOST_INTEGRATION_MIN_VERSION"
+}
+
+# Return 0 when `container system dns list` shows the dce gateway domain
+# ($_DCE_HOSTS_GATEWAY_APPLE_NAME), i.e. the one-time admin bootstrap ran on
+# this host. Tolerant by design, degrading to "not present/unknown": a failed
+# or malformed listing is indistinguishable from absent, and callers gate
+# guidance (never correctness) on the answer.
+#
+# Parse order: --format json first (a bare array of domain strings -- the
+# stable machine-readable form), raw table second for CLIs without the flag.
+# A successful JSON listing is conclusive in both directions, so it never
+# falls through to the table. Matching tolerates a trailing-dot FQDN form and
+# is anchored/quoted so a lookalike substring cannot false-positive. Note the
+# list surface exposes domains only -- the CLI cannot report whether the
+# domain carries a --localhost entry; reserving the canonical domain name for
+# the gateway bootstrap is what makes presence a meaningful signal.
+backend_apple_dns_domain_present() {
+  local out="" dom=""
+  # Regex-escape the dots once (the domain is a constant; keep it that way).
+  dom="${_DCE_HOSTS_GATEWAY_APPLE_NAME//./\\.}"
+  # The same regexes the probe has always used, now applied with [[ =~ ]] over
+  # CAPTURED output: `capture | grep -q` lets grep exit on first match and
+  # SIGPIPE the producer, which pipefail turns into a false negative (see
+  # _backend_list_contains). No pipe here, so no reader can outlive the
+  # already-finished producer.
+  local json_re="\"${dom}\.?\""
+  local row_re="^[[:space:]]*${dom}\.?([[:space:]]|$)"
+
+  if out="$(container system dns list --format json 2>/dev/null)"; then
+    if [[ "$out" =~ $json_re ]]; then
+      return 0
+    fi
+    return 1
+  fi
+
+  # Table fallback: one domain per row under a DOMAIN header; anchor to the row.
+  # bash =~ anchors ^/$ at string boundaries only, so anchor per line instead.
+  if out="$(container system dns list 2>/dev/null)"; then
+    local line=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" =~ $row_re ]]; then
+        return 0
+      fi
+    done <<< "$out"
+  fi
+  return 1
+}
+
+# Echo the canonical one-time bootstrap command that enables host-loopback
+# reachability for apple/container. Requires an administrator and mutates the
+# host (DNS domain + packet-filter rule), so dce only ever PRINTS this (doctor
+# / new-container guidance) -- never runs it. The IP is the shared gateway
+# constant from lib/common/container-hosts.sh; the two must never drift.
+backend_apple_dns_bootstrap_command() {
+  printf 'sudo container system dns create %s --localhost %s\n' \
+    "$_DCE_HOSTS_GATEWAY_APPLE_NAME" "$_DCE_HOSTS_GATEWAY_IP"
+}
+
 # Resolve, validate, and lock in the active backend.
 #
 # Honors CONTAINER_BACKEND if set (otherwise auto-detects), confirms the CLI is

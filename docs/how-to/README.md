@@ -25,6 +25,7 @@ Step-by-step recipes for specific tasks. Each guide is self-contained.
 **Networking**
 
 - [Connect containers with private networks](connect-private-networks.md) — let containers talk without publishing ports.
+- [Reach a service on the host](reach-host-services.md) — call host-side servers (dev servers, browser debug ports) from a container via `host.docker.internal`.
 - [Connect to host PostgreSQL](connect-host-postgres.md) — reach a host database securely.
 - [Map custom hostnames inside a container](custom-host-entries.md) — a per-project hosts fragment, reconciled into the container's `/etc/hosts`.
 

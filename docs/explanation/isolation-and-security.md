@@ -29,6 +29,10 @@ Even when a repo is shared, credentials (SSH deploy key, git token, `.npmrc`), h
 
 When VS Code is attached to a container, a workspace extension inside the container can open a terminal **on your host** (`workbench.action.terminal.newLocal`) and run commands in it — arbitrary code execution as your user. Microsoft treats this as by-design, and `dce` can't fix it (the command runs host-side, outside anything `dce` manages), so it's a manual tradeoff: **stock VS Code leaves your host reachable; [VSCodium blocks the command by default](https://github.com/VSCodium/vscodium/pull/2487)** ([original report](https://github.com/VSCodium/vscodium/issues/2480)). The block stops a host terminal being *opened*; one already open could still be typed into, so keep host terminals closed. See [VS Code behavior](../reference/backends.md#host-hardening-against-remote-dev-rce).
 
+### Containers can reach your host's loopback by name
+
+On every backend, a container can reach services listening on the host's `127.0.0.1` by the name `host.docker.internal` (see [reach a service on the host](../how-to/reach-host-services.md)) — with one runtime exception: docker on plain Linux without Docker Desktop, and rootless podman on Linux, cannot reach host *loopback-only* listeners this way (see [backends](../reference/backends.md#reaching-the-host-from-a-container)). This is a runtime property, not a per-project dce setting — dce does not gate it, and cannot scope it per port. The apple backend now matches the docker-family posture by default. The implication is worth stating plainly: anything running in the container can talk to **every** host loopback port — a local database, a personal API, a browser's remote-debugging port — so treat your host's loopback services as exposed to sandboxed code.
+
 ### Credential injection is explicit on restore and rotation
 
 Credential injection follows a forensics-safe rule. `dce start`, `dce shell`, and

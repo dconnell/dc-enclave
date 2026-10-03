@@ -32,11 +32,19 @@ DC Enclave targets the **latest stable release** of each backend. If you hit beh
 
 - **Podman** — tested baseline at migration: Podman 5.2.x.
 - **Colima** — use Colima with Docker runtime (`colima start --runtime docker`). If Colima is running with a non-Docker runtime (for example containerd), switch back to Docker runtime before using DC Enclave.
+- **apple/container** — use 1.5.0 or newer; 0.9.0 is the functional minimum for `host.docker.internal` support. Pre-1.5.0 versions can break container egress when the DNS host-integration domain is created/deleted — see the apple notes under [VS Code behavior by backend](#vs-code-behavior-by-backend).
 
 
 ### Platform-specific notes
 
 For per-platform install commands (Docker Desktop, OrbStack, Colima on macOS/Linux, Podman on macOS/Linux/WSL2, WSL2 buildx plugin), see [install a container backend](../how-to/install-backends.md).
+
+
+### Reaching the host from a container
+
+On every backend, a container can reach services listening on the host's `127.0.0.1` via `host.docker.internal:<port>` — all ports at once, no per-port mapping. docker/orbstack/colima provide `host.docker.internal` natively; podman provides `host.containers.internal`, which dce aliases to `host.docker.internal` at create so one name works everywhere; apple/container gets the same name through dce's host integration (see the apple notes under [VS Code behavior by backend](#vs-code-behavior-by-backend)). Recipe and worked examples: [reach a service on the host](../how-to/reach-host-services.md).
+
+One honest caveat: docker on plain Linux/WSL2 without Docker Desktop, and rootless podman on Linux, cannot reach host *loopback-only* listeners this way — that is a runtime limitation, not a dce setting. Publish the port or bind the service to an interface the runtime can route to instead.
 
 
 ## VS Code behavior by backend
@@ -90,6 +98,12 @@ apple backend:
 > dce works around this by passing `--dns 1.1.1.1 --dns 8.8.8.8` at `container create` time for apple projects. Override with the `DCE_DNS` env var (comma-separated IPs; set it empty to opt out). This only takes effect on a fresh `dce new` / `dce rebuild-container` (DNS is set at create time).
 >
 > **VPN caveat.** When a host VPN is active, apple/container's vmnet NAT may not route through the VPN interface, leaving the container with no network at all (not just no DNS). This is an apple/container networking limitation; dce cannot reconfigure host routing. Disconnect the VPN, or investigate a user-defined network (`container create --network <name>[,mac=…][,mtu=…]`) that routes differently.
+>
+> **Host integration.** apple/container automatically behaves like the docker-based backends here: `host.docker.internal` (and its alias `host.container.internal`) resolves inside every dce apple container and reaches services listening on the host's `127.0.0.1`, on any port — no flags, no config, on by default. dce injects a managed `/etc/hosts` entry (`203.0.113.113 host.docker.internal host.container.internal`) at every entry point (`new`/`start`/`shell`/`editor`/`rebuild-container`/`snapshot`/`install`), and the name resolves to a synthetic IP whose traffic apple/container redirects into the macOS host's loopback. The redirect only works after a one-time, host-global bootstrap that **you** run — dce verifies it but never runs it:
+>
+> `sudo container system dns create host.container.internal --localhost 203.0.113.113`
+>
+> Caveats: requires sudo; it is one-time and host-global (covers every apple/container project on the machine); it disables iCloud Private Relay; and the rule is removed on host restart, so re-run it after reboot. Requires apple/container ≥ 0.9.0 — 1.5.0 or newer recommended (older versions had a bug where creating/deleting the domain could break container egress). dce surfaces the state for you: `dce new` prints the bootstrap command as a notice when creating an apple project without the integration configured, and `dce doctor` checks the version gate, the domain's presence (hard failure with the exact fix command when the runtime is reachable), and live-probes the path from a running apple container — which catches the wiped-after-reboot case. See [reach a service on the host](../how-to/reach-host-services.md).
 
 - `dce new` generates `~/.config/dc-enclave/projects/<project>/devcontainer.json` (the same Dev Containers config as the Docker backends) plus the VS Code attached-container **named** config (`workspaceFolder=/workspace`)
 - `dce editor <name>` launches VS Code attached to the apple container at `/workspace` via the experimental `apple-container` URI; enable `dev.containers.experimentalAppleContainerSupport` in VS Code first or the attach will not resolve

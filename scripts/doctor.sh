@@ -253,6 +253,124 @@ _docker_context_label() {
   [[ -n "$ctx" ]] && printf ' (context: %s)' "$ctx"
 }
 
+# --- apple backend host-integration checks (host.docker.internal parity) -------
+# docker-family backends give containers host.docker.internal for free;
+# apple/container only after a CLI >= 0.9.0 AND a one-time host-global admin
+# bootstrap (DNS domain + packet-filter redirect, see
+# backend_apple_dns_bootstrap_command in lib/container-backend.sh). The
+# synthetic gateway IP is the shared constant from lib/common/container-hosts.sh
+# ($_DCE_HOSTS_GATEWAY_IP, already in scope via lib/common.sh) -- never a second
+# copy, so doctor and the staging code cannot drift.
+
+# apple/container releases before 1.5.0 reload the host packet-filter rule
+# whenever the localhost DNS domain is created or deleted, which can break
+# container egress until the host is restarted. dce never creates/deletes the
+# domain itself, so an older CLI is not a misconfiguration -- the gap is
+# surfaced as advice, not a failure (>= 0.9.0 remains the hard gate).
+readonly _DC_DOCTOR_APPLE_PF_RELOAD_FIXED_VERSION="1.5.0"
+
+# Why port 9 (discard): the live probe must distinguish "pf redirect alive"
+# (fast RST = connection refused) from "redirect missing" (packets black-holed
+# = connect hangs). A port nothing ever listens on turns that difference into a
+# pure timing signal with no dependency on any host-side service.
+readonly _DC_DOCTOR_GATEWAY_PROBE_PORT="9"
+
+# Upper bound for the black-hole case: an unredirected connect can sit in SYN
+# retries indefinitely; timeout(1) bounds "redirect missing" to ~5s. dce-base
+# is Ubuntu (coreutils + bash), so GNU timeout's rc 124 is the timeout signal.
+readonly _DC_DOCTOR_GATEWAY_PROBE_TIMEOUT_SECS="5"
+
+# shellcheck disable=SC2329
+# Invoked indirectly by name via the _check dispatcher (stderr becomes the
+# failure detail). Hard gate: without >= the minimum version the staged hosts
+# entry points at a redirect the CLI cannot create.
+_chk_apple_version() {
+  if backend_apple_version_supported; then
+    return 0
+  fi
+  printf 'apple/container CLI version could not be confirmed >= %s (host.docker.internal support); upgrade apple/container (brew upgrade container, or install the latest release)' \
+    "$_DC_APPLE_HOST_INTEGRATION_MIN_VERSION" >&2
+  return 1
+}
+
+# Informational only (never fails): recommend >= 1.5.0 to dodge the pf-reload
+# egress bug. The version parse mirrors the defensive first-dotted-numeric-token
+# parse inside backend_apple_version_supported (lib/container-backend.sh) --
+# that helper only answers yes/no, and doctor must not mutate lib/, so the one
+# regex is duplicated here with a cross-reference; an unparseable version
+# silently skips the advice rather than guessing.
+_apple_pf_reload_version_info() {
+  local raw="" version=""
+  raw="$(container --version 2>/dev/null)" || return 0
+  version="$(printf '%s\n' "$raw" | grep -Eo '[0-9]+(\.[0-9]+)+' | head -n 1)" || true
+  [[ -n "$version" ]] || return 0
+  _backend_version_at_least "$version" "$_DC_DOCTOR_APPLE_PF_RELOAD_FIXED_VERSION" && return 0
+  _info "apple/container $version < ${_DC_DOCTOR_APPLE_PF_RELOAD_FIXED_VERSION}: creating/deleting the localhost DNS domain reloads pf and can break container egress until the host restarts -- upgrading apple/container is recommended"
+}
+
+# shellcheck disable=SC2329
+# Invoked indirectly by name via the _check dispatcher (stderr becomes the
+# failure detail). Deliberate hard failure: the gateway feature is default-on
+# for apple, so a missing domain is a real misconfiguration (containers with a
+# staged hosts entry resolve host.docker.internal into a black hole), not a nit.
+_chk_apple_dns_domain() {
+  if backend_apple_dns_domain_present; then
+    return 0
+  fi
+  local cmd
+  cmd="$(backend_apple_dns_bootstrap_command)"
+  printf 'one-time host bootstrap not detected: containers cannot reach host.docker.internal (no packet-filter redirect). Run this once, per host:\n  %s\n' "$cmd" >&2
+  printf 'Caveats: requires sudo; host-global (affects every project and other container workloads); disables iCloud Private Relay while active; the rule is removed on host reboot -- re-run the command after restarting the Mac.\n' >&2
+  return 1
+}
+
+# Live probe (apple projects, running container only): can this container reach
+# the macOS host's loopback through the synthetic gateway IP? Read-only by
+# construction: a single TCP connect to the almost-certainly-closed discard
+# port. Classification:
+#   connect ok (rc 0)            -> path works (something answered) -> ok
+#   fast connection-refused      -> pf redirect forwarded into host loopback,
+#                                   which refused the closed port -> ok
+#   timeout (rc 124)             -> packets black-holed = redirect missing
+#                                   (typical after a host reboot) -> fail + hint
+#   probe could not run (127 etc.) -> skip with the reason
+_doctor_apple_gateway_probe() {  # <project>
+  local name="$1"
+  local script=""
+  # Plain redirection on `:` (NOT a bare `exec` redirection): a failed bare
+  # exec would exit the in-container shell before the marker printf, collapsing
+  # "refused" into "probe never ran". This shape fails with rc != 0 and keeps
+  # running, so every probe that actually ran emits exactly one marker, and the
+  # outer exit code stays free for timeout(1)'s 124.
+  script="if : 2>/dev/null <> '/dev/tcp/${_DCE_HOSTS_GATEWAY_IP}/${_DC_DOCTOR_GATEWAY_PROBE_PORT}'; then printf '__DCE_PROBE_RC__=0\n'; else printf '__DCE_PROBE_RC__=%s\n' \"\$?\"; fi"
+  local out="" rc=0
+  out="$(backend_exec "$name" timeout "$_DC_DOCTOR_GATEWAY_PROBE_TIMEOUT_SECS" bash -c "$script" 2>/dev/null)" && rc=0 || rc=$?
+  case "$out" in
+    *__DCE_PROBE_RC__=0*)
+      _ok "host.docker.internal path to host loopback reachable (connected)"
+      ;;
+    *__DCE_PROBE_RC__=*)
+      _ok "host.docker.internal path to host loopback reachable (fast connection-refused: redirect alive, nothing listens on port ${_DC_DOCTOR_GATEWAY_PROBE_PORT})"
+      ;;
+    *)
+      case "$rc" in
+        124)
+          local cmd
+          cmd="$(backend_apple_dns_bootstrap_command)"
+          _bad "host.docker.internal path to host loopback reachable" \
+            "connect to ${_DCE_HOSTS_GATEWAY_IP}:${_DC_DOCTOR_GATEWAY_PROBE_PORT} timed out -- the host packet-filter redirect is likely missing (common after a host reboot). Re-run the one-time bootstrap:
+  ${cmd}"
+          ;;
+        *)
+          _skip "host.docker.internal path to host loopback reachable" \
+            "probe could not run in the container (timeout/bash unavailable, exit $rc)"
+          ;;
+      esac
+      ;;
+  esac
+}
+
+
 doctor_backend() {  # <backend>
   local b="$1"
   echo ""
@@ -327,6 +445,17 @@ doctor_backend() {  # <backend>
   else
     _bad "Base image present (dce-base:latest)" \
       "dce-base:latest missing from this backend's image store (run: CONTAINER_BACKEND=$b scripts/setup.sh)"
+  fi
+
+  # apple/container host-integration checks: version gate, pf-reload advisory,
+  # and the one-time bootstrap domain. Only shown for apple; the missing-CLI
+  # and unreachable-runtime early returns above already handle an absent
+  # `container` CLI / dead runtime, so a dns-list failure here means the
+  # runtime is genuinely up and the domain is genuinely absent/unknown.
+  if [[ "$b" == "apple" ]]; then
+    _check "apple/container >= ${_DC_APPLE_HOST_INTEGRATION_MIN_VERSION} (host.docker.internal support)" _chk_apple_version
+    _apple_pf_reload_version_info
+    _check "host.docker.internal → host loopback active" _chk_apple_dns_domain
   fi
 }
 
@@ -567,6 +696,16 @@ doctor_project() {  # <name>
     # static and checked regardless of container state; runtime drift is checked
     # only when running and otherwise skipped with a clear reason.
     _doctor_extension_drift "$name" "$runtime_ready"
+
+    # apple-only live gateway probe: needs a running container to exec into.
+    # A stopped project is normal, so absence is a skip, never a failure.
+    if [[ "$pb" == "apple" ]]; then
+      if [[ "$runtime_ready" == "true" ]]; then
+        _doctor_apple_gateway_probe "$name"
+      else
+        _skip "host.docker.internal path to host loopback reachable" "container not running"
+      fi
+    fi
   fi
 }
 

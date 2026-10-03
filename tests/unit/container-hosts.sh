@@ -79,6 +79,30 @@ backend_exec_stdin_as_root() {
 
 reset_state() { : > "$ARGV_LOG"; : > "$STDIN_CAP"; LAST_SCRIPT=""; BACKEND_RC=0; ROOT_RC=""; }
 
+# Backend-aware driver cases need a loadable project config: the apple backend
+# must reconcile even without a fragment (it stages the host-gateway line), so
+# the driver resolves CONTAINER_BACKEND from the project config itself via the
+# hardened loader. DC_REPOS_DIR is pinned so the schema-v2 repo validators judge
+# the fixture paths deterministically regardless of the ambient environment.
+DC_REPOS_DIR="$WORK/repos"
+mkdir -p "$DC_REPOS_DIR"
+
+# Write a minimal valid schema-v2 config for <project> selecting <backend>.
+make_config() {  # <project> <backend>
+  local project="$1" backend="$2"
+  local cfg_dir="$HOME/.config/dc-enclave/projects/$project"
+  local repo_path="$DC_REPOS_DIR/$project"
+  mkdir -p "$cfg_dir" "$repo_path"
+  cat > "$cfg_dir/config" <<CFG
+CONTAINER_PROJECT="$project"
+CONFIG_SCHEMA_VERSION="2"
+CONTAINER_BACKEND="$backend"
+REPO_NAMES=("$project")
+REPO_PATHS=("$repo_path")
+CFG
+  chmod 600 "$cfg_dir/config"
+}
+
 # Run the generated reconciler against $WORK files, as the container root sh would.
 # The script consumes (rm's) the fragment it is given, so each replay gets its
 # own copy of $FRAG -- re-running with "the same fragment" stays honest.
@@ -348,5 +372,129 @@ cat > "$WORK/o.expected" <<'EOF'
 EOF
 cmp -s "$HOSTS" "$WORK/o.expected" || fail "stray end: file mismatch"
 pass "reconcile: stray END outside any block is dropped"
+
+# --- driver: p. apple + fragment -> fragment lines AND the gateway line --------
+# apple/container gets host-loopback reachability by staging the dce-managed
+# gateway line (TEST-NET-3 IP redirected into host loopback by the container
+# system's packet-filter rule) after the user's own lines, inside the SAME
+# managed block; the in-container reconcile script is unchanged.
+APPLE_PROJ="apple-proj"
+make_config "$APPLE_PROJ" apple
+printf '# corp hosts\n10.0.0.5 registry.corp\n' > "$(dce_project_hosts_file "$APPLE_PROJ")"
+reset_state
+dce_ensure_container_hosts "$APPLE_PROJ"
+printf '10.0.0.5 registry.corp\n203.0.113.113 host.docker.internal host.container.internal\n' \
+  > "$WORK/p.stdin.expected"
+cmp -s "$STDIN_CAP" "$WORK/p.stdin.expected" \
+  || fail "apple+fragment: staged payload is not fragment lines + gateway line
+got: $(cat "$STDIN_CAP")"
+[[ "$(grep -c '^EXEC' "$ARGV_LOG")" -eq 2 ]] \
+  || fail "apple+fragment: expected exactly two backend calls"
+[[ "$LAST_SCRIPT" == *'/etc/hosts'* ]] \
+  || fail "apple+fragment: reconcile script does not target /etc/hosts"
+pass "driver: apple + fragment -> fragment lines composed with the gateway line"
+
+# --- driver: q. apple + NO fragment -> gateway line still staged ---------------
+# The apple backend reconciles even with no user fragment: without the managed
+# gateway line its containers can never reach host-loopback services.
+APPLE_NOFRAG_PROJ="apple-nofrag"
+make_config "$APPLE_NOFRAG_PROJ" apple
+rm -f "$(dce_project_hosts_file "$APPLE_NOFRAG_PROJ")"
+reset_state
+dce_ensure_container_hosts "$APPLE_NOFRAG_PROJ"
+printf '203.0.113.113 host.docker.internal host.container.internal\n' \
+  > "$WORK/q.stdin.expected"
+cmp -s "$STDIN_CAP" "$WORK/q.stdin.expected" \
+  || fail "apple+no-fragment: gateway line not staged
+got: $(cat "$STDIN_CAP")"
+[[ "$(grep -c '^EXEC' "$ARGV_LOG")" -eq 2 ]] \
+  || fail "apple+no-fragment: expected exactly two backend calls (staging + reconcile)"
+grep -Fq "EXECSTDINROOT $APPLE_NOFRAG_PROJ sh -c cat > /tmp/.dce-hosts" "$ARGV_LOG" \
+  || fail "apple+no-fragment: gateway line not staged via root stdin exec"
+[[ "$LAST_SCRIPT" == *'/etc/hosts'* ]] \
+  || fail "apple+no-fragment: reconcile exec missing"
+pass "driver: apple + NO fragment -> gateway line staged and reconciled"
+
+# --- driver: r. non-apple + NO fragment -> strict no-op (prior contract) -------
+DOCKER_PROJ="docker-proj"
+make_config "$DOCKER_PROJ" docker
+rm -f "$(dce_project_hosts_file "$DOCKER_PROJ")"
+reset_state
+dce_ensure_container_hosts "$DOCKER_PROJ"
+if [[ -s "$ARGV_LOG" || -s "$STDIN_CAP" ]]; then
+  fail "non-apple+no-fragment: backend calls were made (contract requires zero)
+$(cat "$ARGV_LOG")"
+fi
+pass "driver: non-apple + NO fragment -> zero backend calls (exact prior behavior)"
+
+# --- driver: s. non-apple + fragment -> unchanged (no gateway line) ------------
+printf '# corp hosts\n10.0.0.5 registry.corp\n' > "$(dce_project_hosts_file "$DOCKER_PROJ")"
+reset_state
+dce_ensure_container_hosts "$DOCKER_PROJ"
+printf '10.0.0.5 registry.corp\n' > "$WORK/s.stdin.expected"
+cmp -s "$STDIN_CAP" "$WORK/s.stdin.expected" \
+  || fail "non-apple+fragment: staged payload changed
+got: $(cat "$STDIN_CAP")"
+if grep -Fq 'host.docker.internal' "$STDIN_CAP"; then
+  fail "non-apple+fragment: gateway line leaked into a docker-family stage"
+fi
+pass "driver: non-apple + fragment -> unchanged payload, no gateway line"
+
+# --- driver: t. apple + comment-only fragment -> gateway line only -------------
+# `dce new` scaffolds a comment-only fragment; apple must still net out to the
+# gateway line (the empty normalized fragment is replaced, not skipped).
+APPLE_COMMENT_PROJ="apple-comment"
+make_config "$APPLE_COMMENT_PROJ" apple
+printf '# scaffold comment\n\n' > "$(dce_project_hosts_file "$APPLE_COMMENT_PROJ")"
+reset_state
+dce_ensure_container_hosts "$APPLE_COMMENT_PROJ"
+printf '203.0.113.113 host.docker.internal host.container.internal\n' \
+  > "$WORK/t.stdin.expected"
+cmp -s "$STDIN_CAP" "$WORK/t.stdin.expected" \
+  || fail "apple+comment-only: staged payload is not exactly the gateway line
+got: $(cat "$STDIN_CAP")"
+pass "driver: apple + comment-only fragment -> exactly the gateway line"
+
+# --- driver: u. config exists but is unloadable -> degrades to non-apple -------
+# A config that EXISTS but fails the hardened loader (here: group-writable file
+# -> dce_die inside the _dce_hosts_project_backend subshell) leaves the backend
+# UNKNOWN, and "unknown" degrades to the non-apple path by design. Pin both
+# halves of that degradation:
+#   - no fragment  -> strict no-op, zero backend calls (entry continues);
+#   - fragment     -> still reconciled exactly as a non-apple project's would
+#                     be (fragment only, NO gateway line, rc 0) -- the gateway
+#                     line is never staged on an unproven apple backend.
+# In neither half may the driver abort the container entry point.
+APPLE_UNLOADABLE_PROJ="apple-unloadable"
+make_config "$APPLE_UNLOADABLE_PROJ" apple
+chmod 664 "$HOME/.config/dc-enclave/projects/$APPLE_UNLOADABLE_PROJ/config"
+UNLOADABLE_FRAG="$(dce_project_hosts_file "$APPLE_UNLOADABLE_PROJ")"
+
+rm -f "$UNLOADABLE_FRAG"
+reset_state
+rc=0
+out="$(dce_ensure_container_hosts "$APPLE_UNLOADABLE_PROJ" 2>&1)" || rc=$?
+[[ "$rc" -eq 0 ]] || fail "unloadable-config: driver must not fail the caller (rc=$rc)"
+if [[ -s "$ARGV_LOG" || -s "$STDIN_CAP" ]]; then
+  fail "unloadable-config: backend calls were made with an unknown backend and no fragment
+$(cat "$ARGV_LOG")"
+fi
+pass "driver: apple + unloadable config + NO fragment -> degrades to strict no-op"
+
+printf '# corp hosts\n10.0.0.5 registry.corp\n' > "$UNLOADABLE_FRAG"
+reset_state
+rc=0
+out="$(dce_ensure_container_hosts "$APPLE_UNLOADABLE_PROJ" 2>&1)" || rc=$?
+[[ "$rc" -eq 0 ]] || fail "unloadable-config+fragment: driver must not fail the caller (rc=$rc)"
+printf '10.0.0.5 registry.corp\n' > "$WORK/u.stdin.expected"
+cmp -s "$STDIN_CAP" "$WORK/u.stdin.expected" \
+  || fail "unloadable-config+fragment: staged payload is not the plain fragment
+got: $(cat "$STDIN_CAP")"
+if grep -Fq 'host.docker.internal' "$STDIN_CAP"; then
+  fail "unloadable-config+fragment: gateway line staged though the backend could not be proven apple"
+fi
+[[ "$(grep -c '^EXEC' "$ARGV_LOG")" -eq 2 ]] \
+  || fail "unloadable-config+fragment: expected exactly two backend calls (staging + reconcile)"
+pass "driver: apple + unloadable config + fragment -> reconciled as non-apple (no gateway line)"
 
 echo "All container-hosts checks passed."

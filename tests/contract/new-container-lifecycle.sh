@@ -14,7 +14,10 @@
 #                     secret bootstrap (perms), generated Containerfile layer
 #                     order, create argv shape (volume/port/resource order,
 #                     image positional last), devcontainer.json.
-#   dce new (apple):   managed devcontainer.json seed; no repo-local editor writes.
+#   dce new (apple):   managed devcontainer.json seed; no repo-local editor writes;
+#                     post-create host-integration notice (exact bootstrap
+#                     command + caveats when the DNS domain is absent, silence
+#                     when present, and never for docker-family backends).
 #   rebuild:          never builds; stop->delete->create->start order; create
 #                     argv parity with `dce new`; default removes hidden volumes.
 #   rebuild flags:    fail-fast on missing image (no destructive calls);
@@ -27,6 +30,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=/dev/null
 source "$ROOT_DIR/lib/common.sh"
+# shellcheck disable=SC1091  # lib include, runtime-resolved path
+source "$ROOT_DIR/lib/container-backend.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
@@ -81,6 +86,27 @@ if [[ "${1:-}" == "image" && "${2:-}" == "ls" ]]; then
 fi
 if [[ "${1:-}" == "images" ]]; then
   [[ -f "$_imgs" ]] && cat "$_imgs"
+  exit 0
+fi
+
+# apple `system dns list` (backend_apple_dns_domain_present probe): the
+# DC_STUB_APPLE_DNS_DOMAIN knob (1 = present) decides whether the one-time
+# bootstrap domain shows up, emitted in BOTH shapes the probe parses
+# (--format json bare array first, raw table fallback second).
+if [[ "$me" == "container" && "${1:-}" == "system" && "${2:-}" == "dns" && "${3:-}" == "list" ]]; then
+  if [[ "${DC_STUB_APPLE_DNS_DOMAIN:-0}" == "1" ]]; then
+    if [[ "${4:-}" == "--format" ]]; then
+      printf '["host.container.internal"]\n'
+    else
+      printf 'DOMAIN\nhost.container.internal\n'
+    fi
+  else
+    if [[ "${4:-}" == "--format" ]]; then
+      printf '[]\n'
+    else
+      printf 'DOMAIN\n'
+    fi
+  fi
   exit 0
 fi
 
@@ -709,6 +735,66 @@ grep -Fq -- "--env TZ=America/New_York" <<<"$APPLE_CREATE" \
 $APPLE_CREATE"
 
 pass "dce new (apple): managed devcontainer.json seed, no repo-local editor writes"
+
+# ===========================================================================
+# dce new (apple): post-create host-integration notice.
+#
+# apple/container only reaches host services (any port on the host's
+# 127.0.0.1) via host.docker.internal after the ONE-TIME, host-global sudo
+# bootstrap, so a create on an unbootstrapped host must point at the exact
+# command (taken from the lib helper -- never a duplicated string), the
+# caveats, and the `dce doctor` re-check. Informational only: exit 0, never
+# blocks. A configured host stays completely silent, and docker-family
+# backends (which have the name natively) get no new output at all.
+# ===========================================================================
+# The expected command comes from the lib helper itself so this test cannot
+# drift from the constant it prints.
+APPLE_BOOTSTRAP_CMD="$(backend_apple_dns_bootstrap_command)"
+[[ "$APPLE_BOOTSTRAP_CMD" == *"sudo container system dns create"* ]] \
+  || fail "fixture: bootstrap helper returned nothing usable [$APPLE_BOOTSTRAP_CMD]"
+
+# Domain absent (default stub state for the appleproj run above) -> notice on
+# stdout with the exact command + caveats + doctor pointer; the run itself
+# still exits 0 (the run_script guard above already fails on non-zero).
+grep -Fq "$APPLE_BOOTSTRAP_CMD" "$WORK/apple.stdout" \
+  || fail "apple dns absent: exact bootstrap command missing from notice
+$(cat "$WORK/apple.stdout")"
+grep -Fqi 'Private Relay' "$WORK/apple.stdout" \
+  || fail "apple dns absent: Private Relay caveat missing from notice
+$(cat "$WORK/apple.stdout")"
+grep -Eiq 'reboot|restart' "$WORK/apple.stdout" \
+  || fail "apple dns absent: reboot caveat missing from notice
+$(cat "$WORK/apple.stdout")"
+grep -Fq "dce doctor $APROJ" "$WORK/apple.stdout" \
+  || fail "apple dns absent: dce doctor re-check pointer missing from notice
+$(cat "$WORK/apple.stdout")"
+pass "dce new (apple, domain absent): notice with exact command + caveats, exit 0"
+
+# Domain present -> silent success: no bootstrap copy at all. The probe CALL in
+# the log proves the silence is the gated outcome, not a skipped probe.
+DNS_PROJ="appledns"
+: > "$LOG"
+if ! DC_STUB_APPLE_DNS_DOMAIN=1 run_script "$ROOT_DIR/scripts/new-container.sh" "$DNS_PROJ" nodejs \
+    >"$WORK/dns.stdout" 2>"$WORK/dns.stderr"; then
+  fail "dce new (apple, domain present) exited non-zero
+-- stderr:$(cat "$WORK/dns.stderr")"
+fi
+grep -Fq 'CALL container system dns list' "$LOG" \
+  || fail "apple dns present: domain probe never ran
+$(grep '^CALL' "$LOG")"
+if grep -Eqi 'Private Relay|dns create|host\.docker\.internal' "$WORK/dns.stdout"; then
+  fail "apple dns present: host already bootstrapped, must print no notice
+$(grep -Ei 'Private Relay|dns create|host\.docker\.internal' "$WORK/dns.stdout")"
+fi
+pass "dce new (apple, domain present): silent success (probe ran, no notice)"
+
+# docker-family backends resolve host.docker.internal natively -> zero new
+# output of any kind (pinned against the FIRST docker run's stdout).
+if grep -Eqi 'Private Relay|dns create|host\.docker\.internal' "$WORK/new.stdout"; then
+  fail "docker backend: must print no host-integration notice
+$(grep -Ei 'Private Relay|dns create|host\.docker\.internal' "$WORK/new.stdout")"
+fi
+pass "dce new (docker): no host-integration notice"
 
 echo ""
 echo "All new/rebuild lifecycle checks passed."

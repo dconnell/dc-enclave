@@ -16,6 +16,8 @@
 #   6. Verify hidden mounts, fix their ownership, inject SSH key + git config.
 #   7. Generate editor integration: devcontainer.json (Docker-compatible) or
 #      VS Code terminal-profile settings (apple/container).
+#   8. apple/container only: if the one-time host DNS bootstrap is missing,
+#      print an informational post-create notice (never fails, never blocks).
 # =============================================================================
 set -euo pipefail
 
@@ -983,3 +985,23 @@ echo "  dce shell $PROJECT"
 echo "  dce stop $PROJECT"
 echo "  dce start $PROJECT"
 echo "  dce status"
+
+# 8. Post-create apple/container host-integration notice (informational only,
+# printed after the success summary so it can never disturb the flow, the exit
+# code, or the summary's ordering). docker-family backends resolve
+# host.docker.internal natively, so ONLY apple projects can benefit from the
+# one-time host-global sudo bootstrap; when the DNS domain probe reports it
+# configured, the host is already bootstrapped and we print nothing at all.
+# The probe is read-only and tolerant by design (unknown == absent), and both
+# the guard and the message reuse the lib helpers so the printed command can
+# never drift from what `dce doctor` reports.
+if [[ "$ACTIVE_BACKEND" == "apple" ]] && ! backend_apple_dns_domain_present; then
+  _new_dns_cmd="$(backend_apple_dns_bootstrap_command)"
+  echo ""
+  echo "NOTE: apple/container host integration not detected (no host.docker.internal yet)."
+  echo "  Once configured (one-time, below), containers in '$PROJECT' reach host services"
+  echo "  (any port on the host's 127.0.0.1) via host.docker.internal:"
+  echo "    $_new_dns_cmd"
+  echo "  Caveats: requires sudo (one-time, host-global); disables iCloud Private Relay; removed on host restart (re-run after a reboot)."
+  echo "  Re-check any time: dce doctor $PROJECT"
+fi
