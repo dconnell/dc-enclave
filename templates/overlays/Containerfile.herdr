@@ -1,0 +1,61 @@
+# Example overlay fragment that installs Herdr.
+#
+# Copy this file to:
+# - $DC_TEAM_DIR/overlays/Containerfile.herdr
+# - or $DC_USER_DIR/overlays/Containerfile.herdr
+#
+# Then opt in as a scope (alone or layered with a language overlay):
+#
+#   dce new <project> herdr [ports...]
+#   dce new <project> golang,herdr [ports...]
+#
+# This is the pinned + checksum-verified alternative to the upstream piped
+# remote installer (`curl -fsSL https://herdr.dev/install.sh | sh`), which is
+# unreviewed, floating with the latest release, and unverified. Instead, the
+# versioned GitHub release binary is fetched over HTTPS and SHA-256-verified
+# against a pinned digest BEFORE it is installed to /usr/local/bin, the
+# system-wide default PATH for every shell including non-interactive
+# `dce exec` (same convention as Go/Node). No dependency-sync hook: this
+# overlay installs a tool only.
+#
+# The digests below were recorded at pin time from herdr.dev/latest.json and
+# are NOT fetched at build time -- a build-time digest fetch would verify
+# against whatever the server serves, defeating the pin.
+#
+# ----------------------------------------------------------------------------
+# Upgrading Herdr (bumping the pins)
+# ----------------------------------------------------------------------------
+# 1. Take the new release's linux-aarch64 and linux-x86_64 SHA-256 digests
+#    from herdr.dev/latest.json.
+# 2. Update BOTH release URLs below to the new version AND paste the two
+#    digests into HERDR_SUM -- all together, never partially.
+# 3. Rebuild the image. The `sha256sum -c -` check below fails the build if
+#    either digest is wrong, which proves the values match the release
+#    binary byte-for-byte.
+#
+# NOTE: the same pinned-install blocks live in the user's personal
+# Containerfile.all (under $DC_USER_DIR/overlays), which this repo's lint
+# cannot see -- bump BOTH places together.
+
+USER root
+
+# Multi-arch: both container arches are pinned; a mismatch fails the build fast.
+RUN set -eux; \
+    case "$(uname -m)" in \
+      aarch64) HERDR_URL="https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-aarch64"; \
+               HERDR_SUM=17d7536f2da50859523680ef279dffcac8e4a235f4e46fe8da6c2ec44141897c ;; \
+      x86_64)  HERDR_URL="https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-x86_64"; \
+               HERDR_SUM=14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d ;; \
+      *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/herdr "$HERDR_URL"; \
+    echo "${HERDR_SUM}  /tmp/herdr" | sha256sum -c -; \
+    install -m 755 /tmp/herdr /usr/local/bin/herdr; \
+    rm -f /tmp/herdr
+
+USER dev
+
+# Fail the build fast if the binary is missing or non-functional.
+RUN herdr --version
+
+WORKDIR /workspace

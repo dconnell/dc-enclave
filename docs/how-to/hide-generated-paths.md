@@ -56,4 +56,4 @@ Only `dce-hide-*` managed volumes that no longer correspond to an active project
 ## See also
 
 - [Overlays: install-on-start behavior](../reference/overlays.md#install-on-start-behavior) — how overlays auto-sync dependencies (e.g. `npm ci`) into hidden volumes on container start, including the trusted-vs-untrusted matrix.
-- [Example overlays](../../Containerfiles/example/README.md) — per-language `--hide` paths and sync commands.
+- [Example overlays](../../templates/overlays/README.md) — per-language `--hide` paths and sync commands.

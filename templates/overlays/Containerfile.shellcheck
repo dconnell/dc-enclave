@@ -18,9 +18,10 @@
 # fetched over HTTPS from the GitHub release and verified against a pinned
 # SHA256 BEFORE extraction (no `curl | bash`, no unpinned remote binary). This
 # mirrors how Containerfile.golang/rust/python pin their toolchains. The project
-# does NOT publish a checksums file or a detached signature, so the two digests
-# below are sourced directly from the release artifacts over HTTPS and pinned in
-# this file -- the same trust model as the uv overlay. Multi-arch: both the
+# does NOT publish a checksums file or a detached signature, but the GitHub
+# release API serves a per-asset sha256 `digest` for every artifact, so the two
+# digests below are cross-checked against those API digests at bump time and
+# pinned in this file -- the same trust model as the uv overlay. Multi-arch: both the
 # amd64 and arm64 digests are pinned; a mismatch fails the build fast.
 #
 # ----------------------------------------------------------------------------

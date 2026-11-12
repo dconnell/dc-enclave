@@ -4,7 +4,7 @@
 
 Keep these sources separate:
 
-1. **DC Enclave repo** (`Containerfiles/base + Containerfiles/example`, scripts, docs)
+1. **DC Enclave repo** (`Containerfiles/base` + `templates/`, scripts, docs)
 2. **team overlays source** (files synced into `$DC_TEAM_DIR/overlays`)
 3. **user overlays source** (files synced into `$DC_USER_DIR/overlays`)
 
@@ -14,7 +14,7 @@ Recommended flow:
 
 - keep `$DC_TEAM_DIR` as a git checkout of a private team root repository (overlays + recipes) and update with `git pull`
 - keep `$DC_USER_DIR` as a git checkout of your personal root repository (overlays + recipes) and update with `git pull`
-- keep the public `DC Enclave` repository focused on base image definition and reference templates under `Containerfiles/example/`
+- keep the public `DC Enclave` repository focused on base image definition and reference templates under `templates/`
 
 Example setup:
 
@@ -33,7 +33,7 @@ git -C "$DC_USER_DIR" pull --ff-only
 
 ### Overlay ownership model
 
-- `Containerfiles/example/` in this repo is for reference templates only (never auto-layered)
+- `templates/` in this repo is for reference templates only (never auto-layered)
 - `$DC_TEAM_DIR/overlays/` is for shared team overlays
 - `$DC_USER_DIR/overlays/` is for personal overlays
 

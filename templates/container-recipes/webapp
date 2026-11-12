@@ -1,0 +1,6 @@
+# Example webapp recipe: `dce new webapp` auto-loads these defaults.
+# hide= values are unprefixed so single-repo use auto-prefixes with the repo
+# name; multi-repo projects must pass repo-prefixed hides explicitly.
+scopes=golang,nodejs
+hide=node_modules
+hide=dist

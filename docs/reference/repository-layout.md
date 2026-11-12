@@ -7,14 +7,6 @@ dc-enclave/
 │   ├── ssh/
 │   │   ├── github_known_hosts        # pinned, three-channel-verified GitHub SSH host keys
 │   │   └── gitlab_known_hosts        # pinned, three-channel-verified GitLab SSH host keys
-│   ├── example/
-│   │   ├── Containerfile.nodejs        # overlay template example
-│   │   ├── Containerfile.golang        # overlay template example
-│   │   ├── Containerfile.rust          # overlay template example
-│   │   ├── Containerfile.dotnet        # overlay template example
-│   │   ├── Containerfile.python        # overlay template example
-│   │   ├── Containerfile.all           # overlay template example
-│   │   └── README.md
 │   └── generated/                      # auto-generated composed files (project overlays)
 ├── lib/
 │   ├── common.sh                       # facade: bash 4+ guard + include guard + loads common/*.sh + git-host.sh
@@ -67,12 +59,18 @@ dc-enclave/
 │   ├── rotate-token.sh                 # `dce rotate-token` (refresh PAT / regenerate SSH deploy key)
 │   ├── snapshot.sh                     # `dce snapshot` (image + volume snapshots; restore via `dce rebuild-container --from-snap`)
 │   └── provenance.sh                   # `dce provenance` (read a project's provenance log)
-├── templates/
-│   └── dotfiles/                       # starter dotfiles repo (fork for personal config)
+├── templates/                            # copy-and-modify starters; nothing here is used directly by dce
+│   ├── README.md                         # index: what to copy where (singles + patterns)
+│   ├── overlays/                         # example overlay Containerfiles (Containerfile.<scope>; details in overlays/README.md)
+│   ├── extensions/vscode/                # starter VS Code extension manifests (publisher.name per line; all.txt, nodejs.txt)
+│   ├── container-recipes/                # example container recipes (key=value, auto-loaded by container name)
+│   ├── patterns/                         # multi-file composition patterns (overlay + recipe sets)
+│   │   └── shared-browser/               # shared headless browser host: playwright overlay + client scope + recipe
+│   └── dotfiles/                         # starter dotfiles repo (fork for personal config)
 ├── tests/
 │   ├── unit/                           # pure host-side helper unit tests (lib/*.sh, in-process)
 │   ├── contract/                       # stubbed-backend functional/contract tests (fake docker/container/podman)
-│   ├── lint/                           # static analysis + policy guards (shellcheck, supply-chain, overlays)
+│   ├── lint/                           # static analysis + policy guards (shellcheck, supply-chain, overlays, templates)
 │   ├── integration/                    # real-backend end-to-end suite
 │   ├── run-all.sh                      # aggregator over the three fast tiers (unit + contract + lint)
 │   └── smoke.sh                        # lightweight command-surface smoke checks

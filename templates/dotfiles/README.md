@@ -36,7 +36,7 @@ Local path:
 
 ```json
 {
-  "dev.containers.dotfilesRepository": "/Users/YOU/.dotfiles",
+  "dev.containers.dotfilesRepository": "~/.dotfiles",
   "dev.containers.dotfilesInstallCommand": "install.sh"
 }
 ```

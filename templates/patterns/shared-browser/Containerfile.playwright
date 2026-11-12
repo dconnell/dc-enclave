@@ -1,0 +1,214 @@
+# Playwright scope: shared headless browser host for @playwright/mcp clients.
+# Overlays cannot change the base image (compose-containerfile.sh strips FROM),
+# so this builds a browser host on top of dce-base. Runs as the `playwright`
+# project container (recipe: network=playwright, memory=8g); clients on that
+# network reach the browsers over CDP at playwright:9300 (stable) and
+# playwright:9301 (canary).
+#
+# Two Chromium flavors from Playwright's pinned builds, one revision per root:
+#   stable : playwright@1.65.0                    (latest stable line)
+#   canary : playwright@1.66.0-alpha-1794252756000 (next line; newer Chromium)
+# Real Google Chrome channels are amd64-only, so these arm64-native builds
+# provide the stable-vs-bleeding-edge choice. CDP (not playwright-connect) is
+# the client protocol, so server browser pins and client @playwright/mcp pins
+# never need to stay in lockstep.
+USER root
+
+# System libraries Chromium needs, from Ubuntu's signed archive (list owned
+# by the pinned playwright release). npx works here: team/nodejs installed
+# node system-wide.
+RUN npx --yes playwright@1.65.0 install-deps chromium
+
+# Browser binaries, one flavor per root, world-readable so the dev user can
+# run what root downloaded. Inline PLAYWRIGHT_BROWSERS_PATH is build-time
+# only; no ENV leaks into runtime.
+RUN PLAYWRIGHT_BROWSERS_PATH=/ms-playwright-stable \
+        npx --yes playwright@1.65.0 install chromium \
+    && PLAYWRIGHT_BROWSERS_PATH=/ms-playwright-canary \
+        npx --yes playwright@1.66.0-alpha-1794252756000 install chromium \
+    && chmod -R go+rX /ms-playwright-stable /ms-playwright-canary
+
+# Pre-create dev-owned ~/.config: Chromium writes its crash DB under
+# $HOME/.config at runtime. If the dir is missing, a root-owned one can be
+# auto-created (e.g. by a docker bind-mount parent), which crashpad cannot
+# write and Chromium dies with SIGTRAP.
+RUN install -d -o dev -g dev /home/dev/.config
+
+USER dev
+
+# CDP relay: modern Chromium hard-binds its DevTools server to loopback
+# (127.0.0.1 or ::1, chosen per run; --remote-debugging-address is ignored
+# since ~M128), so network peers cannot reach the browser directly. Two more
+# browser-side restrictions shape this relay: DevTools rejects requests whose
+# Host header is a DNS name (DNS-rebinding protection -- only loopback/IP
+# hosts are accepted), and it echoes the client's Host header into the
+# advertised webSocketDebuggerUrl. The relay therefore listens on
+# 0.0.0.0:<port> and rewrites each client request's Host header to this
+# container's IP, which both passes validation and advertises a WS URL that
+# routes back through the relay. Node is guaranteed by the nodejs scope
+# (playwright always composes with nodejs), so no socat/nc package is added.
+# One relay process per port; net.pipe gives backpressure, and CDP (HTTP +
+# WebSocket upgrade) is byte-transparent to a TCP relay beyond the rewritten
+# Host line.
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dce-cdp-relay.js <<'RELAY_EOF'
+// dce-cdp-relay.js <listen-port> <target-port>: expose a loopback-bound
+// Chromium DevTools endpoint on 0.0.0.0:<listen-port>. Rewrites the client
+// request's Host header to <container-ip>:<listen-port> so Chromium accepts
+// it and advertises a webSocketDebuggerUrl that routes back through here.
+'use strict';
+const net = require('net');
+const os = require('os');
+
+const listenPort = Number(process.argv[2]);
+const targetPort = Number(process.argv[3]);
+if (!Number.isInteger(listenPort) || !Number.isInteger(targetPort)) {
+  console.error('usage: dce-cdp-relay.js <listen-port> <target-port>');
+  process.exit(1);
+}
+
+// Primary container IPv4, eth0 first. Used as the rewritten Host value.
+const advertiseIp = (() => {
+  const ifaces = os.networkInterfaces();
+  const pick = (addrs) =>
+    addrs && addrs.find((a) => a.family === 'IPv4' && !a.internal);
+  for (const name of Object.keys(ifaces)) {
+    const hit = pick(ifaces[name]);
+    if (hit) return hit.address;
+  }
+  return '127.0.0.1';
+})();
+
+const server = net.createServer((client) => {
+  // Chromium binds DevTools to loopback but picks IPv4 or IPv6 per run
+  // (127.0.0.1 or ::1), so try both families on every connection.
+  const targets = ['127.0.0.1', '::1'];
+  let upstream = null;
+  let raw = false; // switch to raw pipe once the request head is handled
+  let headDone = false;
+  let headBuf = Buffer.alloc(0);
+  let headOut = null;
+  let tailBuf = Buffer.alloc(0);
+
+  const teardown = () => {
+    client.destroy();
+    if (upstream) upstream.destroy();
+  };
+  client.on('error', teardown);
+
+  const flush = () => {
+    // Raw mode is entered exactly once; upstream.pipe(client) is already
+    // attached by the connect handler, so only the rewritten head and the
+    // client->upstream pipe are added here.
+    if (raw || !headDone || !upstreamConnected) return;
+    raw = true;
+    client.removeListener('data', onData);
+    upstream.write(Buffer.concat([headOut, tailBuf]));
+    client.pipe(upstream);
+  };
+
+  let upstreamConnected = false;
+  function onData(chunk) {
+    if (raw) return;
+    headBuf = Buffer.concat([headBuf, chunk]);
+    const idx = headBuf.indexOf('\r\n\r\n');
+    if (idx === -1) {
+      // HTTP request heads are tiny; a runt this big is not CDP traffic.
+      if (headBuf.length > 32768) teardown();
+      return;
+    }
+    const head = headBuf.slice(0, idx + 4).toString('latin1').replace(
+      /^Host:[^\r\n]*/im,
+      `Host: ${advertiseIp}:${listenPort}`
+    );
+    headOut = Buffer.from(head, 'latin1');
+    tailBuf = headBuf.slice(idx + 4);
+    headDone = true;
+    flush();
+  }
+  client.on('data', onData);
+
+  const connect = (i) => {
+    // localAddress pins the SOURCE to loopback: Chromium's DevTools closes
+    // WS sessions from non-loopback peers even after a 101 handshake, and
+    // the relay's egress would otherwise show the container's eth0 IP.
+    const s = net.connect({
+      port: targetPort,
+      host: targets[i],
+      localAddress: targets[i],
+    });
+    upstream = s;
+    s.once('error', (err) => {
+      // Fall back to the other loopback family; give up if both refuse.
+      if (err.code === 'ECONNREFUSED' && i + 1 < targets.length) {
+        connect(i + 1);
+        return;
+      }
+      teardown();
+    });
+    s.once('connect', () => {
+      upstreamConnected = true;
+      s.on('close', () => client.end());
+      client.on('close', () => s.end());
+      s.pipe(client); // responses are forwarded untouched
+      flush();
+    });
+  };
+  connect(0);
+});
+server.listen(listenPort, '0.0.0.0');
+RELAY_EOF
+
+# Hook chained by the composed image's ENTRYPOINT: start both headless
+# browsers with CDP ports on every container start, so `dce restart` and
+# `dce rebuild-container` self-heal the endpoints.
+RUN mkdir -p /home/dev/.local/bin && cat > /home/dev/.local/bin/dce-playwright-entrypoint.sh <<'ENTRYPOINT_EOF'
+#!/bin/sh
+set -eu
+
+log() { printf '%s\n' "[playwright-server] $*"; }
+
+# One headless Chromium per flavor. Chromium ignores --remote-debugging-
+# address and binds DevTools to loopback only (IPv4 or IPv6 per run); the
+# relay below re-exposes the port on 0.0.0.0. The browser listens on a
+# PRIVATE loopback port (external + 10000) so the relay's wildcard bind can
+# never collide with it -- relaying into its own listener would otherwise
+# self-loop. --remote-allow-origins=* is required for WS upgrades from
+# network peers (Chromium rejects cross-origin DevTools clients otherwise).
+# The dce private network is the access boundary (ports are never
+# published to the host). A dedicated user-data-dir is required for remote
+# debugging on modern Chromium and keeps state disposable in /tmp.
+launch() { # <browser-root> <external-port> <flavor>
+  # Layout differs by arch: chrome-linux (amd64) vs chrome-linux-arm64 (arm64).
+  bin="$(echo "$1"/chromium-*/chrome-linux*/chrome)"
+  if [ ! -x "$bin" ]; then
+    log "ERROR: no chromium binary under $1"
+    exit 1
+  fi
+  internal_port="$(($2 + 10000))"
+  nohup "$bin" \
+    --headless=new \
+    --remote-debugging-port="$internal_port" \
+    --remote-debugging-address=0.0.0.0 \
+    --remote-allow-origins='*' \
+    --no-sandbox \
+    --disable-dev-shm-usage \
+    --user-data-dir="/tmp/playwright-profile-$3" \
+    >"/tmp/playwright-$3.log" 2>&1 &
+  log "started $3 on internal port $internal_port (log: /tmp/playwright-$3.log)"
+}
+
+# TCP relay 0.0.0.0:<port> -> loopback:<port+10000> (see dce-cdp-relay.js).
+relay() { # <port>
+  internal_port="$(($1 + 10000))"
+  nohup node /home/dev/.local/bin/dce-cdp-relay.js "$1" "$internal_port" \
+    >"/tmp/playwright-relay-$1.log" 2>&1 &
+  log "relay 0.0.0.0:$1 -> 127.0.0.1/::1:$internal_port (log: /tmp/playwright-relay-$1.log)"
+}
+
+launch /ms-playwright-stable 9300 stable
+launch /ms-playwright-canary 9301 canary
+relay 9300
+relay 9301
+log "ready: stable=:9300 canary=:9301"
+ENTRYPOINT_EOF
+RUN chmod +x /home/dev/.local/bin/dce-playwright-entrypoint.sh

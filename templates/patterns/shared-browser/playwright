@@ -1,0 +1,3 @@
+scopes=nodejs,playwright
+network=playwright
+memory=8g
