@@ -1,3 +1,4 @@
 # Node.js-focused extensions
 esbenp.prettier-vscode
 dbaeumer.vscode-eslint
+sst-dev.opencode

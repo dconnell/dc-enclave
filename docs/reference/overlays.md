@@ -79,7 +79,7 @@ fresh volume.
 The `golang`, `rust`, `dotnet`, and `python` example overlays follow the same
 shape with their own package manager (`go mod download`, `cargo fetch`,
 `dotnet restore`, `uv sync`) and a matching `DC_<LANG>_INSTALL_STRICT=1` env.
-See `Containerfiles/example/README.md` for each overlay's `--hide` paths and
+See `templates/overlays/README.md` for each overlay's `--hide` paths and
 install command.
 
 Dependencies sync quickly and correctly, and no `node_modules` files touch your host.
@@ -90,4 +90,4 @@ Dependencies sync quickly and correctly, and no `node_modules` files touch your 
 > `golang`/`rust`/`dotnet` sync steps only download and do not run fetched code.
 > For untrusted inputs, disable install-time code with `DC_NODE_IGNORE_SCRIPTS=1`
 > or `DC_PYTHON_IGNORE_SCRIPTS=1`. See the *Trusted vs untrusted overlays*
-> section in `Containerfiles/example/README.md`.
+> section in `templates/overlays/README.md`.

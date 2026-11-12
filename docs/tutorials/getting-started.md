@@ -127,7 +127,7 @@ What scope combinations mean:
 
 Starter file note:
 
-- `Containerfiles/example/Containerfile.all` is a reference template.
+- `templates/overlays/Containerfile.all` is a reference template.
 - Copy it into `$DC_TEAM_DIR/overlays` or `$DC_USER_DIR/overlays`, then customize.
 
 After dce new:

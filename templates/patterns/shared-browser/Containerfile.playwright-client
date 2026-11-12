@@ -1,0 +1,7 @@
+# Playwright client scope: pre-warms the MCP package so agents here start
+# `npx -y @playwright/mcp@0.0.84` with no network fetch. Browsers live in the
+# shared `playwright` project container; this container needs membership on
+# the `playwright` network plus the MCP entries from dotfiles. Compose with:
+#   dce new <name> nodejs,playwright-client --network playwright
+USER dev
+RUN npx --yes @playwright/mcp@0.0.84 --version

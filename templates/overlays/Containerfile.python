@@ -22,9 +22,9 @@ ENV PATH="/home/dev/.local/bin:$PATH"
 # BOTH checksums from the matching *.sha256 assets on the release page:
 #   https://github.com/astral-sh/uv/releases/download/<ver>/uv-<triple>.tar.gz.sha256
 ARG TARGETARCH
-ARG UV_VERSION=0.11.23
-ARG UV_SHA256_ARM64=1873a77350f6621279ae1a0d2227f2bd8b67131598f14a7eb0ba2215d3da2c98
-ARG UV_SHA256_AMD64=e12c4cda2fe8c305510a78380a88f2c32a27e90cdcd123cefd2873388f0ebb5f
+ARG UV_VERSION=0.13.7
+ARG UV_SHA256_ARM64=71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc
+ARG UV_SHA256_AMD64=c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
 RUN set -eu; \
     arch="${TARGETARCH:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"; \
     case "$arch" in \

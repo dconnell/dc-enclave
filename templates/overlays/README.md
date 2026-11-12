@@ -11,31 +11,7 @@ Typical overlay workflow:
 2. Copy starter overlay fragments from this directory into one of those namespaces.
 3. Edit them for your team/personal workflow.
 
-## Extension manifests
-
-Editor extensions are declared separately from overlay `Containerfile.*` layers.
-Copy these starter manifests into your team/user extension roots:
-
-```
-$DC_TEAM_DIR/extensions/vscode/
-$DC_USER_DIR/extensions/vscode/
-```
-
-Templates shipped here:
-
-- `extensions/vscode/all.txt`
-- `extensions/vscode/nodejs.txt`
-
-Example bootstrap flow:
-
-```bash
-mkdir -p "$DC_USER_DIR/extensions/vscode"
-cp Containerfiles/example/extensions/vscode/*.txt "$DC_USER_DIR/extensions/vscode/"
-dce config sync-vscode <project>
-```
-
-Use `dce extensions diff <project>` to inspect runtime drift and
-`dce extensions capture` to curate additions back into manifests.
+Editor extension manifests: see `templates/extensions/vscode/README.md`.
 
 Supported auto-layer filenames in team/user namespaces:
 
@@ -55,7 +31,7 @@ dce-managed persistent cache volume and is rejected as a `--hide` target
 
 | Scope | Toolchain (install method) | Package manager | Install command | `--hide` paths | Strict env | Safe-mode env |
 |---|---|---|---|---|---|---|
-| `nodejs` | apt (Ubuntu archive) | npm | `npm ci` / `npm install` | `node_modules` | `DC_NODE_INSTALL_STRICT=1` | `DC_NODE_IGNORE_SCRIPTS=1` |
+| `nodejs` | apt baseline + pinned v26 tarball (SHA256 verify) | npm | `npm ci` / `npm install` | `node_modules` | `DC_NODE_INSTALL_STRICT=1` | `DC_NODE_IGNORE_SCRIPTS=1` |
 | `golang` | tarball + SHA256 verify | Go modules | `go mod download` | none (`GOMODCACHE`/`GOCACHE` live in the managed `.cache` volume) | `DC_GO_INSTALL_STRICT=1` | n/a (fetch runs no code) |
 | `rust` | rustup-init + SHA256 verify | cargo | `cargo fetch` / `--locked` | `target` | `DC_RUST_INSTALL_STRICT=1` | n/a (fetch runs no code) |
 | `dotnet` | apt (Ubuntu `main`) | NuGet (`dotnet`) | `dotnet restore` / `--locked-mode` | none (`NUGET_PACKAGES` lives in the managed `.cache` volume) | `DC_DOTNET_INSTALL_STRICT=1` | n/a (restore runs no code) |
@@ -66,6 +42,22 @@ Example:
 ```
 dce new myapp python --hide .venv 8000:8000
 dce new svc rust --hide target 8080:8080
+```
+
+## Tool overlays
+
+Non-language tool overlays — pinned, checksum-verified alternatives to the
+upstream piped installers (`curl | bash` / `curl | sh`). They install a tool
+only (no dependency-sync hook). Copy to `$DC_TEAM_DIR/overlays` or
+`$DC_USER_DIR/overlays`, then opt in as a scope, alone or layered:
+
+| File | Installs | Install method |
+|---|---|---|
+| `Containerfile.opencode` | OpenCode CLI (`/usr/local/bin/opencode`) | npm-registry platform tarball, SHA-512 verified per arch |
+| `Containerfile.herdr` | Herdr CLI (`/usr/local/bin/herdr`) | GitHub release binary, SHA-256 verified per arch |
+
+```
+dce new myapp golang,opencode 8000:8000
 ```
 
 ## Dependency-sync hooks
@@ -100,10 +92,12 @@ These templates avoid remote-script execution (no `curl | bash`). Every remote
 artifact is either installed from the signed Ubuntu archive or downloaded pinned
 and checksum-verified before use. Specifics:
 
-- **nodejs** — Node.js/npm from the Ubuntu archive via `apt`, not a NodeSource
-  setup script. The version tracks the Ubuntu 24.04 package. Pin a downloaded
-  Node binary tarball (verify its checksum) in your own overlay for a specific
-  Node line.
+- **nodejs** — `nodejs`/`npm` baseline from the Ubuntu 24.04 archive via `apt`
+  (signed; not a NodeSource setup script), shadowed on PATH by a pinned official
+  Node v26 tarball, SHA256-verified per container arch before extraction. The
+  pin standardizes Node ahead of the distro archive. Bump by updating the
+  version AND both per-arch checksums together, taken from
+  `nodejs.org/dist/<ver>/SHASUMS256.txt`.
 - **golang** — Go tarball from go.dev verified against a pinned `GO_SHA256_*`
   before extraction. Multi-arch (`TARGETARCH`); both `GO_SHA256_ARM64` and
   `GO_SHA256_AMD64` are pinned. Bump `GO_VERSION` and update both checksums or
@@ -120,9 +114,12 @@ and checksum-verified before use. Specifics:
 - **python** — Python 3.12 from the Ubuntu archive via `apt`; `uv` installed from
   a pinned GitHub release tarball verified against `UV_SHA256_*` (not the uv
   `curl | sh` installer). Multi-arch; both checksums pinned.
-- **all** — does not install opencode automatically. Opt in explicitly in your
-  own overlay (review the official installer, or install a pinned release
-  artifact and verify its checksum).
+- **all** — does not install opencode automatically (stance unchanged: no
+  piped remote installers). Opt in by copying `Containerfile.opencode` or
+  `Containerfile.herdr` from this directory into `$DC_USER_DIR/overlays` and
+  composing the `opencode`/`herdr` scope — reviewed, version-pinned,
+  checksum-verified installs (see "Tool overlays" above) — rather than
+  hand-rolling an install.
 
 ## Trusted vs untrusted overlays
 

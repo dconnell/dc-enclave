@@ -8,9 +8,9 @@ USER root
 # the host arch. When bumping GO_VERSION, update BOTH checksums to the matching
 # published values from https://go.dev/dl/ or the build fails fast.
 ARG TARGETARCH
-ARG GO_VERSION=1.22.5
-ARG GO_SHA256_ARM64=8d21325bfcf431be3660527c1a39d3d9ad71535fabdf5041c826e44e31642b5a
-ARG GO_SHA256_AMD64=904b924d435eaea086515bc63235b192ea441bd8c9b198c507e85009e6e4c7f0
+ARG GO_VERSION=1.27.4
+ARG GO_SHA256_ARM64=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92
+ARG GO_SHA256_AMD64=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
 RUN set -eu; \
     arch="${TARGETARCH:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"; \
     case "$arch" in \

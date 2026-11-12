@@ -1,0 +1,70 @@
+# Example overlay fragment that installs OpenCode.
+#
+# Copy this file to:
+# - $DC_TEAM_DIR/overlays/Containerfile.opencode
+# - or $DC_USER_DIR/overlays/Containerfile.opencode
+#
+# Then opt in as a scope (alone or layered with a language overlay):
+#
+#   dce new <project> opencode [ports...]
+#   dce new <project> golang,opencode [ports...]
+#
+# This is the pinned + checksum-verified alternative to the upstream piped
+# remote installer (`curl -fsSL https://opencode.ai/install | bash`), which is
+# unreviewed, floating with the latest release, and unverified. Instead, the
+# versioned npm-registry platform tarball (registry content is immutable per
+# version) is fetched over HTTPS and SHA-512-verified against a pinned digest
+# BEFORE extraction; the binary inside at package/bin/opencode is installed to
+# /usr/local/bin, the system-wide default PATH for every shell including
+# non-interactive `dce exec` (same convention as Go/Node). No dependency-sync
+# hook: this overlay installs a tool only.
+#
+# ----------------------------------------------------------------------------
+# Upgrading OpenCode (bumping the pins)
+# ----------------------------------------------------------------------------
+# 1. Read the new version's metadata from
+#    registry.npmjs.org/@opencode/cli-linux-<arch>/latest. The "dist.integrity"
+#    value is a base64-encoded SHA-512; convert it to lowercase hex first:
+#
+#      printf '%s' '<base64-part>' | base64 -d | xxd -p | tr -d '\n'
+#
+# 2. Update BOTH tarball URLs (arm64 and x64) to the new version AND paste the
+#    two converted digests into OC_SUM -- all together, never partially.
+# 3. Rebuild the image. The `sha512sum -c -` check below fails the build if
+#    either digest is wrong, which proves the values match the registry
+#    artifact byte-for-byte.
+#
+# NOTE: the same pinned-install blocks live in the user's personal
+# Containerfile.all (under $DC_USER_DIR/overlays), which this repo's lint
+# cannot see -- bump BOTH places together.
+#
+# Note: `opencode upgrade` cannot self-update a system-wide install; in
+# ephemeral enclave containers that is irrelevant -- bump by rebuilding.
+# (.tgz is used so no xz dependency is needed; the base image has tar+gzip.)
+
+USER root
+
+# Multi-arch: both container arches are pinned; a mismatch fails the build fast.
+RUN set -eux; \
+    case "$(uname -m)" in \
+      aarch64) OC_ARCH=arm64; \
+               OC_URL="https://registry.npmjs.org/@opencode/cli-linux-arm64/-/cli-linux-arm64-2.2.7.tgz"; \
+               OC_SUM=020c680772317b04a294fa568d4e86addc89fdd4819e39dca47a1944aecaba5f7a6e05521142ae3f00bc9d46234d35e02c7a8cfada889b030b3a5c02ba5cd2c7 ;; \
+      x86_64)  OC_ARCH=x64; \
+               OC_URL="https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.2.7.tgz"; \
+               OC_SUM=c24fc33c7c6be266a25be166429f33b685e5a3fbc2e6ab261081ec2cd68d2d92f689a2187e1caa1517ba091b02571cbe89bd2c7cad3b5f621ea45c3b6522aa35 ;; \
+      *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/opencode.tgz "$OC_URL"; \
+    echo "${OC_SUM}  /tmp/opencode.tgz" | sha512sum -c -; \
+    mkdir -p "/tmp/oc-${OC_ARCH}"; \
+    tar -xzf /tmp/opencode.tgz -C "/tmp/oc-${OC_ARCH}" package/bin/opencode; \
+    install -m 755 "/tmp/oc-${OC_ARCH}/package/bin/opencode" /usr/local/bin/opencode; \
+    rm -rf /tmp/opencode.tgz "/tmp/oc-${OC_ARCH}"
+
+USER dev
+
+# Fail the build fast if the binary is missing or non-functional.
+RUN opencode --version
+
+WORKDIR /workspace

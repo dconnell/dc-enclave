@@ -225,14 +225,20 @@ pass "CLI flags override recipe values"
 : > "$LOG"
 # --yes: the relative --repo path resolves outside the default repos root, which
 # now gates CLI entries too (plans/projects-2.md section 8).
-run_new saveteam nodejs,golang \
-  --cpus 4 --memory 8g \
-  --hide ./node_modules --hide build-cache \
-  --network app,obs --ip 10.0.0.8 \
-  --repo ./repos/saveteam \
-  3000:3000 8080 \
-  --save-team --yes \
-  >"$WORK/saveteam.out" 2>"$WORK/saveteam.err" || fail "--save-team create failed"
+# Run from $WORK: new-container.sh keeps path-shaped relative --repo values
+# $PWD-relative (dce_repo_path_resolve) and mkdir -p's the repo dir, so the
+# ./repos/saveteam fixture must be created with $WORK as the cwd -- invoked
+# from the repo root it would drop an empty repos/saveteam/ into the real repo.
+(
+  cd "$WORK" && run_new saveteam nodejs,golang \
+    --cpus 4 --memory 8g \
+    --hide ./node_modules --hide build-cache \
+    --network app,obs --ip 10.0.0.8 \
+    --repo ./repos/saveteam \
+    3000:3000 8080 \
+    --save-team --yes \
+    >"$WORK/saveteam.out" 2>"$WORK/saveteam.err"
+) || fail "--save-team create failed"
 
 [[ -f "$TEAM_REC/saveteam" ]] || fail "--save-team: missing team recipe file"
 expected_saveteam="$WORK/expected.saveteam"

@@ -7,11 +7,16 @@
 # controls; they do not change runtime behavior.
 #
 #   - No `curl|bash` (or `wget|bash`) fetch-and-execute patterns in committed
-#     Containerfiles. Scans git-tracked sources only, so the gitignored
-#     `Containerfiles/generated/` build artifacts don't make this flap.
-#     Comment lines are ignored and backslash continuations are joined first,
-#     so multi-line RUN commands are scanned whole while documentation stays
-#     free to reference the discouraged pattern.
+#     Containerfiles. The corpus is every repo-owned Containerfile template:
+#     git-tracked sources under Containerfiles/ (so the gitignored
+#     `Containerfiles/generated/` build artifacts don't make this flap) plus
+#     every `Containerfile.*` under templates/ found on the filesystem — a glob
+#     rather than git ls-files so untracked-but-present starters (new pattern
+#     dirs) are scanned too. The Containerfile.* name filter keeps README /
+#     recipe / dotfile documentation prose out of the corpus, so documentation
+#     stays free to reference the discouraged pattern. Comment lines are
+#     ignored and backslash continuations are joined first, so multi-line RUN
+#     commands are scanned whole.
 #   - `Containerfiles/Containerfile.base` FROM line must pin ubuntu:24.04 by a
 #     `@sha256:` digest rather than a mutable tag.
 # =============================================================================
@@ -28,11 +33,25 @@ pass() {
   echo "PASS: $*"
 }
 
-# Only committed templates count as build inputs we control; generated/ is a
-# gitignored build artifact and is intentionally excluded.
-mapfile -t CONTAINERFILES < <(git -C "$ROOT_DIR" ls-files 'Containerfiles/*' | grep -Ei '(^|/)Containerfile\.' || true)
+# Corpus: every repo-owned Containerfile template we control.
+#   - Tracked sources under Containerfiles/ keep their existing coverage;
+#     gitignored generated/ artifacts are excluded by construction.
+#   - Copy-and-modify starters are globbed from the real tree (sorted for a
+#     deterministic corpus), so untracked-but-present files (e.g. a pattern dir
+#     not yet committed) are scanned too; paths are made repo-relative to match
+#     the git ls-files output the offender report prefixes with $ROOT_DIR.
+mapfile -t TRACKED_CFS < <(git -C "$ROOT_DIR" ls-files 'Containerfiles/*' | grep -Ei '(^|/)Containerfile\.' || true)
 
-[[ ${#CONTAINERFILES[@]} -gt 0 ]] || fail "no tracked Containerfiles found to scan"
+TEMPLATE_CFS=()
+if [[ -d "$ROOT_DIR/templates" ]]; then
+  while IFS= read -r cf; do
+    TEMPLATE_CFS+=("${cf#"$ROOT_DIR/"}")
+  done < <(find "$ROOT_DIR/templates" -type f -name 'Containerfile.*' | sort)
+fi
+
+CONTAINERFILES=("${TRACKED_CFS[@]}" "${TEMPLATE_CFS[@]}")
+
+[[ ${#CONTAINERFILES[@]} -gt 0 ]] || fail "no Containerfile templates found to scan"
 
 # Collapse backslash line-continuations into single logical lines, then drop
 # comment lines. A comment is never executed, so it is not a supply-chain risk;

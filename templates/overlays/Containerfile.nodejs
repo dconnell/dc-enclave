@@ -3,12 +3,34 @@ FROM dce-base:latest
 USER root
 
 # Install Node.js from the Ubuntu archive (signed apt repo) instead of piping a
-# remote setup script into a shell. Ubuntu 24.04 ships a usable nodejs/npm; pin
-# a specific version in your own overlay if you need newer than the distro.
+# remote setup script into a shell. Ubuntu 24.04 ships a usable nodejs/npm; the
+# pinned tarball below standardizes the version ahead of the distro.
 RUN apt-get update && apt-get install -y \
         nodejs \
         npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Standardize on Node 26 LTS ahead of Ubuntu 24.04's archive Node 18: pinned
+# official tarball + SHA256 (both container arches) installed to /usr/local,
+# which shadows the archive node on PATH. Same pinned-tarball+checksum
+# pattern the enclave documents for opencode. Bump by updating the version
+# AND both checksums together (nodejs.org/dist/<ver>/SHASUMS256.txt).
+RUN set -eux; \
+    case "$(uname -m)" in \
+      aarch64) NODE_ARCH=arm64; SUM=406fe3fbde1c054adff8b297c16fdb5af6659db327c1ac8acd46b56ef1af9a92 ;; \
+      x86_64)  NODE_ARCH=x64;   SUM=d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997 ;; \
+      *) echo "unsupported arch $(uname -m)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-${NODE_ARCH}.tar.xz"; \
+    echo "${SUM}  /tmp/node.tar.xz" | sha256sum -c -; \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1; \
+    rm /tmp/node.tar.xz
+
+# npx at build time needs the NPM_CONFIG_PREFIX dir (set below) to exist --
+# npm fails with ENOENT lstat otherwise, and nothing creates it until
+# runtime. Any overlay composed with nodejs that shells out to npx at build
+# time (e.g. tool-installer overlays) depends on this.
+RUN install -d -o dev -g dev /home/dev/.npm-global/lib
 
 USER dev
 
