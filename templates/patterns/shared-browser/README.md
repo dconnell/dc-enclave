@@ -18,11 +18,35 @@ layer per project).
 | `Containerfile.playwright` | `$DC_USER_DIR/overlays/` | Browser host overlay; auto-applies to the `playwright` scope. |
 | `Containerfile.playwright-client` | `$DC_USER_DIR/overlays/` | Thin client overlay; auto-applies to the `playwright-client` scope. |
 | `playwright` | `$DC_USER_DIR/container-recipes/` | Recipe. The filename IS the container name — `dce new playwright` reads it. |
+| `files/dce-cdp-relay.js` | embedded at compose time | Readable source of the CDP relay script the overlay installs at `/home/dev/.local/bin/dce-cdp-relay.js`. |
+| `files/dce-playwright-entrypoint.sh` | embedded at compose time | Readable source of the startup hook the overlay installs at `/home/dev/.local/bin/dce-playwright-entrypoint.sh`. |
+
+## Embedded scripts: DC-EMBED
+
+The relay and entrypoint scripts are not inlined in `Containerfile.playwright`;
+the overlay carries `# DC-EMBED:` directives and
+`scripts/compose-containerfile.sh` embeds the `files/` sources (gzip+base64)
+when it composes the image. This is forced by two compose rules:
+
+- apple/container rejects a composed Dockerfile larger than **16,384 bytes**,
+  and compose prepends a ~1.6KB provenance header on top of every fragment.
+- Overlays cannot use `COPY`/`ADD` (fragments must stay context-free), so the
+  scripts cannot ship as separate build-context files.
+
+To change the relay or entrypoint, edit `files/dce-cdp-relay.js` or
+`files/dce-playwright-entrypoint.sh` directly — there is nothing to
+regenerate; the next `dce rebuild-image` picks the edit up (the provenance
+content hash folds the embedded sources, so no stale image is reused). Copy
+the `files/` directory into `$DC_USER_DIR/overlays/` alongside the overlay:
+embed sources resolve relative to the overlays directory the fragment lives in
+(see [overlays reference](../../../docs/reference/overlays.md), "Embedding
+files").
 
 ## Instantiate
 
 ```
 cp Containerfile.playwright Containerfile.playwright-client "$DC_USER_DIR/overlays/"
+cp -R files "$DC_USER_DIR/overlays/"   # DC-EMBED sources for the playwright overlay
 cp playwright "$DC_USER_DIR/container-recipes/"
 dce network create playwright
 dce new playwright          # recipe auto-applies: scopes, network, memory=8g
@@ -69,7 +93,7 @@ network, configure the MCP client. For OpenCode, merge this into
   on every container start, so `dce restart` and `dce rebuild-container` bring
   the CDP ports back without manual steps.
 - Browser updates: bump the two playwright pins (stable + canary) in
-  `Containerfile.playwright` and rebuild.
+  `Containerfile.playwright`, and rebuild.
 - Size the recipe `memory=` for peak concurrent sessions — every client tab
   shares this one container's budget.
 

@@ -24,8 +24,76 @@ Preferred day-to-day tools (for example `tree`, `rg`, `fzf`, `psql`, custom CLIs
 ## Overlay contract
 
 - Treated as Dockerfile fragments layered on top of `dce-base`
-- `FROM` and `CMD` are ignored during composition
+- `FROM` (first line only), `CMD`, and `ENTRYPOINT` lines are ignored during
+  composition — except inside heredoc bodies, where they are script data and
+  are preserved verbatim
 - `COPY` and `ADD` are not allowed (to avoid external build-context coupling)
+- `# DC-EMBED:` comment lines embed a file into the image at compose time (see below)
+- Composed output is a machine artifact: comment lines and blank lines are
+  stripped from fragments at compose time (to help stay under apple/container's
+  16,384-byte cap), so keep documentation in the fragment — it stays fully
+  readable and is never committed downstream. Heredoc bodies are exempt: a `#`
+  inside a heredoc is script content, and every body line (including
+  `FROM`/`CMD`/`ENTRYPOINT`-looking lines) is preserved byte-for-byte until the
+  terminator. Delimiters may be quoted or bare and may contain letters,
+  digits, `.`, `_`, `-` (e.g. `<<'EOF.V2'`, `<<EOF-2`). A heredoc still open at
+  the end of a fragment draws a non-fatal compose warning naming the fragment
+  and the delimiter — that catches a terminator typo as well as a `<<` that
+  was never a heredoc (a bit-shift like `$((1<<2))` or a `<<<` here-string).
+
+## Embedding files: `# DC-EMBED:`
+
+apple/container refuses to build a Dockerfile larger than 16,384 bytes, and
+overlay fragments cannot use `COPY`/`ADD` (they must stay free of any external
+build context). To ship a script in an overlay — an entrypoint hook, a small
+relay, a wrapper — without inlining it as readable text, put a directive
+comment line in the fragment:
+
+```
+# DC-EMBED: <src> <dest> [mode]
+```
+
+- `<src>` is relative to the fragment's own `overlays/` directory (e.g.
+  `files/dce-relay.js`, living next to `Containerfile.<scope>`). Absolute paths
+  and any `..` component are rejected, the file must exist, and the path must
+  still resolve inside the overlays directory when all symlinks are followed
+  (a symlinked `files/` entry pointing outside it is rejected) — otherwise
+  compose fails with an error naming the fragment and the path.
+- `<dest>` is an absolute path inside the image. Keep it to letters, digits and
+  `. _ / @ + -`: it is interpolated verbatim into a RUN command.
+- `[mode]` is an optional octal permission (e.g. `0755`); the default is
+  `0644`.
+
+At compose time each directive is rewritten into a self-contained pair of
+lines in the generated Containerfile:
+
+```
+# DC-EMBED <src> -> <dest> (compressed; source: <overlays-dir>/<src>)
+RUN printf '%s' '<base64>' | base64 -d | gunzip > <dest> && chmod <mode> <dest>
+```
+
+The source is compressed with `gzip -n` (no timestamp/name in the header) and
+encoded with single-line `base64`, so composing the same overlays twice on the
+same machine yields a byte-identical Containerfile. (GNU and BSD `gzip`/`base64`
+may produce different bytes for the same input, so byte-for-byte reproducibility
+is only claimed for repeated composes on one machine.) The readable source stays
+next to the fragment and nothing generated is committed — one source of truth,
+no generated-file drift.
+
+Notes:
+
+- The emitted RUN needs `gzip` and `base64` at image build time. `dce-base`
+  (ubuntu:24.04) ships both; if the base image ever changes, keep them.
+- The destination's parent directory must already exist when the RUN executes
+  (add your own `RUN mkdir -p ...` before the directive if needed); the
+  directive deliberately does not bundle a `mkdir`.
+- Multiple `# DC-EMBED:` lines per fragment are allowed and are emitted in
+  file order. Directives are rewritten before comment stripping, so their
+  emitted marker comment and decode RUN always survive in the composed file
+  even though the directive line itself is a comment in the source.
+- Editing a `<src>` file changes the image's provenance content hash (the v2
+  hash folds every embedded source, see
+  [Provenance](provenance.md)), so a rebuild never reuses a stale image.
 
 ## Editor extension manifests
 

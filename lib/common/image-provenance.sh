@@ -13,6 +13,17 @@
 # core.sh (dce_sha256_hex, dce_sha256_file) and scopes.sh (for the dedup
 # recomputation in dce_log_provenance).
 #
+# This module also hosts the DC-EMBED directive helpers
+# (dce_embed_line_is_directive / dce_embed_src_is_safe /
+# dce_embed_directive_args / dce_embed_src_within_dir): the single source of
+# truth for the directive's line syntax and path-safety rules (textual and
+# symlink resolution), shared by the v2 content hash here and the compose-time
+# rewrite in scripts/compose-containerfile.sh. The fragment-walking heredoc
+# tracker (dce_embed_heredoc_*) and the FROM/CMD/ENTRYPOINT strip rule
+# (dce_fragment_line_is_stripped) live here too, so every fragment scanner --
+# the v2 content hash below and compose's emitter/validator -- classifies
+# lines identically.
+#
 # Named image-provenance.sh (not provenance.sh) to avoid visual collision with
 # the unrelated scripts/provenance.sh CLI subcommand.
 # =============================================================================
@@ -84,20 +95,268 @@ dce_label_scrub() {
   printf '%s' "$out"
 }
 
+# ---------------------------------------------------------------------------
+# DC-EMBED directive helpers.
+#
+# An overlay fragment may carry comment lines of the form
+#   # DC-EMBED: <src> <dest> [mode]
+# which scripts/compose-containerfile.sh rewrites into a self-contained RUN
+# that decodes a gzip+base64 blob into <dest> (see docs/reference/overlays.md).
+# The provenance hash must fold the bytes of every referenced <src> (the v2
+# scheme below), or editing an embedded file would leave the fingerprint (and
+# thus the image tag/labels) unchanged and a rebuild would reuse a stale
+# image. These three helpers are the single source of truth for the directive
+# syntax and path-safety rule, used by both this module and compose.
+# ---------------------------------------------------------------------------
+
+# Whether $1 is a DC-EMBED directive line. Sets BASH_REMATCH[1] to the
+# directive's argument portion ("<src> <dest> [mode>") when it returns 0.
+dce_embed_line_is_directive() {
+  local line="$1"
+  [[ "$line" =~ ^[[:space:]]*#[[:space:]]*DC-EMBED:[[:space:]]*(.*)$ ]]
+}
+
+# Whether $1 is a valid <src> for a DC-EMBED directive: non-empty, relative
+# (no leading /), and free of `..` path components, so it cannot escape the
+# fragment's overlays directory. Shared by compose validation and the v2
+# content hash so both agree on which sources are in scope.
+dce_embed_src_is_safe() {
+  local src="$1"
+  [[ -n "$src" && "$src" != /* ]] || return 1
+
+  local -a comps=()
+  local IFS='/'
+  read -r -a comps <<< "$src"
+  local comp=""
+  for comp in "${comps[@]}"; do
+    if [[ "$comp" == ".." ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Heredoc-body tracking + FROM/CMD/ENTRYPOINT strip rule for fragment walks.
+#
+# Every consumer that walks an overlay fragment line by line must classify
+# lines identically or a fragment could compose differently than it hashes:
+# compose-containerfile.sh copies heredoc bodies byte-for-byte (a
+# '#'/FROM/CMD/ENTRYPOINT there is script data, not Containerfile syntax) and
+# never rewrites a directive inside one, and the v2 content hash must fold
+# only the directives compose would actually rewrite. So the heredoc tracker
+# and the strip rule live here, and both walkers call exactly these helpers.
+#
+# A body opens on a line containing `<<`, an optional `-`, optional
+# whitespace, then a delimiter that is single-quoted, double-quoted, or bare
+# and drawn from [A-Za-z0-9._-] (covering legal shell delimiters beyond the
+# obvious word forms, e.g. EOF.V2 or EOF-2). The LAST opener on a line wins
+# (`cat <<A <<B` waits for B). A body ends at the delimiter alone on a line;
+# leading whitespace counts only for the `<<-` form. Known limitation
+# (adequate for real fragments): a `<<<` here-string or a bit-shift like
+# `$((1<<2))` can be misread as an opener -- compose warns (non-fatally) when
+# a body reaches fragment end unclosed, which surfaces such false openers.
+# ---------------------------------------------------------------------------
+
+# Heredoc opener regex: `<<`, optional `-`, optional whitespace, then an
+# optionally quoted delimiter from [A-Za-z0-9._-] (groups: 1 = `-` flag,
+# 3/4/5 = quoted/bare delimiter).
+declare -r DC_EMBED_HD_OPEN_RE="<<(-)?[[:space:]]*(\"([A-Za-z0-9._-]+)\"|'([A-Za-z0-9._-]+)'|([A-Za-z0-9._-]+))"
+
+# Tracking state (module globals; fragment walks are strictly sequential).
+DCE_HD_OPEN=0    # 1 while inside a heredoc body
+DCE_HD_INDENT=0  # opener used `<<-`: indented terminator tolerated
+DCE_HD_DELIM=""  # delimiter of the tracked (last) heredoc on a line
+
+# Reset heredoc tracking state before walking a fresh fragment.
+dce_embed_heredoc_reset() {
+  DCE_HD_OPEN=0
+  DCE_HD_INDENT=0
+  DCE_HD_DELIM=""
+}
+
+# Feed one line that is NOT inside a heredoc body to the tracker. Scans to the
+# end of the line so the last opener wins when several share a line.
+dce_embed_heredoc_track() {
+  local scan="$1"
+  while [[ "$scan" =~ $DC_EMBED_HD_OPEN_RE ]]; do
+    DCE_HD_INDENT=0
+    [[ "${BASH_REMATCH[1]}" == "-" ]] && DCE_HD_INDENT=1
+    DCE_HD_DELIM="${BASH_REMATCH[3]:-${BASH_REMATCH[4]:-${BASH_REMATCH[5]}}}"
+    DCE_HD_OPEN=1
+    scan="${scan#*"${BASH_REMATCH[0]}"}"
+  done
+}
+
+# Whether $1 terminates the currently tracked heredoc: the delimiter alone,
+# or (only after a `<<-` opener) the delimiter following leading whitespace.
+# Both comparisons are literal -- the delimiter is data, never a pattern --
+# so a delimiter like EOF.V2 cannot be mis-matched as a regex would.
+dce_embed_heredoc_terminator() {
+  [[ "$1" == "$DCE_HD_DELIM" ]] && return 0
+  (( DCE_HD_INDENT )) || return 1
+  [[ "$1" =~ ^[[:space:]]+([A-Za-z0-9._-]+)$ && "${BASH_REMATCH[1]}" == "$DCE_HD_DELIM" ]]
+}
+
+# Whether $1 (a fragment line) is stripped from fragment content: FROM on the
+# fragment's very first line, or any CMD/ENTRYPOINT line. Matching is the
+# first whitespace-separated word, case-insensitive, with leading whitespace
+# ignored -- the awk pre-pass semantics (`NR == 1 && toupper($1) == "FROM"`,
+# `toupper($1) == "CMD"`, ...) that this walker replaces. The rule applies
+# ONLY outside heredoc bodies; callers must check DCE_HD_OPEN first. Compose
+# drops such lines; directive scanners skip them (and their heredoc openers)
+# to mirror compose exactly -- e.g. `CMD cat <<'EOF'` must not open a body
+# for a scanner when compose never sees that `<<` (the CMD line is stripped).
+dce_fragment_line_is_stripped() {
+  local line="$1"
+  local lineno="$2"
+  local -a words=()
+
+  read -r -a words <<< "$line"
+  (( ${#words[@]} > 0 )) || return 1
+  case "${words[0]}" in
+    [Ff][Rr][Oo][Mm])
+      (( lineno == 1 )) || return 1
+      return 0
+      ;;
+    [Cc][Mm][Dd] | [Ee][Nn][Tt][Rr][Yy][Pp][Oo][Ii][Nn][Tt])
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Symlink-containment helpers for DC-EMBED <src> paths.
+# ---------------------------------------------------------------------------
+
+# Resolve a path to its physical absolute location (portable macOS/Linux: no
+# realpath / `readlink -f` dependency). Every directory component is resolved
+# via `cd` + `pwd -P`, and a symlinked final component is followed repeatedly,
+# so chained links, relative link targets, and `..` targets are all resolved
+# physically. Prints the resolved path; returns non-zero when the path cannot
+# be resolved (missing parent, dangling link) or a link loop is hit (bounded,
+# so `ln -s a a` cannot hang the caller).
+dce_path_resolve_physical() {
+  local path="$1"
+  local dir="" base="" target=""
+  local hops=0
+
+  case "$path" in
+    /*) : ;;
+    *) path="$PWD/$path" ;;
+  esac
+
+  while :; do
+    hops=$((hops + 1))
+    if (( hops > 40 )); then
+      return 1
+    fi
+    dir="$(dirname "$path")"
+    base="$(basename "$path")"
+    if ! dir="$(cd "$dir" 2>/dev/null && pwd -P)"; then
+      return 1
+    fi
+    if [[ ! -e "$dir/$base" && ! -L "$dir/$base" ]]; then
+      return 1
+    fi
+    if [[ ! -L "$dir/$base" ]]; then
+      printf '%s/%s\n' "$dir" "$base"
+      return 0
+    fi
+    target="$(readlink "$dir/$base")"
+    case "$target" in
+      /*) path="$target" ;;
+      *) path="$dir/$target" ;;
+    esac
+  done
+}
+
+# Whether the DC-EMBED <src> $2, resolved physically (all symlinks followed),
+# lands inside directory $1. Complements the textual dce_embed_src_is_safe
+# rule, which cannot see a symlinked files/ entry pointing outside the
+# overlays dir. Compose calls this at validate time and dies when it fails,
+# so an escaping overlay can never reach the composed file.
+dce_embed_src_within_dir() {
+  local overlays_dir="$1"
+  local src="$2"
+  local resolved_dir="" resolved_src=""
+
+  if ! resolved_dir="$(cd "$overlays_dir" 2>/dev/null && pwd -P)"; then
+    return 1
+  fi
+  if ! resolved_src="$(dce_path_resolve_physical "$overlays_dir/$src")"; then
+    return 1
+  fi
+  [[ "$resolved_src" == "$resolved_dir"/* ]]
+}
+
+# Print the raw argument portion of every DC-EMBED directive in $1, one per
+# line, in file order. Lenient by design: lines that merely look like
+# directives are surfaced; the caller decides whether to validate strictly
+# (compose-containerfile.sh, which dies) or skip best-effort
+# (dce_provenance_content_hash, which must never fail a build).
+#
+# Heredoc-aware, and mirroring compose's emit_fragment line classification
+# exactly (body -> strip rule -> directive -> comment/blank -> opener
+# tracking, via the same shared helpers): a directive-looking line inside a
+# heredoc body is script data that compose copies verbatim and never
+# rewrites, so it is not surfaced -- folding its source into the content hash
+# would make the fingerprint react to bytes that never reach the image as an
+# embed.
+dce_embed_directive_args() {
+  local fragment="$1"
+  local line=""
+  local lineno=0
+  dce_embed_heredoc_reset
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$((lineno + 1))
+    if (( DCE_HD_OPEN )); then
+      dce_embed_heredoc_terminator "$line" && DCE_HD_OPEN=0
+      continue
+    fi
+    if dce_fragment_line_is_stripped "$line" "$lineno"; then
+      continue
+    fi
+    if dce_embed_line_is_directive "$line"; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      continue
+    fi
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    dce_embed_heredoc_track "$line"
+  done < "$fragment"
+}
+
 # Per-side content fingerprint for a set of EFFECTIVE scopes. Iterates the
 # canonical order (all first, then listed scopes -- exactly what composes) and,
 # for each existing fragment under $overlays_dir (the resolved leaf overlays/
-# directory of one root), folds "v1|<scope>|<sha256(file bytes)>" into the hash
-# input. Returns empty when the side contributes no fragment for these scopes
-# (e.g. that side has no Containerfile.<scope>). The 12-hex truncation matches
-# the label contract; the per-fragment "v1" prefix leaves room to evolve the
-# scheme.
+# directory of one root), folds "v2|<scope>|<sha256(file bytes)>" into the hash
+# input.
+#
+# The v2 scheme additionally folds every DC-EMBED source the fragment
+# references, as "embed:<src>|<sha256(src bytes)>": the directive embeds the
+# file's bytes into the image, so editing that source without touching the
+# fragment must still change the fingerprint, or a rebuild would reuse a stale
+# image whose embedded copy predates the edit. The prefix was bumped v1 -> v2
+# because the input scheme changed (and old fingerprints must not collide with
+# new ones). Sources are resolved relative to $overlays_dir and folded only
+# when they are safe (dce_embed_src_is_safe) and exist -- lenient by design,
+# since an invalid directive is a compose-time fatal error and provenance must
+# never fail a build. Directives are surfaced heredoc-aware
+# (dce_embed_directive_args), so only directives compose actually rewrites are
+# folded.
+#
+# Returns empty when the side contributes no fragment for these scopes (e.g.
+# that side has no Containerfile.<scope>). The 12-hex truncation matches the
+# label contract; the per-fragment version prefix leaves room to evolve the
+# scheme further.
 dce_provenance_content_hash() {
   local overlays_dir="$1"
   local effective_scopes_csv="$2"
 
   local acc=""
-  local scope="" file=""
+  local scope="" file="" args="" src="" src_path=""
   local -a scopes=()
   [[ -n "$effective_scopes_csv" ]] && IFS=',' read -r -a scopes <<< "$effective_scopes_csv"
 
@@ -105,7 +364,19 @@ dce_provenance_content_hash() {
     [[ -n "$scope" ]] || continue
     file="$overlays_dir/Containerfile.$scope"
     [[ -f "$file" ]] || continue
-    acc+="v1|$scope|$(dce_sha256_file "$file")|"
+    acc+="v2|$scope|$(dce_sha256_file "$file")|"
+    # Fold each DC-EMBED source the fragment references (file order). Skip --
+    # never fail -- on anything unusable: see the doc comment above.
+    while IFS= read -r args || [[ -n "$args" ]]; do
+      src="${args%%[[:space:]]*}"
+      [[ -n "$src" ]] || continue
+      if ! dce_embed_src_is_safe "$src"; then
+        continue
+      fi
+      src_path="$overlays_dir/$src"
+      [[ -f "$src_path" ]] || continue
+      acc+="embed:$src|$(dce_sha256_file "$src_path")|"
+    done < <(dce_embed_directive_args "$file")
   done
 
   [[ -n "$acc" ]] || return 0
