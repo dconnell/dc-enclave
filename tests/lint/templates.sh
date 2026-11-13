@@ -19,10 +19,20 @@
 #      templates/patterns/*/ that is not a Containerfile.*, README*, or
 #      dotfile must parse with dce_recipe_parse_file — the same fail-closed
 #      parser/validators `dce new --config` uses. Scope names in templates are
-#      only syntax-checked here (existence lives in the user's roots).
+#      only syntax-checked here (existence lives in the user's roots). Only
+#      top-level regular files are candidates, so a pattern's files/ dir
+#      (DC-EMBED sources: *.js, *.sh) is never misparsed as a recipe.
 #   3. Extension manifest grammar: non-blank, non-comment lines in
 #      templates/extensions/vscode/*.txt are publisher.name identifiers
 #      (editor extensions are synced from these manifests verbatim).
+#   4. Shared-browser pattern structure: the overlay carries DC-EMBED
+#      directives (its relay/entrypoint scripts embed at compose time from
+#      files/, keeping the fragment small — apple/container caps a composed
+#      Dockerfile at 16,384 bytes and overlays cannot COPY). The directives
+#      must resolve to real sources next to the overlay, install the expected
+#      paths/modes, and the browser pins must live in the overlay itself.
+#      Actual embed round-tripping is exercised by the compose in check 1 and
+#      tests/contract/compose-layering.sh.
 # =============================================================================
 set -euo pipefail
 
@@ -84,6 +94,12 @@ for cf in "${compose_targets[@]}"; do
     printf 'DC_USER_DIR="%s"\n' "$t/root/user"
   } > "$t/home/.config/dc-enclave/config"
   cp "$cf" "$t/root/team/overlays/Containerfile.$scope"
+  # DC-EMBED sources resolve relative to the overlays dir the fragment lives
+  # in, so a pattern overlay's files/ dir must be installed alongside it for
+  # the compose to succeed (mirrors the README's copy instructions).
+  if [[ -d "$(dirname "$cf")/files" ]]; then
+    cp -R "$(dirname "$cf")/files" "$t/root/team/overlays/files"
+  fi
 
   if ! HOME="$t/home" bash "$COMPOSE" "$t/out.Containerfile" "$scope" \
       >"$t/compose.stdout" 2>"$t/compose.stderr"; then
@@ -140,7 +156,7 @@ fi
 for rf in "${recipe_candidates[@]}"; do
   base="$(basename "$rf")"
   case "$base" in
-    Containerfile.*|README*|.*) continue ;;  # overlays/README/dotfiles are not recipes
+    Containerfile.*|README*|.*|*.sh) continue ;;  # overlays/README/dotfiles/shell scripts are not recipes
   esac
   rel="${rf#"$TEMPLATES"/}"
   if dce_recipe_parse_file single "$rf" >"$WORK/recipe.out" 2>"$WORK/recipe.err"; then
@@ -176,6 +192,55 @@ for mf in "${manifests[@]}"; do
   done < "$mf"
   [[ "$bad" -eq 0 ]] && pass "manifest grammar: $rel"
 done
+
+# --- (4) shared-browser pattern structure --------------------------------------
+# No generated artifact: Containerfile.playwright carries DC-EMBED directives
+# and its readable relay/entrypoint sources live in files/ (embedded at compose
+# time — apple/container caps a composed Dockerfile at 16,384 bytes and
+# overlays cannot COPY; check 1 composes the overlay for real). Guard the
+# structure so a broken copy of the pattern fails here with a clear message:
+#   a. The overlay and both embedded sources exist.
+#   b. The expected directives are present, installing the documented
+#      destinations (relay 0644 — it runs via `node <path>`; entrypoint 0755 —
+#      it is exec'd by the composed ENTRYPOINT chain).
+#   c. Every DC-EMBED src resolves to a regular file next to the overlay
+#      (what compose enforces at compose time, checked locally here).
+#   d. The browser pins stay in the overlay itself (the ops note "bump the two
+#      playwright pins in Containerfile.playwright" depends on this).
+sb="$TEMPLATES/patterns/shared-browser"
+sb_cf="$sb/Containerfile.playwright"
+if [[ ! -f "$sb_cf" ]]; then
+  fail "shared-browser structure: expected $sb_cf to exist"
+elif [[ ! -f "$sb/files/dce-cdp-relay.js" || ! -f "$sb/files/dce-playwright-entrypoint.sh" ]]; then
+  fail "shared-browser structure: expected files/dce-cdp-relay.js and files/dce-playwright-entrypoint.sh next to the overlay"
+else
+  for want in \
+    '# DC-EMBED: files/dce-cdp-relay.js /home/dev/.local/bin/dce-cdp-relay.js' \
+    '# DC-EMBED: files/dce-playwright-entrypoint.sh /home/dev/.local/bin/dce-playwright-entrypoint.sh 0755'; do
+    if grep -Fxq "$want" "$sb_cf"; then
+      pass "shared-browser structure: directive present: $want"
+    else
+      fail "shared-browser structure: directive missing: $want"
+    fi
+  done
+
+  unresolved=0
+  while IFS= read -r src; do
+    if [[ ! -f "$sb/$src" ]]; then
+      fail "shared-browser structure: DC-EMBED src '$src' does not resolve next to the overlay"
+      unresolved=1
+    fi
+  done < <(sed -n 's/^# DC-EMBED: \([^ ]\+\) .*/\1/p' "$sb_cf")
+  [[ "$unresolved" -eq 0 ]] && pass "shared-browser structure: every DC-EMBED src resolves next to the overlay"
+
+  pin_ok=0
+  grep -Fq 'playwright@1.65.0' "$sb_cf" && grep -Fq 'playwright@1.66.0-alpha-1794252756000' "$sb_cf" && pin_ok=1
+  if [[ "$pin_ok" -eq 1 ]]; then
+    pass "shared-browser structure: both browser pins live in the overlay"
+  else
+    fail "shared-browser structure: browser pins must stay in Containerfile.playwright (stable + canary)"
+  fi
+fi
 
 echo ""
 echo "templates.sh: $passes passed, $fails failed"

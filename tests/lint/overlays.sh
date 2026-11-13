@@ -286,8 +286,15 @@ done
 
 # --- (4) compose owns a single chained ENTRYPOINT -----------------------------
 COMPOSE="$ROOT_DIR/scripts/compose-containerfile.sh"
-# shellcheck disable=SC2016  # literal awk pattern ($1 is awk's, not expanded here)
-assert_file "compose: strips per-overlay ENTRYPOINT" 'toupper\(\$1\) == "ENTRYPOINT"' "$COMPOSE"
+LIB_PROVENANCE="$ROOT_DIR/lib/common/image-provenance.sh"
+# The FROM/CMD/ENTRYPOINT strip lives in the shared walker helper
+# dce_fragment_line_is_stripped (lib/common/image-provenance.sh), which
+# compose's heredoc-aware emitter calls per fragment line; assert both halves
+# of that wiring so neither can silently regress. (Replaces the literal awk
+# pre-pass pattern this used to assert.)
+assert_file "compose: strips per-overlay ENTRYPOINT" 'dce_fragment_line_is_stripped' "$COMPOSE"
+assert_file "compose: strip rule still drops ENTRYPOINT first-words" \
+  '\[Ee\]\[Nn\]\[Tt\]\[Rr\]\[Yy\]\[Pp\]\[Oo\]\[Ii\]\[Nn\]\[Tt\]' "$LIB_PROVENANCE"
 assert_file "compose: emits runner ENTRYPOINT" '/home/dev/.local/bin/dce-entrypoint' "$COMPOSE"
 assert_file "compose: runner chains dce-*-entrypoint.sh" 'dce-\*-entrypoint\.sh' "$COMPOSE"
 
