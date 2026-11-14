@@ -29,10 +29,15 @@ Preferred day-to-day tools (for example `tree`, `rg`, `fzf`, `psql`, custom CLIs
   are preserved verbatim
 - `COPY` and `ADD` are not allowed (to avoid external build-context coupling)
 - `# DC-EMBED:` comment lines embed a file into the image at compose time (see below)
-- Composed output is a machine artifact: comment lines and blank lines are
-  stripped from fragments at compose time (to help stay under apple/container's
-  16,384-byte cap), so keep documentation in the fragment — it stays fully
-  readable and is never committed downstream. Heredoc bodies are exempt: a `#`
+- Composed output is a machine artifact for apple/container: comment lines and
+  blank lines are stripped from fragments at compose time in the default
+  `--backend apple` variant (to help stay under apple/container's
+  ~11.5KB effective cap — see below), so keep documentation in the fragment —
+  it stays fully
+  readable and is never committed downstream. The readable `--backend docker`/
+  `orbstack`/`colima`/`podman` variants (see the DC-EMBED section below)
+  preserve fragment comments and blank lines instead. Heredoc bodies are exempt
+  from stripping in every variant: a `#`
   inside a heredoc is script content, and every body line (including
   `FROM`/`CMD`/`ENTRYPOINT`-looking lines) is preserved byte-for-byte until the
   terminator. Delimiters may be quoted or bare and may contain letters,
@@ -43,8 +48,17 @@ Preferred day-to-day tools (for example `tree`, `rg`, `fzf`, `psql`, custom CLIs
 
 ## Embedding files: `# DC-EMBED:`
 
-apple/container refuses to build a Dockerfile larger than 16,384 bytes, and
-overlay fragments cannot use `COPY`/`ADD` (they must stay free of any external
+apple/container does not send the raw Dockerfile to its builder: it ships it
+base64-encoded inside a gRPC header, and gRPC caps headers at ~16,384 bytes.
+base64 inflates by 4/3 (encoded size = ceil(bytes/3)*4), so the *effective*
+Dockerfile limit is ~11.5KB, not 16,384 bytes — files up to the raw 16,384-byte
+header cap can pass a naive size check yet still fail the real build
+([apple/container issue #735](https://github.com/apple/container/issues/735)).
+When an apple-mode compose exceeds 11,520 bytes (~15,360 encoded), compose
+warns and additionally splits the file into transport parts (see
+[Apple transport chaining](#apple-transport-chaining)). Overlay fragments also
+cannot use `COPY`/`ADD` (they must
+stay free of any external
 build context). To ship a script in an overlay — an entrypoint hook, a small
 relay, a wrapper — without inlining it as readable text, put a directive
 comment line in the fragment:
@@ -79,6 +93,107 @@ may produce different bytes for the same input, so byte-for-byte reproducibility
 is only claimed for repeated composes on one machine.) The readable source stays
 next to the fragment and nothing generated is committed — one source of truth,
 no generated-file drift.
+
+### Backend variants: `--backend`
+
+The encoded form above exists only for apple/container's transport, so compose
+accepts an optional `compose-containerfile.sh --backend <name>` flag naming the
+build target, with two variants:
+
+- **`apple` (default)** — the encoded/minified form above: DC-EMBED sources
+  inlined as gzip+base64 decode RUNs, fragment comments and blank lines
+  stripped (the composed file is a machine artifact), and the 11,520-byte
+  size guard armed. This is the only form that fits apple/container's
+  gRPC-header transport; when a compose still exceeds the guard, it is split
+  into transport parts (see
+  [Apple transport chaining](#apple-transport-chaining)).
+- **`docker`, `orbstack`, `colima`, `podman` (readable)** — these backends
+  have no Dockerfile cap, so encoding would only destroy build-error
+  readability (errors would point into opaque base64 instead of real lines).
+  Each directive is emitted as a verbatim heredoc instead:
+
+  ```
+  # DC-EMBED <src> -> <dest> (source: <overlays-dir>/<src>)
+  RUN cat > <dest> <<'DCE_EMBED_EOF'
+  <the source file, byte-for-byte>
+  DCE_EMBED_EOF
+  RUN chmod <mode> <dest>
+  ```
+
+  Fragment comments and blank lines are preserved, and no size guard runs.
+  If a source itself contains a line equal to `DCE_EMBED_EOF`, compose
+  deterministically suffices the delimiter (`DCE_EMBED_EOF_2`, then `_3`, …)
+  so the heredoc cannot terminate early. The emitted heredoc is always
+  well-formed: even a source lacking a trailing newline gets one inserted
+  before the terminator, so the terminator always sits on its own line. That
+  newline is part of the text, so the dest inside the image then differs from
+  the source by exactly one appended trailing newline (encoded apple-mode
+  embeds preserve bytes exactly).
+
+Everything else is shared: the FROM (first line)/CMD/ENTRYPOINT strip and the
+COPY/ADD ban apply identically in both variants, the provenance labels fold
+the embedded sources (mode-independent, so image identity stays comparable),
+and both variants are deterministic across repeated composes on one machine.
+
+The flag is optional and omitting it means `apple` — a fail-safe default: the
+encoded form is exactly what satisfies apple/container's cap, so a forgotten
+flag on a docker-family backend only costs readability, never correctness
+(it can never produce an over-cap apple file). Names are matched
+case-insensitively, and the CLI entry points (`dce rebuild-image`, `dce new`)
+pass the active backend on every compose — the flag matters only when
+invoking `compose-containerfile.sh` directly.
+
+### Apple transport chaining
+
+apple/container's transport, not its builder, sets the hard limit: the
+Dockerfile travels base64-encoded inside a gRPC header capped at ~16,384
+bytes — roughly 11.5KB of Dockerfile once base64's 4/3 inflation is paid
+([apple/container issue #735](https://github.com/apple/container/issues/735)).
+Encoding keeps most composes under that bound, but it cannot shrink an
+arbitrarily large embedded source. When the canonical apple-mode composed
+file exceeds 11,520 bytes, compose additionally emits
+`Containerfile.<hash>.p0`, `.p1`, … next to it — transport parts, each small
+enough for one header:
+
+- The canonical file is left unchanged and remains the single source of
+  truth; parts are derived artifacts, re-derived on every compose. Stale
+  `.pN` files from earlier composes are pruned in both modes, so an over-cap
+  apple compose followed by a readable compose leaves zero part files.
+- Part 0 starts `FROM dce-base:latest`; part k starts
+  `FROM dce-stage-<hash>-(k-1):latest`, resuming the previous part's stage.
+  The provenance ARG/LABEL block and the USER/ENTRYPOINT/CMD trailer are
+  emitted only in the final part.
+- Splits fall only at instruction boundaries and never inside a heredoc
+  body, and packing is deterministic: the same canonical file always yields
+  the same parts. A single unit that alone exceeds the cap (e.g. one huge
+  DC-EMBED blob) gets a dedicated over-cap part plus a WARN — apple's native
+  builder will refuse it; build on a docker/podman peer or split the
+  embedded source.
+- Readable-mode compose never emits parts.
+
+`dce rebuild-image` and `dce new` build derived images through the chained
+path (`backend_build_image_chained` in `lib/container-backend.sh`) whenever
+parts exist:
+
+- **apple** — parts build sequentially: part k as
+  `dce-stage-<hash>-<k>:latest`, the final part under the canonical
+  `dce-img-<hash>` tag carrying the provenance build-args (no other part
+  gets build-args). If a part fails natively with an environment/transport
+  block (oversize header, egress/context class), the WHOLE chain restarts on
+  a docker/podman peer from part 0 — stages built so far exist only in
+  apple's image store, invisible to a peer builder, so continuing mid-chain
+  could not resolve their chained `FROM` tags — and the final image is
+  loaded back into apple's store. A genuine Containerfile error aborts
+  instead: it would fail identically on the peer.
+- **docker-family/podman** — parts are ignored entirely; the single
+  canonical file is built as always (no cap there).
+- A broken part sequence (`.p1` missing while `.p2` exists) fails fast
+  naming the missing file: the chain would otherwise build FROM an image
+  that is never produced.
+
+`dce clean` reclaims `dce-stage-<16hex>-<n>` tags along with the other DC
+Enclave image families: stage tags are pure build intermediates, and the
+final `dce-img-<hash>` exists independently of them.
 
 Notes:
 

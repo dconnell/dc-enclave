@@ -65,8 +65,12 @@ gzip+base64 blob into `<dest>` (full syntax in
 [Overlays](../reference/overlays.md#embedding-files-dc-embed)). Encoding
 happens at compose time on every run, so the committed overlay keeps one
 source of truth — there is no generated file to drift out of date — and the
-compressed form keeps composed files small enough for apple/container's
-16,384-byte Dockerfile cap.
+compressed form keeps composed files under apple/container's effective ~11.5KB
+Dockerfile cap — the file travels base64-encoded inside a ~16,384-byte gRPC
+header, so the raw header limit translates to only ~11.5KB of Dockerfile (see
+[apple/container issue #735](https://github.com/apple/container/issues/735)).
+Composes that still exceed the cap are split into transport parts instead —
+see [Apple transport chaining](#apple-transport-chaining).
 
 The `COPY`/`ADD` ban stays even with embedding available: team and user
 fragments must compose portably, without coupling the derived image to
@@ -74,3 +78,33 @@ whatever build context happens to exist on the machine running the build.
 `# DC-EMBED:` preserves that contract — the bytes travel inside the generated
 Containerfile itself — and the provenance content hash folds every embedded
 source, so editing an embedded file still produces a new image.
+
+
+### Apple transport chaining
+
+The cap above is a transport limit, not a builder limit: apple/container
+ships the Dockerfile base64-encoded inside a gRPC header, gRPC caps headers
+at ~16,384 bytes, and base64's 4/3 inflation shrinks the usable payload to
+~11.5KB of Dockerfile
+([apple/container issue #735](https://github.com/apple/container/issues/735)
+— no upstream fix in sight: assigned to a maintainer who has since left the
+project, and its milestones were removed). Encoding keeps ordinary composes
+under the cap, but it cannot shrink an arbitrarily large embedded script, so
+for those composes `scripts/compose-containerfile.sh` derives transport
+parts — `Containerfile.<hash>.p0`, `.p1`, … — from the unchanged canonical
+file, each small enough for one header and chained with
+`FROM dce-stage-<hash>-<k>:latest` tags so building the parts in order
+assembles the same image (syntax and guarantees in
+[Overlays](../reference/overlays.md#apple-transport-chaining)).
+
+None of this is visible at the `dce` level. `dce rebuild-image` and `dce new`
+build the parts sequentially, tagging the final part `dce-img-<hash>` as
+always; if apple's native builder blocks a part — an oversize header, or the
+egress/context failure classes — the whole chain restarts on a docker/podman
+peer from part 0 and the finished image is loaded back into apple's store
+(stages built so far live only in apple's store, so a peer could not resume
+mid-chain). The stage tags are pure intermediates and `dce clean` reclaims
+them. Whether or not a compose was split, the image ref and the provenance
+labels are identical: the content hash covers overlay sources, not composed
+bytes, so `dce-img-<hash>` names the same image whatever the transport did
+(see [Image provenance](../reference/provenance.md)).

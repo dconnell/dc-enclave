@@ -27,8 +27,9 @@
 #      (editor extensions are synced from these manifests verbatim).
 #   4. Shared-browser pattern structure: the overlay carries DC-EMBED
 #      directives (its relay/entrypoint scripts embed at compose time from
-#      files/, keeping the fragment small — apple/container caps a composed
-#      Dockerfile at 16,384 bytes and overlays cannot COPY). The directives
+#      files/, keeping the fragment small — apple/container's effective cap
+#      on a composed Dockerfile is 11,520 bytes and overlays cannot COPY).
+#      The directives
 #      must resolve to real sources next to the overlay, install the expected
 #      paths/modes, and the browser pins must live in the overlay itself.
 #      Actual embed round-tripping is exercised by the compose in check 1 and
@@ -196,8 +197,9 @@ done
 # --- (4) shared-browser pattern structure --------------------------------------
 # No generated artifact: Containerfile.playwright carries DC-EMBED directives
 # and its readable relay/entrypoint sources live in files/ (embedded at compose
-# time — apple/container caps a composed Dockerfile at 16,384 bytes and
-# overlays cannot COPY; check 1 composes the overlay for real). Guard the
+# time — apple/container's effective cap on a composed Dockerfile is
+# 11,520 bytes and overlays cannot COPY; check 1 composes the overlay for
+# real). Guard the
 # structure so a broken copy of the pattern fails here with a clear message:
 #   a. The overlay and both embedded sources exist.
 #   b. The expected directives are present, installing the documented

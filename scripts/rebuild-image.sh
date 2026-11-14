@@ -141,8 +141,12 @@ while IFS= read -r config_file; do
 
     echo ""
     echo "--- Building $image_ref ---"
-    bash "$COMPOSE_SCRIPT" "$composed_file" "$scope_csv"
-    backend_build_image "$image_ref" "$composed_file" "$ROOT_DIR" \
+    # --backend pins the compose variant to the active backend (positional-only
+    # callers would silently get the apple fail-safe default). The chained
+    # builder transparently splits over-cap apple builds into the part files
+    # compose just wrote; every other backend builds the canonical file.
+    bash "$COMPOSE_SCRIPT" --backend "$ACTIVE_BACKEND" "$composed_file" "$scope_csv"
+    backend_build_image_chained "$image_ref" "$composed_file" "$ROOT_DIR" \
       --build-arg "DC_BASE_ID=$PROV_BASE_ID" \
       --build-arg "DC_BUILT_UTC=$PROV_BUILT_UTC"
     BUILT_REPOS["$image_repo"]=1

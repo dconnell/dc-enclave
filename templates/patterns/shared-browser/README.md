@@ -28,8 +28,10 @@ the overlay carries `# DC-EMBED:` directives and
 `scripts/compose-containerfile.sh` embeds the `files/` sources (gzip+base64)
 when it composes the image. This is forced by two compose rules:
 
-- apple/container rejects a composed Dockerfile larger than **16,384 bytes**,
-  and compose prepends a ~1.6KB provenance header on top of every fragment.
+- apple/container's effective cap on a composed Dockerfile is **11,520 bytes**
+  (the file travels base64-encoded inside a ~16,384-byte gRPC header; issue
+  [#735](https://github.com/apple/container/issues/735)), and compose prepends
+  a ~1.6KB provenance header on top of every fragment.
 - Overlays cannot use `COPY`/`ADD` (fragments must stay context-free), so the
   scripts cannot ship as separate build-context files.
 

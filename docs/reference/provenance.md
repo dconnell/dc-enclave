@@ -6,6 +6,18 @@ Each derived image (`dce-img-*`) is rebuilt in place and `:latest` is overwritte
 - **OCI labels on the image** — `docker image inspect <img>` / `podman image inspect <img>` show `dce.team.git_commit`, `dce.user.git_commit`, `dce.team.content_hash`, `dce.content.hash`, `dce.base.id`, `dce.scopes`, `dce.built.utc`, and `org.opencontainers.image.revision`. Per overlay source (`team/`, `user/`) the git HEAD commit is recorded when that directory is a git checkout; a content fingerprint of the layered files is always recorded. The fingerprint (the v2 scheme) also folds the hash of every `# DC-EMBED:` source file each fragment references into that side's hash, so editing an embedded file changes the fingerprint even when the fragment itself is untouched (see [Overlays](overlays.md)).
 - **A per-project log** — `~/.config/dc-enclave/projects/<name>/provenance.jsonl` (JSON Lines, owner-only) appends one entry per distinct image state, so the history survives the `:latest` overwrite. It is written when a derived image is actually built (`dce new`, `dce rebuild-image`), not on a plain `dce rebuild-container` (which does not build) or base-only projects. Snapshot/restore events also append their own entries (`action: "snapshot"` / `"restore"`) so the log distinguishes images that came from a `dce snapshot` rather than a scope-derived build.
 
+Provenance is compose-variant independent: the v2 content hash covers the
+overlay sources (fragments and every `# DC-EMBED:` source file), not the
+composed bytes, so the `dce-img-<hash>` ref is identical whichever
+`--backend` variant composed it (see
+[Overlays](overlays.md#backend-variants---backend)). When apple transport
+chaining splits a compose into `Containerfile.<hash>.pN` parts
+([Overlays](overlays.md#apple-transport-chaining)), the full provenance
+ARG/LABEL block is emitted only in the final part; the
+`dce-stage-<hash>-<n>` stage tags the intermediate parts build under are
+pure build intermediates, not provenance — they never appear in
+`dce provenance` output or the provenance log.
+
 Read it back with:
 
 ```

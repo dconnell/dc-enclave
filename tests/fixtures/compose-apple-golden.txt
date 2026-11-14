@@ -1,0 +1,64 @@
+# Committed golden: byte-exact apple-mode output of scripts/compose-containerfile.sh
+# for the synthetic fixture built by the "Committed golden" section at the end of
+# tests/contract/compose-layering.sh (team-only nodejs scope exercising comment/
+# blank stripping, the FROM/CMD strip, and one DC-EMBED directive with mode 0755).
+# It pins the fail-safe default output against pre-change behavior: a diff means
+# apple-mode bytes moved and must be deliberate.
+#
+# Determinism scope: everything here is stable across runs and temp dirs (git
+# labels are constant-empty for the suite's non-git fixture dirs; the content
+# hash folds file bytes only) EXCEPT the gzip+base64 blob, which is stable per
+# machine only (docs claim one-machine reproducibility). The absolute overlays
+# dir in the DC-EMBED marker is rewritten to <DC_TEAM_DIR> on both sides before
+# the cmp.
+#
+# Regenerate deliberately (then review the git diff before committing):
+#   DCE_UPDATE_GOLDEN=1 bash tests/contract/compose-layering.sh
+# ---8<--- golden body below (test-managed; header text lives in this test) ---8<---
+FROM dce-base:latest
+
+# Provenance labels (plans/versioning.md): overlay state at compose time.
+# base.id / built.utc are injected at build time via --build-arg.
+ARG DC_BASE_ID=""
+ARG DC_BUILT_UTC=""
+LABEL dce.version="0.2.0"
+LABEL dce.scopes="nodejs"
+LABEL dce.base.image="dce-base:latest"
+LABEL dce.base.id="${DC_BASE_ID}"
+LABEL dce.team.content_hash="ef87c30ab2dd"
+LABEL dce.team.git_commit=""
+LABEL dce.team.git_dirty=""
+LABEL dce.team.source=""
+LABEL dce.user.content_hash=""
+LABEL dce.user.git_commit=""
+LABEL dce.user.git_dirty=""
+LABEL dce.user.source=""
+LABEL dce.content.hash="dba2075375f2044bb8fcc327f82286bfa844579c5a99429fee5e8c9e21441c28"
+LABEL dce.built.utc="${DC_BUILT_UTC}"
+LABEL org.opencontainers.image.revision="dba2075375f2044bb8fcc327f82286bfa844579c5a99429fee5e8c9e21441c28"
+
+# Selected overlay scopes: nodejs
+
+# --- begin overlay:auto:team/nodejs ---
+FROM dce-base:latest
+RUN echo GOLDEN-PROBE
+# DC-EMBED files/golden-embed.sh -> /usr/local/bin/golden-embed (compressed; source: <DC_TEAM_DIR>/overlays/files/golden-embed.sh)
+RUN printf '%s' 'H4sIAAAAAAAAA1NW1E/KzNMvzuBKTc7IV0jPz0lJzdNNzU1KTdFNyk+p5AIAsVBeRyEAAAA=' | base64 -d | gunzip > /usr/local/bin/golden-embed && chmod 0755 /usr/local/bin/golden-embed
+RUN echo GOLDEN-AFTER-EMBED
+# --- end overlay:auto:team/nodejs ---
+
+USER dev
+RUN mkdir -p /home/dev/.local/bin
+RUN cat > /home/dev/.local/bin/dce-entrypoint <<'DC_ENTRYPOINT_EOF'
+#!/bin/sh
+set -eu
+# Chain every installed per-language dependency-sync hook, then run CMD.
+for ep in /home/dev/.local/bin/dce-*-entrypoint.sh; do
+  [ -x "$ep" ] || continue
+  "$ep"
+done
+exec "$@"
+DC_ENTRYPOINT_EOF
+RUN chmod +x /home/dev/.local/bin/dce-entrypoint
+ENTRYPOINT ["/home/dev/.local/bin/dce-entrypoint"]
+CMD ["sleep", "infinity"]
