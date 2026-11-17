@@ -172,7 +172,7 @@ enough for one header:
 - Readable-mode compose never emits parts.
 
 `dce rebuild-image` and `dce new` build derived images through the chained
-path (`backend_build_image_chained` in `lib/container-backend.sh`) whenever
+path (`backend_build_image_chained` in `lib/backends/apple.sh`) whenever
 parts exist:
 
 - **apple** — parts build sequentially: part k as

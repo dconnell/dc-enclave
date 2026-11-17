@@ -23,7 +23,14 @@ dc-enclave/
 │   │   └── config.sh                   #   project config schema, validators, hardened load/write
 │   ├── platform.sh                     # OS/shell detection, profile helpers
 │   ├── complete-data.sh                # shared completion discovery (bash + zsh)
-│   ├── container-backend.sh            # backend abstraction (apple/docker/orbstack/colima/podman)
+│   ├── container-backend.sh            # thin dispatch facade: generic backend_<op> dispatchers over lib/backends/*.sh
+│   ├── backends/                       # per-backend modules, sourced by the facade in dependency order
+│   │   ├── registry.sh                 #   backend registry: selection, detection, CLI mapping (backend_use/name/cli)
+│   │   ├── docker-cli.sh               #   shared Docker-CLI-family plumbing: buildx gates + list-membership helpers
+│   │   ├── apple.sh                    #   apple/container logic: version gate, DNS probes, peer-build fallback chain
+│   │   ├── colima.sh                   #   Colima Docker-context + runtime detection/pin, guard rails
+│   │   ├── orbstack.sh                 #   OrbStack Docker-context match + DOCKER_CONTEXT pin
+│   │   └── podman.sh                   #   podman --add-host host-gateway capability probe
 │   ├── devcontainer.sh                 # managed devcontainer.json helpers
 │   ├── editor.sh                       # editor registry + cross-platform launcher
 │   ├── extensions.sh                   # editor extension manifest registry + resolution
