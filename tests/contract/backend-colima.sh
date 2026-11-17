@@ -36,9 +36,8 @@ LOG="$WORK/calls.log"
 export DC_STUB_LOG="$LOG"
 
 STUB_DIR="$WORK/bin"
-BIN_DOCKER_ONLY="$WORK/bin-docker" # docker stub only (cli-available absent case)
 BIN_BASE="$WORK/bin-base"          # bash+grep only: hermetic "CLI absent" PATH
-mkdir -p "$STUB_DIR" "$BIN_DOCKER_ONLY" "$BIN_BASE"
+mkdir -p "$STUB_DIR" "$BIN_BASE"
 ln -s "$(command -v bash)" "$BIN_BASE/bash"
 ln -s "$(command -v grep)" "$BIN_BASE/grep"
 
@@ -69,7 +68,6 @@ STUB
 chmod +x "$STUB_DIR/_colima_stub"
 cp "$STUB_DIR/_colima_stub" "$STUB_DIR/docker"
 cp "$STUB_DIR/_colima_stub" "$STUB_DIR/colima"
-cp "$STUB_DIR/_colima_stub" "$BIN_DOCKER_ONLY/docker"
 export PATH="$STUB_DIR:$PATH"
 
 # Fixture variables must cross into the stub as child-process env, so export

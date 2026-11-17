@@ -26,8 +26,9 @@
 #      inherit argv/capture plumbing from lib/backends/docker-cli.sh.
 #   2. Register it in lib/backends/registry.sh: append to DCE_BACKENDS (order
 #      = detection priority) and add case arms in _backend_normalize (aliases),
-#      _backend_cli_available, _backend_set_cli, _backend_warn_missing_cli,
-#      backend_detect_available, and only the dispatchers below that diverge
+#      _backend_cli_available, _backend_set_cli, and _backend_warn_missing_cli;
+#      add the `if command -v <cli>` line to backend_detect_available (an
+#      if-chain, not a case); then only the dispatchers below that diverge
 #      (usually create/exec/build).
 #   3. Add tests/contract/backend-<name>.sh: a conformance test sourcing ONLY
 #      the new module (stub-CLI CALL matrix), like the existing backend-*.sh.
