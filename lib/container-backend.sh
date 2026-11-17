@@ -14,6 +14,8 @@
 # docker/orbstack/colima/podman all share the Docker CLI, so most operations
 # collapse to one branch; apple/container diverges and gets per-op fallbacks.
 # Selection is memoized in DEV_CONTAINERS_BACKEND / _DC_CLI after backend_use().
+# The registry (selection/detection) and docker-CLI-family plumbing live in
+# lib/backends/*.sh, sourced below; this file stays the stable facade path.
 # =============================================================================
 
 # Auto-source common.sh if this lib is loaded directly (keeps a single import).
@@ -39,73 +41,24 @@ declare -g _DC_PODMAN_HOST_GATEWAY_WARNED=0
 # egress|context|transport. Reset by the classifier on every call.
 declare -g _DC_APPLE_BLOCK_CLASS=""
 
-# Canonicalize a backend name from its common aliases; fails on unknown input.
-_backend_normalize() {
-  local raw="${1:-}"
-  local value="${raw,,}"
+# Resolve our own directory once so the module sources below use a stable path
+# regardless of how this facade was reached (script-relative, symlink, etc.).
+_dce_backend_lib_dir="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-  case "$value" in
-    "")
-      return 1
-      ;;
-    apple|container|apple-container)
-      printf '%s\n' "apple"
-      ;;
-    docker|docker-desktop)
-      printf '%s\n' "docker"
-      ;;
-    orbstack|orb)
-      printf '%s\n' "orbstack"
-      ;;
-    colima)
-      printf '%s\n' "colima"
-      ;;
-    podman|podman-desktop)
-      printf '%s\n' "podman"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
+# Load the backend modules in dependency order (registry first: docker-cli.sh
+# calls backend_name/backend_cli from it). Each carries its own include guard,
+# so the modules are also safe to source directly from tests.
+# shellcheck disable=SC1091
+# Sibling lib include; path resolved above, not followed statically.
+source "$_dce_backend_lib_dir/backends/registry.sh"
+# shellcheck disable=SC1091
+source "$_dce_backend_lib_dir/backends/docker-cli.sh"
 
-# Return whether the selected backend's CLI binary is on PATH.
-_backend_cli_available() {
-  local backend="$1"
-
-  case "$backend" in
-    apple)
-      command -v container >/dev/null 2>&1
-      ;;
-    docker|orbstack)
-      command -v docker >/dev/null 2>&1
-      ;;
-    colima)
-      _backend_colima_cli_available && command -v docker >/dev/null 2>&1
-      ;;
-    podman)
-      command -v podman >/dev/null 2>&1
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
+unset _dce_backend_lib_dir
 
 # Colima needs both its own CLI and the docker CLI (it drives docker).
 _backend_colima_cli_available() {
   command -v colima >/dev/null 2>&1
-}
-
-# Name of the Docker CLI's currently active context (Docker CLI concept, not ours).
-_backend_docker_context_name() {
-  docker context show 2>/dev/null || true
-}
-
-# Resolve the docker host endpoint URL for a given context name.
-_backend_docker_context_host() {
-  local context="$1"
-  docker context inspect "$context" --format '{{ (index .Endpoints "docker").Host }}' 2>/dev/null || true
 }
 
 # True if the context name itself indicates OrbStack.
@@ -192,117 +145,6 @@ _backend_colima_runtime() {
 
   [[ -n "$runtime" ]] || return 1
   printf '%s\n' "${runtime,,}"
-}
-
-# Auto-detect the backend when CONTAINER_BACKEND is unset.
-#
-# Detection order matters: the active Docker context is inspected first so
-# OrbStack and Colima (which both use the docker CLI) are identified before a
-# generic docker fallback, then apple/container, docker, and podman by CLI.
-_backend_detect_auto() {
-  local docker_context=""
-
-  if command -v docker >/dev/null 2>&1; then
-    docker_context="$(_backend_docker_context_name)"
-    if _backend_context_is_orbstack "$docker_context"; then
-      printf '%s\n' "orbstack"
-      return 0
-    fi
-
-    if _backend_context_is_colima "$docker_context"; then
-      printf '%s\n' "colima"
-      return 0
-    fi
-  fi
-
-  if command -v container >/dev/null 2>&1; then
-    printf '%s\n' "apple"
-    return 0
-  fi
-
-  if command -v docker >/dev/null 2>&1; then
-    printf '%s\n' "docker"
-    return 0
-  fi
-
-  if command -v podman >/dev/null 2>&1; then
-    printf '%s\n' "podman"
-    return 0
-  fi
-
-  echo "ERROR: No supported container backend found." >&2
-  echo "  Install apple/container, Docker Desktop, OrbStack, Colima, or Podman." >&2
-  return 1
-}
-
-# Emit every backend whose CLI(s) are detectable on PATH, one per line, in a
-# stable order: apple, docker, orbstack, colima, podman. This is CLI-presence
-# detection ONLY -- no daemon reachability probe, no backend selection/pinning,
-# no mutation of DEV_CONTAINERS_BACKEND. It is the single shared source of truth
-# for "which backends count as available on this host", consumed by both
-# `dce doctor` and the integration test harness so the two can never drift.
-#
-# OrbStack is reported only when a Docker context referencing it exists
-# (otherwise it is indistinguishable from plain docker); Colima requires both
-# the colima and docker CLIs. Always returns 0 (empty output = none available).
-backend_detect_available() {
-  if command -v container >/dev/null 2>&1; then printf 'apple\n'; fi
-  if command -v docker >/dev/null 2>&1; then printf 'docker\n'; fi
-  if command -v docker >/dev/null 2>&1 \
-     && docker context ls --format '{{.Name}}' 2>/dev/null | grep -iq orbstack; then
-    printf 'orbstack\n'
-  fi
-  if command -v colima >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
-    printf 'colima\n'
-  fi
-  if command -v podman >/dev/null 2>&1; then printf 'podman\n'; fi
-}
-
-# Map a canonical backend name to the CLI binary used to drive it.
-_backend_set_cli() {
-  local selected="$1"
-
-  case "$selected" in
-    apple)
-      _DC_CLI="container"
-      ;;
-    docker|orbstack|colima)
-      _DC_CLI="docker"
-      ;;
-    podman)
-      _DC_CLI="podman"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-# Print targeted install guidance when a selected backend's CLI is missing.
-_backend_warn_missing_cli() {
-  local selected="$1"
-
-  echo "ERROR: Backend '$selected' selected but required CLI is unavailable." >&2
-  case "$selected" in
-    apple)
-      echo "  Missing command: container" >&2
-      ;;
-    docker|orbstack)
-      echo "  Missing command: docker" >&2
-      ;;
-    colima)
-      if ! _backend_colima_cli_available; then
-        echo "  Missing command: colima" >&2
-      fi
-      if ! command -v docker >/dev/null 2>&1; then
-        echo "  Missing command: docker" >&2
-      fi
-      echo "  Install on macOS/Linux (Homebrew): brew install colima docker" >&2
-      ;;
-    podman)
-      echo "  Missing command: podman" >&2
-      ;;
-  esac
 }
 
 # Fail fast unless a Colima Docker context is active. DC Enclave drives
@@ -491,87 +333,6 @@ backend_apple_dns_domain_present() {
 backend_apple_dns_bootstrap_command() {
   printf 'sudo container system dns create %s --localhost %s\n' \
     "$_DCE_HOSTS_GATEWAY_APPLE_NAME" "$_DCE_HOSTS_GATEWAY_IP"
-}
-
-# Resolve, validate, and lock in the active backend.
-#
-# Honors CONTAINER_BACKEND if set (otherwise auto-detects), confirms the CLI is
-# installed, picks the matching binary, pins the Docker context for
-# Colima/OrbStack, and exports DEV_CONTAINERS_BACKEND so later calls are cached.
-# Every other backend_* function assumes this has run.
-backend_use() {
-  local requested="${1:-${CONTAINER_BACKEND:-}}"
-  local selected=""
-
-  if [[ -n "$requested" ]]; then
-    if ! selected="$(_backend_normalize "$requested")"; then
-      echo "ERROR: Unsupported CONTAINER_BACKEND '$requested'." >&2
-      echo "  Supported values: apple, colima, docker, orbstack, podman" >&2
-      return 1
-    fi
-  else
-    selected="$(_backend_detect_auto)" || return 1
-  fi
-
-  if ! _backend_cli_available "$selected"; then
-    _backend_warn_missing_cli "$selected"
-    return 1
-  fi
-
-  if ! _backend_set_cli "$selected"; then
-    dce_die "Unsupported backend '$selected'."
-  fi
-
-  DEV_CONTAINERS_BACKEND="$selected"
-  export DEV_CONTAINERS_BACKEND
-
-  case "$selected" in
-    colima)
-      _backend_use_colima_context || return 1
-      ;;
-    orbstack)
-      _backend_use_orbstack_context || return 1
-      ;;
-    *)
-      unset DOCKER_CONTEXT
-      ;;
-  esac
-}
-
-# Echo the canonical backend name, running backend_use() if not yet selected.
-backend_name() {
-  if [[ -z "${DEV_CONTAINERS_BACKEND:-}" ]]; then
-    backend_use || return 1
-  fi
-
-  printf '%s\n' "$DEV_CONTAINERS_BACKEND"
-}
-
-# Echo the CLI binary (docker/container/podman) for the active backend, with
-# a live Colima-context re-check so a switched-away context is caught early.
-backend_cli() {
-  backend_name >/dev/null || return 1
-  if [[ -z "$_DC_CLI" ]]; then
-    _backend_set_cli "$DEV_CONTAINERS_BACKEND" || return 1
-  fi
-
-  if [[ "$DEV_CONTAINERS_BACKEND" == "colima" ]]; then
-    _backend_require_colima_context || return 1
-  fi
-
-  printf '%s\n' "$_DC_CLI"
-}
-
-# True for backends that speak the Docker CLI (docker/orbstack/colima/podman),
-# i.e. everything except apple/container. Drives Docker-only code paths
-# (devcontainer.json, VS Code attach config).
-backend_is_docker_compatible() {
-  local backend="${1:-}"
-  if [[ -z "$backend" ]]; then
-    backend="$(backend_name)" || return 1
-  fi
-
-  [[ "$backend" == "docker" || "$backend" == "orbstack" || "$backend" == "colima" || "$backend" == "podman" ]]
 }
 
 # Echo a human-readable version string for the active backend.
@@ -1062,95 +823,6 @@ The stage tags derive from the image hash, so the canonical file must be named b
     dce_warn "peer build/load failed; apple/container image store left unchanged."
     return 1
   done
-}
-
-# Return 0 if the buildx plugin is available for image builds on the active
-# backend. Only the docker family (docker/orbstack/colima) routes `docker build`
-# through buildx/BuildKit; podman has its own builder and apple uses a separate
-# path, so buildx is not applicable there (reported present so gates pass).
-dce_buildx_present() {
-  case "$(backend_name)" in
-    docker|orbstack|colima)
-      "$(backend_cli)" buildx version >/dev/null 2>&1
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-}
-
-# Echo the buildx version string (first line); empty if absent/unavailable.
-dce_buildx_version() {
-  case "$(backend_name)" in
-    docker|orbstack|colima)
-      "$(backend_cli)" buildx version 2>/dev/null | awk 'NR==1{print; exit}'
-      ;;
-  esac
-}
-
-# Echo a per-platform install hint for the buildx plugin. buildx is bundled with
-# Docker Desktop (macOS) and Docker CE; the common gap is WSL2's docker.io
-# (Ubuntu), which ships no buildx.
-dce_buildx_install_hint() {
-  case "$(uname -s)" in
-    Darwin)
-      printf 'reinstall/upgrade Docker Desktop (it bundles buildx)'
-      ;;
-    *)
-      printf 'sudo apt-get install docker-buildx-plugin (Docker apt repo), or download from https://github.com/docker/buildx/releases'
-      ;;
-  esac
-}
-
-# Hard gate for image builds: on a docker-compatible backend, require the buildx
-# plugin. dce builds with DOCKER_BUILDKIT=1 (Containerfiles use multi-line
-# heredoc RUNs the legacy builder drops), and Docker needs the buildx component
-# for that. Prints an actionable message and returns non-zero if missing; no-op
-# on podman/apple. Used by setup.sh and rebuild-image.sh before building. dce
-# verifies, never installs.
-dce_buildx_require() {
-  if dce_buildx_present; then
-    return 0
-  fi
-  {
-    echo "✗ buildx plugin not found (required to build dce images with BuildKit)."
-    echo ""
-    echo "  dce Containerfiles use multi-line heredoc RUNs that need BuildKit;"
-    echo "  without buildx the legacy builder drops them and containers fail to start."
-    echo ""
-    printf '  Install:  %s\n' "$(dce_buildx_install_hint)"
-    echo "  Verify:   docker buildx version"
-  } >&2
-  return 1
-}
-
-# True if <needle> appears as an EXACT line in the output of the given command.
-#
-# The output is captured IN FULL before testing, so the reader never exits early
-# and never SIGPIPEs the producer. This replaces the unsafe `<cmd> | grep -Fxq`
-# shape: under `set -o pipefail`, grep's -q early-exit closes the pipe, a large
-# producer (e.g. `image ls` over a full image store) dies on its next write with
-# SIGPIPE (141), and pipefail turns a found match into a false-negative. Captured
-# membership testing has none of that failure mode.
-_backend_list_contains() {
-  local needle="$1"; shift
-  local out=""
-  out="$("$@" 2>/dev/null)" || true
-  [[ $'\n'"$out"$'\n' == *$'\n'"$needle"$'\n'* ]]
-}
-
-# Like _backend_list_contains but for the image store, and normalizes podman's
-# "localhost/" prefix. podman stores/lists an unqualified build tag like
-# `dce-base:latest` as `localhost/dce-base:latest`, while docker/orbstack/colima
-# list the short name; docker/orbstack/colima keep working. Stripping a
-# nonexistent leading "localhost/" from those short names is a no-op, so a single
-# path covers the whole docker family. (Only image names get the prefix -- never
-# container or network names -- so this stays out of _backend_list_contains.)
-_backend_image_list_has() {  # <tag>
-  local tag="$1" out normalized
-  out="$("$(backend_cli)" image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null)" || true
-  normalized="$(printf '%s\n' "$out" | sed -E 's|^localhost/||')"
-  [[ $'\n'"$normalized"$'\n' == *$'\n'"$tag"$'\n'* ]]
 }
 
 # Return whether an image tag exists in the backend's image store.
