@@ -18,6 +18,21 @@
 # orbstack, podman) lives in lib/backends/*.sh, sourced below; this file stays
 # the stable facade path and keeps only the generic backend_<op> dispatchers.
 # =============================================================================
+#
+# Adding a backend (the layout's payoff; plans/cleanup-plan.md §9):
+#   1. Create lib/backends/<name>.sh with an include guard
+#      (_DC_BACKENDS_<NAME>_SH_LOADED) and implement only its deltas (context
+#      pin, startup probe, capability predicates); docker-CLI-family backends
+#      inherit argv/capture plumbing from lib/backends/docker-cli.sh.
+#   2. Register it in lib/backends/registry.sh: append to DCE_BACKENDS (order
+#      = detection priority) and add case arms in _backend_normalize (aliases),
+#      _backend_cli_available, _backend_set_cli, _backend_warn_missing_cli,
+#      backend_detect_available, and only the dispatchers below that diverge
+#      (usually create/exec/build).
+#   3. Add tests/contract/backend-<name>.sh: a conformance test sourcing ONLY
+#      the new module (stub-CLI CALL matrix), like the existing backend-*.sh.
+#   4. Sweep the remaining fixed touchpoints: doctor checks and docs mentions.
+# =============================================================================
 
 # Auto-source common.sh if this lib is loaded directly (keeps a single import).
 if [[ -z "${_DC_COMMON_SH_LOADED:-}" ]]; then
