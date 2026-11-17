@@ -63,6 +63,44 @@ ba="$(dce_provenance_content_hash "$TEAM_OD" all,golang,nodejs)"
 pass "dce_provenance_content_hash (deterministic, byte/order-sensitive, empty, all-inclusive)"
 
 # ---------------------------------------------------------------------------
+# dce_provenance_content_hash v2: DC-EMBED sources are folded into the hash
+# ---------------------------------------------------------------------------
+mkdir -p "$TEAM_OD/files"
+printf 'echo embedded-prov\n' > "$TEAM_OD/files/prov-embed.sh"
+{
+  printf 'RUN echo embed-holder\n'
+  printf '# DC-EMBED: files/prov-embed.sh /usr/local/bin/prov-embed.sh 0755\n'
+} > "$TEAM_OD/Containerfile.embedtest"
+
+eh1="$(dce_provenance_content_hash "$TEAM_OD" embedtest)"
+[[ "$eh1" =~ ^[0-9a-f]{12}$ ]] || fail "content_hash v2: expected 12 hex (got [$eh1])"
+[[ "$(dce_provenance_content_hash "$TEAM_OD" embedtest)" == "$eh1" ]] \
+  || fail "content_hash v2: not stable across runs"
+# Touch ONLY the embedded source: the fragment bytes are unchanged, but the
+# hash must move or a rebuild would reuse an image carrying the old bytes.
+printf 'echo embedded-CHANGED\n' > "$TEAM_OD/files/prov-embed.sh"
+eh2="$(dce_provenance_content_hash "$TEAM_OD" embedtest)"
+[[ "$eh2" != "$eh1" ]] || fail "content_hash v2: editing a DC-EMBED source must change the hash"
+# An overlay-only change (fragment bytes) must still change the hash.
+printf '# a comment\n' >> "$TEAM_OD/Containerfile.embedtest"
+eh3="$(dce_provenance_content_hash "$TEAM_OD" embedtest)"
+[[ "$eh3" != "$eh2" ]] || fail "content_hash v2: overlay-only change must change the hash"
+# The scheme bump must be observable: the v2 result differs from manually
+# recomputing the old v1 fold (fragment sha only) for the same bytes.
+v1_acc="v1|embedtest|$(dce_sha256_file "$TEAM_OD/Containerfile.embedtest")|"
+v1_hash="$(dce_sha256_hex "$v1_acc")"
+[[ "$eh3" != "${v1_hash:0:12}" ]] \
+  || fail "content_hash v2: must differ from the v1 scheme for an embed-bearing fragment"
+# Lenient by design: a directive whose source is missing must not crash the
+# hash (compose-containerfile.sh is the strict validator).
+printf '# DC-EMBED: files/absent.sh /usr/local/bin/absent\n' > "$TEAM_OD/Containerfile.missingsrc"
+mh="$(dce_provenance_content_hash "$TEAM_OD" missingsrc)"
+[[ "$mh" =~ ^[0-9a-f]{12}$ ]] \
+  || fail "content_hash v2: missing embed source must be skipped, not fatal"
+rm -f "$TEAM_OD/Containerfile.missingsrc"
+pass "dce_provenance_content_hash v2 (embed sources folded, stable, v1-incompatible, lenient)"
+
+# ---------------------------------------------------------------------------
 # dce_provenance_combined_hash
 # ---------------------------------------------------------------------------
 comb1="$(dce_provenance_combined_hash "$ch1" "")"

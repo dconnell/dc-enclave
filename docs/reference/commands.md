@@ -24,7 +24,7 @@ The day-to-day interface is the `dce` command with subcommands. All subcommands 
 | `dce snapshot rm <name> <label>` | Remove one snapshot image, its captured volumes (`dce-snapvol-*`), and its manifest |
 | `dce snapshots list [<name>]` | List snapshots newest-first (project, size, volumes captured, time, base image); optional project scope |
 | `dce provenance <name> [--history\|--all]` | Show image provenance: team/user overlay commits + content fingerprints + base id + build time for the project's image |
-| `dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]` | Reclaim old/orphan image tags, orphan hidden volumes, or snapshots |
+| `dce clean [--dry-run] [--hidden-volumes [name]] [--snapshots [name]]` | Reclaim old/orphan image tags (including `dce-stage-*` chained-build intermediates), orphan hidden volumes, or snapshots |
 | `dce config <show\|get\|set\|sync-vscode\|ls> ...` | Inspect/edit a project's config (validating wrapper over the config file). `sync-vscode` reconciles MANAGED `~/.config/dc-enclave/projects/<name>/devcontainer.json` fields on demand (`--dry-run` available), including `customizations.vscode.extensions` once manifests are adopted; attach-mode named config used by `dce editor` is managed automatically at editor launch. |
 | `dce doctor [backend\|project]` | Run read-only preflight checks and report pass/fail per subsystem (nonzero if any fail) |
 | `dce network <create\|ls\|members\|rm\|add\|remove> ...` | Manage private networks between containers (no host port publishing); see [private networks](../how-to/connect-private-networks.md) |

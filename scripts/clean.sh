@@ -12,8 +12,9 @@
 #                       optional project name scopes it to one project.
 #
 # dce claims the dce- image namespace for its own families (dce-base,
-# dce-img-*, dce-snap-*, dce-snapvol-*, dce-<project> aliases); an unrecognized
-# repo in that namespace is treated as an orphan and reclaimed. Images/volumes
+# dce-img-*, dce-stage-* chained build intermediates, dce-snap-*,
+# dce-snapvol-*, dce-<project> aliases); an unrecognized repo in that
+# namespace is treated as an orphan and reclaimed. Images/volumes
 # outside the dce- namespace are never touched. --dry-run previews only.
 # =============================================================================
 set -euo pipefail
@@ -224,9 +225,9 @@ fi
 # --- Snapshot cleanup mode ----------------------------------------------------
 # Reclaim dce-snap-* images (one-off container-FS snapshots). The default sweep
 # above already ignores them (is_managed_repo matches only dce-base /
-# dce-img-<16hex> / dce-<project> aliases), so snapshots are NEVER reclaimed
-# without this flag. An optional project name scopes to dce-snap-<slug>-*.
-# --dry-run previews only.
+# dce-img-<16hex> / dce-stage-<16hex>-<n> / dce-<project> aliases), so snapshots
+# are NEVER reclaimed without this flag. An optional project name scopes to
+# dce-snap-<slug>-*. --dry-run previews only.
 if $CLEAN_SNAPSHOTS; then
   snap_prefix="dce-snap-"
   if [[ -n "$TARGET_PROJECT" ]]; then
@@ -323,14 +324,20 @@ if $CLEAN_SNAPSHOTS; then
   exit 0
 fi
 
-# A repo is "managed" by DC Enclave if it's dce-base, a dce-img-<16hex>, or a
-# per-project alias dce-<project> (dce-<project>:latest). Only these are ever
-# candidates for cleanup; everything else is left alone. The canonical and
-# alias families are disjoint BY CONSTRUCTION: "img-" is a reserved alias
-# prefix, so dce-img-<16hex> can never match the alias grammar.
+# A repo is "managed" by DC Enclave if it's dce-base, a dce-img-<16hex>, a
+# chained apple build stage dce-stage-<16hex>-<n>, or a per-project alias
+# dce-<project> (dce-<project>:latest). Only these are ever candidates for
+# cleanup; everything else is left alone. The canonical and alias families are
+# disjoint BY CONSTRUCTION: "img-" is a reserved alias prefix, so
+# dce-img-<16hex> can never match the alias grammar. The stage family is
+# checked explicitly rather than left to the alias grammar: stages are pure
+# derived intermediates (each chained rebuild regenerates them in order, and
+# the final image exists independently), so they must stay reclaimable even if
+# the alias grammar ever stops matching their names.
 is_managed_repo() {
   local repo="$1"
   [[ "$repo" == "dce-base" || "$repo" =~ ^dce-img-[0-9a-f]{16}$ ]] && return 0
+  [[ "$repo" =~ ^dce-stage-[0-9a-f]{16}-[0-9]+$ ]] && return 0
   dce_is_alias_repo_name "$repo"
 }
 

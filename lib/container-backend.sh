@@ -35,6 +35,9 @@ declare -g DEV_CONTAINERS_BACKEND="${DEV_CONTAINERS_BACKEND:-}"
 declare -g _DC_CLI=""
 declare -g _DC_PODMAN_HOST_GATEWAY_SUPPORTED=""
 declare -g _DC_PODMAN_HOST_GATEWAY_WARNED=0
+# Block class matched by _backend_apple_native_build_blocked: "" (no match) or
+# egress|context|transport. Reset by the classifier on every call.
+declare -g _DC_APPLE_BLOCK_CLASS=""
 
 # Canonicalize a backend name from its common aliases; fails on unknown input.
 _backend_normalize() {
@@ -676,21 +679,52 @@ backend_system_info() {
 
 # True if a captured apple/container build log shows the native builder CANNOT
 # complete the build in the current host environment -- independent of the
-# Containerfile itself. Two known classes, both caused by the apple builder
-# running in a vmnet-NAT'd namespace that a host VPN (or this host's networking)
-# breaks:
-#   * no outbound network -> apt/apk cannot resolve or reach any repo
-#     ("Temporary failure resolving", "Unable to locate package", etc.)
-#   * no build-context transfer -> COPY/ADD of a local file fails because the
-#     builder receives an empty context ("failed to calculate checksum").
-# Both persist until host networking is fixed; neither is a Containerfile bug.
-# This is the trigger for _backend_apple_build_image's peer-backend fallback,
-# which is safe because a genuine Containerfile error also fails on the peer.
+# Containerfile itself. Three known classes, none of them a Containerfile bug:
+#   egress    -- no outbound network -> apt/apk cannot resolve or reach any repo
+#                ("Temporary failure resolving", "Unable to locate package",
+#                etc.). The apple builder runs in a vmnet-NAT'd namespace that
+#                a host VPN (or this host's networking) breaks.
+#   context   -- no build-context transfer -> COPY/ADD of a local file fails
+#                because the builder receives an empty context ("failed to
+#                calculate checksum").
+#   transport -- the gRPC transport carrying the build dies mid-call
+#                ("Transport became inactive", and on newer versions "Stream
+#                unexpectedly closed"): apple base64-encodes the Dockerfile
+#                into a ~16KB-capped gRPC header, an ~11.5KB effective file cap
+#                (https://github.com/apple/container/issues/735).
+# On a match, sets the global _DC_APPLE_BLOCK_CLASS to egress|context|transport
+# so callers can warn accurately per class; it is reset to empty on entry so a
+# non-matching log can never leak a stale class. This is the trigger for
+# _backend_apple_build_image's peer-backend fallback, which is safe because a
+# genuine Containerfile error also fails on the peer -- and for the transport
+# class the peer (docker/podman) has no Dockerfile size cap.
 # Used as:  if _backend_apple_native_build_blocked "$log"; then ...; fi
 _backend_apple_native_build_blocked() {  # <build-log>
+  _DC_APPLE_BLOCK_CLASS=""
   [[ -n "$1" ]] || return 1
-  printf '%s' "$1" | grep -Eq \
-    'Temporary failure resolving|Temporary failure in name resolution|Unable to locate package|no installation candidate|Failed to fetch|failed to calculate checksum'
+
+  # Match with [[ =~ ]] over the captured string, not `| grep -q`: a large
+  # build log plus grep's early-exit can SIGPIPE the producer, and pipefail
+  # would turn a found match into a false negative (see
+  # backend_apple_dns_domain_present for the same reasoning).
+  local log="$1"
+  local egress_re='Temporary failure resolving|Temporary failure in name resolution|Unable to locate package|no installation candidate|Failed to fetch'
+  local context_re='failed to calculate checksum'
+  local transport_re='Transport became inactive|Stream unexpectedly closed'
+
+  if [[ "$log" =~ $egress_re ]]; then
+    _DC_APPLE_BLOCK_CLASS="egress"
+    return 0
+  fi
+  if [[ "$log" =~ $context_re ]]; then
+    _DC_APPLE_BLOCK_CLASS="context"
+    return 0
+  fi
+  if [[ "$log" =~ $transport_re ]]; then
+    _DC_APPLE_BLOCK_CLASS="transport"
+    return 0
+  fi
+  return 1
 }
 
 # Pick a reachable peer backend whose build network CAN reach the internet, for
@@ -752,19 +786,23 @@ _backend_apple_build_via_peer() {  # <peer-cli> <tag> <file> <context> [build-ar
   backend_image_exists "$tag"
 }
 
-# Build an image for the apple/container backend. The native builder is tried
-# first; on an environment-blocked failure (no outbound network / no build-
-# context transfer -- typically a host VPN the vmnet NAT cannot traverse) it
-# transparently rebuilds on a reachable docker/podman peer and loads the image
-# into apple/container under the same tag. Any OTHER failure (real
-# Containerfile error, etc.) is re-streamed and propagated -- the fallback never
-# masks it (a genuine error fails on the peer too).
-_backend_apple_build_image() {  # <tag> <file> <context> [build-args...]
+# Internal: attempt a NATIVE apple/container build of <tag> from <file>, tee'ing
+# live output to the user while capturing the log so an environment-blocked
+# failure can be classified without a second run. The return status
+# distinguishes the two failure shapes so callers can choose between
+# propagation and a peer fallback:
+#   0  native build succeeded
+#   1  real build error (matched no environment-block class; output was already
+#      streamed -- callers must propagate it, never mask it with a peer build)
+#   2  environment/transport-blocked failure; _DC_APPLE_BLOCK_CLASS names the
+#      matched class (egress|context|transport) and a peer backend CAN
+#      complete this build (for transport: no Dockerfile size cap)
+# An internal setup failure (e.g. mktemp) also returns 1: fail without
+# fallback, the safest degradation for an unknown cause.
+_backend_apple_build_native() {  # <tag> <file> <context> [build-args...]
   local tag="$1" file="$2" context="$3"; shift 3
-  local work_dir native_log peer rc=1
+  local work_dir native_log rc=1
 
-  # tee keeps live output streaming to the user while capturing the log so an
-  # environment-blocked failure can be classified without a second run.
   work_dir="$(mktemp -d "${TMPDIR:-/tmp}/dce-apple-build.XXXXXX")" || return 1
   native_log="$work_dir/native.log"
 
@@ -772,24 +810,68 @@ _backend_apple_build_image() {  # <tag> <file> <context> [build-args...]
     rc=0
   elif ! _backend_apple_native_build_blocked "$(cat "$native_log" 2>/dev/null || true)"; then
     : # Real build error -- already streamed via tee; just propagate non-zero.
-  elif ! peer="$(_backend_apple_peer_cli)"; then
-    dce_warn "apple/container's native builder cannot complete this build in the current"
-    dce_warn "environment (no outbound network or no build-context transfer -- typically a"
-    dce_warn "host VPN the vmnet NAT cannot traverse), and no reachable docker/podman peer"
-    dce_warn "to build on. Build '$tag' on another backend, export OCI, then: container image load."
   else
-    dce_warn "apple/container's native builder cannot complete this build (environment block:"
-    dce_warn "no outbound network / no build-context transfer)."
-    dce_warn "Falling back: building '$tag' on '$peer' and loading the image into apple/container."
-    if _backend_apple_build_via_peer "$peer" "$tag" "$file" "$context" "$@"; then
-      rc=0
-    else
-      dce_warn "peer build/load failed; apple/container image store left unchanged."
-    fi
+    rc=2 # Environment/transport-blocked; class is in _DC_APPLE_BLOCK_CLASS.
   fi
 
   rm -rf "$work_dir"
   return "$rc"
+}
+
+# Build an image for the apple/container backend. The native builder is tried
+# first (_backend_apple_build_native); on an environment-blocked failure (no
+# outbound network / no build-context transfer -- typically a host VPN the
+# vmnet NAT cannot traverse -- or a gRPC transport death from an oversized
+# Dockerfile, issue #735) it transparently rebuilds on a reachable docker/podman
+# peer and loads the image into apple/container under the same tag. Any OTHER
+# failure (real Containerfile error, etc.) is re-streamed and propagated -- the
+# fallback never masks it (a genuine error fails on the peer too).
+# _DC_APPLE_BLOCK_CLASS names the matched block class so the warnings stay
+# accurate per class.
+_backend_apple_build_image() {  # <tag> <file> <context> [build-args...]
+  local tag="$1" file="$2" context="$3"; shift 3
+  local peer rc=0
+
+  _backend_apple_build_native "$tag" "$file" "$context" "$@" || rc=$?
+
+  if (( rc == 0 )); then
+    return 0
+  fi
+  if (( rc == 1 )); then
+    return 1 # Real build error -- already streamed; propagate, never mask.
+  fi
+
+  # rc == 2: environment/transport-blocked (class in _DC_APPLE_BLOCK_CLASS).
+  if ! peer="$(_backend_apple_peer_cli)"; then
+    if [[ "$_DC_APPLE_BLOCK_CLASS" == "transport" ]]; then
+      dce_warn "apple/container's native builder gRPC transport rejected this build -- most"
+      dce_warn "likely the Containerfile exceeds apple's ~11.5KB effective cap (issue #735),"
+      dce_warn "and no reachable docker/podman peer (which has no cap) to build on."
+      dce_warn "Build '$tag' on another backend, export OCI, then: container image load."
+    else
+      dce_warn "apple/container's native builder cannot complete this build in the current"
+      dce_warn "environment (no outbound network or no build-context transfer -- typically a"
+      dce_warn "host VPN the vmnet NAT cannot traverse), and no reachable docker/podman peer"
+      dce_warn "to build on. Build '$tag' on another backend, export OCI, then: container image load."
+    fi
+    return 1
+  fi
+
+  if [[ "$_DC_APPLE_BLOCK_CLASS" == "transport" ]]; then
+    dce_warn "apple/container's native builder gRPC transport rejected this build -- most"
+    dce_warn "likely the Containerfile exceeds apple's ~11.5KB effective cap (issue #735)."
+    dce_warn "Falling back: building '$tag' on '$peer' (no size cap) and loading the image"
+    dce_warn "into apple/container."
+  else
+    dce_warn "apple/container's native builder cannot complete this build (environment block:"
+    dce_warn "no outbound network / no build-context transfer)."
+    dce_warn "Falling back: building '$tag' on '$peer' and loading the image into apple/container."
+  fi
+  if _backend_apple_build_via_peer "$peer" "$tag" "$file" "$context" "$@"; then
+    return 0
+  fi
+  dce_warn "peer build/load failed; apple/container image store left unchanged."
+  return 1
 }
 
 # Build an image from a Containerfile. Extra args are forwarded to the builder.
@@ -814,6 +896,172 @@ backend_build_image() {
       DOCKER_BUILDKIT=1 "$(backend_cli)" build --tag "$tag" --file "$file" "$@" "$context"
       ;;
   esac
+}
+
+# Build an image from a Containerfile, transparently handling the transport-
+# chaining part files compose-containerfile.sh (apple mode) emits when the
+# composed file exceeds apple/container's ~11.5KB effective Dockerfile cap
+# (issue #735): consecutive part files "<file>.p0", "<file>.p1", ... next to
+# the canonical file (p0 FROM dce-base:latest, pk FROM the previous part's
+# dce-stage-<hash>-<k-1>:latest).
+#
+# Part discovery: a missing "<file>.p0" means no chain exists and the call is
+# a plain backend_build_image passthrough (byte-identical behavior). If p0
+# exists but the sequence has a gap (e.g. .p0 then .p2 -- a part vanished
+# between compose and build), die naming the missing file rather than silently
+# building a broken image lineage.
+#
+# apple: the parts are built sequentially with the NATIVE builder, part k
+# tagged dce-stage-<hash>-<k>:latest (<hash> parsed from the mandatory
+# "Containerfile.<hash>" basename -- the stage names embed it, the same
+# contract compose enforces) and the FINAL part tagged <tag>; only the final
+# part receives the extra build-args (non-final parts declare no ARGs). The
+# canonical file itself is never built. A part that is environment/transport-
+# blocked in apple's native builder cannot simply continue on a peer mid-chain
+# -- part k's FROM references the previous stage tag, which lives only in
+# apple's store when parts 0..k-1 built natively, so the peer could never
+# resolve it (a mixed-store dead end). Instead the FIRST blocked part restarts
+# the WHOLE chain on a reachable peer from part 0: parts 0..N-2 build directly
+# on the peer CLI under their stage tags (podman's localhost/ prefix
+# resolution makes the unqualified FROM names resolve within podman's own
+# store), and the final part goes through _backend_apple_build_via_peer
+# (build -> save -> `container image load` -> final-tag guard, including
+# podman re-tagging), so <tag> lands in apple/container's store with every
+# stage resolvable in one place. No reachable peer -- or a real (non-block)
+# build error, which would fail on the peer identically -- aborts the chain.
+# docker/orbstack/colima/podman: those builders have no Dockerfile cap, so the
+# parts are never touched and only the canonical <file> is built.
+# Used as:  backend_build_image_chained "dce-img-<hash>:latest" <file> <ctx> \
+#             --build-arg DC_BASE_ID=... --build-arg DC_BUILT_UTC=...
+backend_build_image_chained() {  # <tag> <file> <context> [extra build-args...]
+  local tag="$1"
+  local file="$2"
+  local context="$3"
+  shift 3
+
+  # docker-family/podman: parts are an apple-only artifact (no cap there).
+  if [[ "$(backend_name)" != "apple" ]]; then
+    backend_build_image "$tag" "$file" "$context" "$@"
+    return
+  fi
+
+  # Discover the consecutive part sequence: p0, p1, ... up to the first gap.
+  local parts=()
+  local k=0
+  while [[ -f "${file}.p${k}" ]]; do
+    parts+=("${file}.p${k}")
+    k=$((k + 1))
+  done
+
+  if [[ ${#parts[@]} -eq 0 ]]; then
+    backend_build_image "$tag" "$file" "$context" "$@"
+    return
+  fi
+
+  # Corruption guard: an existing part beyond the first gap means the sequence
+  # is broken (e.g. .p0 and .p2 with .p1 gone) -- the build would chain FROM an
+  # image that is never produced. Die naming the exact missing file.
+  local stray
+  for stray in "$file".p*; do
+    [[ -e "$stray" && "$stray" =~ \.p([0-9]+)$ ]] || continue
+    # 10# forces base-10 so a zero-padded index (08) cannot parse as invalid
+    # octal, silently fail the compare, and let the stray escape the gap
+    # check (same hazard _backend_version_at_least documents for versions).
+    if (( 10#${BASH_REMATCH[1]} >= k )); then
+      dce_die "Chained build part sequence is broken: '$file.p$k' is missing but later parts exist (e.g. '$stray').
+The parts chain FROM each previous stage's image, so the chain cannot build with a gap; re-compose via dce (scripts/rebuild-image.sh) to regenerate them (apple/container issue #735)."
+    fi
+  done
+
+  local base="${file##*/}"
+  local stage_hash=""
+  if [[ ! "$base" =~ ^Containerfile\.([0-9a-f]+)$ ]]; then
+    dce_die "Cannot build chained apple parts: '$file' does not match the required basename 'Containerfile.<hash>' (hash must be [0-9a-f]+)
+The stage tags derive from the image hash, so the canonical file must be named by it; compose via dce (scripts/rebuild-image.sh) or rename the output (apple/container issue #735)."
+  fi
+  stage_hash="${BASH_REMATCH[1]}"
+
+  local total=${#parts[@]}
+  local k part stage_tag peer="" rc pk
+
+  # Build the parts with the NATIVE apple builder directly -- NOT per-part
+  # through backend_build_image. A per-part peer fallback would strand the
+  # chain in a mixed-store dead end: part k chains FROM the previous part's
+  # stage tag, which exists only in apple's store when parts 0..k-1 built
+  # natively, so a peer continuing from part k could never resolve it. The
+  # FIRST environment/transport-blocked part instead restarts the WHOLE chain
+  # on the peer from part 0, guaranteeing every stage the final part chains
+  # FROM lives in one store.
+  for ((k = 0; k < total; k++)); do
+    part="${parts[$k]}"
+    if ((k + 1 == total)); then
+      # Final part: the caller's tag, plus the extra build-args (provenance).
+      stage_tag="$tag"
+    else
+      stage_tag="dce-stage-${stage_hash}-${k}:latest"
+    fi
+    printf '  chained part %d/%d -> %s\n' "$((k + 1))" "$total" "$stage_tag"
+
+    rc=0
+    if ((k + 1 == total)); then
+      _backend_apple_build_native "$stage_tag" "$part" "$context" "$@" || rc=$?
+    else
+      _backend_apple_build_native "$stage_tag" "$part" "$context" || rc=$?
+    fi
+
+    if (( rc == 0 )); then
+      continue
+    fi
+    if (( rc == 1 )); then
+      # Real Containerfile error: already streamed by the native attempt.
+      # The peer would fail identically -- abort instead of masking it.
+      return 1
+    fi
+
+    # rc == 2: this part is environment/transport-blocked in apple's native
+    # builder (class in _DC_APPLE_BLOCK_CLASS); a peer CAN build it. Restart
+    # the whole chain on the peer from part 0.
+    if ! peer="$(_backend_apple_peer_cli)"; then
+      if [[ "$_DC_APPLE_BLOCK_CLASS" == "transport" ]]; then
+        dce_warn "apple/container's native builder gRPC transport rejected chained part $((k + 1))/$total -- most"
+        dce_warn "likely the part exceeds apple's ~11.5KB effective cap (issue #735), and no"
+        dce_warn "reachable docker/podman peer (which has no cap) to build on."
+      else
+        dce_warn "apple/container's native builder cannot build chained part $((k + 1))/$total in the"
+        dce_warn "current environment (no outbound network or no build-context transfer --"
+        dce_warn "typically a host VPN the vmnet NAT cannot traverse), and no reachable"
+        dce_warn "docker/podman peer."
+      fi
+      dce_warn "The chained build cannot proceed: build the parts on another backend, export"
+      dce_warn "OCI, then: container image load."
+      return 1
+    fi
+    dce_warn "apple/container's native builder cannot build chained part $((k + 1))/$total ($_DC_APPLE_BLOCK_CLASS block)."
+    dce_warn "Restarting the whole chain on peer '$peer' from part 0: the stages built so far"
+    dce_warn "live only in apple/container's image store, invisible to the peer builder, so"
+    dce_warn "continuing from part $((k + 1)) could not resolve their chained FROM tags."
+    for ((pk = 0; pk < total - 1; pk++)); do
+      stage_tag="dce-stage-${stage_hash}-${pk}:latest"
+      printf '  chained part %d/%d -> %s\n' "$((pk + 1))" "$total" "$stage_tag"
+      if [[ "$peer" == "docker" ]]; then
+        docker build --tag "$stage_tag" --file "${parts[$pk]}" "$context" || return 1
+      else
+        # podman: --format oci keeps the build OCI-native for the later save,
+        # and podman's localhost/ prefix resolution makes the unqualified FROM
+        # stage names resolve within podman's own store.
+        podman build --format oci --tag "$stage_tag" --file "${parts[$pk]}" "$context" || return 1
+      fi
+    done
+    # Final part on the peer: _backend_apple_build_via_peer already handles
+    # build -> save -> `container image load` -> final-tag guard (including
+    # podman's localhost/ re-tagging), and carries the extra build-args.
+    printf '  chained part %d/%d -> %s\n' "$total" "$total" "$tag"
+    if _backend_apple_build_via_peer "$peer" "$tag" "${parts[$((total - 1))]}" "$context" "$@"; then
+      return 0
+    fi
+    dce_warn "peer build/load failed; apple/container image store left unchanged."
+    return 1
+  done
 }
 
 # Return 0 if the buildx plugin is available for image builds on the active

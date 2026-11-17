@@ -574,18 +574,22 @@ if [[ "$IMAGE" != "dce-base:latest" ]]; then
   if backend_image_exists "$IMAGE"; then
     if [[ ! -f "$COMPOSED_CONTAINERFILE" ]]; then
       echo "==> Generating composed Containerfile for image: $IMAGE"
-      bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV"
+      # --backend pins the compose variant to the active backend (positional-
+      # only callers would silently get the apple fail-safe default).
+      bash "$COMPOSE_SCRIPT" --backend "$ACTIVE_BACKEND" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV"
     fi
     echo "==> Reusing existing image: $IMAGE"
   else
     echo "==> Generating composed Containerfile for image: $IMAGE"
-    bash "$COMPOSE_SCRIPT" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV"
+    bash "$COMPOSE_SCRIPT" --backend "$ACTIVE_BACKEND" "$COMPOSED_CONTAINERFILE" "$SCOPE_CSV"
     echo "==> Building image: $IMAGE"
     if ! dce_buildx_require; then
       exit 1
     fi
     PROV_BUILT_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    backend_build_image "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR" \
+    # Chained builder: on apple, an over-cap composed file builds as sequential
+    # part builds; every other backend builds the canonical file unchanged.
+    backend_build_image_chained "$IMAGE" "$COMPOSED_CONTAINERFILE" "$ROOT_DIR" \
       --build-arg "DC_BASE_ID=$PROV_BASE_ID" \
       --build-arg "DC_BUILT_UTC=$PROV_BUILT_UTC"
   fi
