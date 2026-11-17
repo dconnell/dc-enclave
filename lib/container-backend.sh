@@ -14,9 +14,9 @@
 # docker/orbstack/colima/podman all share the Docker CLI, so most operations
 # collapse to one branch; apple/container diverges and gets per-op fallbacks.
 # Selection is memoized in DEV_CONTAINERS_BACKEND / _DC_CLI after backend_use().
-# The registry (selection/detection), docker-CLI-family plumbing, and the
-# apple/container logic live in lib/backends/*.sh, sourced below; this file
-# stays the stable facade path.
+# All per-backend logic (registry, docker-CLI plumbing, apple, colima,
+# orbstack, podman) lives in lib/backends/*.sh, sourced below; this file stays
+# the stable facade path and keeps only the generic backend_<op> dispatchers.
 # =============================================================================
 
 # Auto-source common.sh if this lib is loaded directly (keeps a single import).
@@ -56,152 +56,14 @@ source "$_dce_backend_lib_dir/backends/registry.sh"
 source "$_dce_backend_lib_dir/backends/docker-cli.sh"
 # shellcheck disable=SC1091
 source "$_dce_backend_lib_dir/backends/apple.sh"
+# shellcheck disable=SC1091
+source "$_dce_backend_lib_dir/backends/colima.sh"
+# shellcheck disable=SC1091
+source "$_dce_backend_lib_dir/backends/orbstack.sh"
+# shellcheck disable=SC1091
+source "$_dce_backend_lib_dir/backends/podman.sh"
 
 unset _dce_backend_lib_dir
-
-# Colima needs both its own CLI and the docker CLI (it drives docker).
-_backend_colima_cli_available() {
-  command -v colima >/dev/null 2>&1
-}
-
-# True if the context name itself indicates OrbStack.
-_backend_context_is_orbstack() {
-  local context="$1"
-  [[ "${context,,}" == *"orbstack"* ]]
-}
-
-# True if a Docker context points at Colima - by name, or by a host URL that
-# references the Colima socket path (handles unnamed/renamed contexts).
-_backend_context_is_colima() {
-  local context="$1"
-  local context_lower="${context,,}"
-
-  if [[ "$context_lower" == *"colima"* ]]; then
-    return 0
-  fi
-
-  if [[ -z "$context" ]]; then
-    return 1
-  fi
-
-  local docker_host=""
-  docker_host="$(_backend_docker_context_host "$context")"
-  docker_host="${docker_host,,}"
-
-  [[ "$docker_host" == *"/.colima/"* || "$docker_host" == *"colima"* ]]
-}
-
-# True if a Colima context is currently the active Docker context.
-_backend_colima_context_active() {
-  local context=""
-  context="$(_backend_docker_context_name)"
-  _backend_context_is_colima "$context"
-}
-
-# Locate an OrbStack Docker context and pin it via DOCKER_CONTEXT, or fail.
-# OrbStack is indistinguishable from plain docker without an explicit context.
-_backend_use_orbstack_context() {
-  local ctx
-  ctx="$(docker context ls --format '{{.Name}}' 2>/dev/null \
-    | awk 'tolower($0) ~ /orbstack/ {print; exit}')"
-  if [[ -z "$ctx" ]]; then
-    echo "ERROR: OrbStack backend requires an OrbStack Docker context." >&2
-    echo "  Install OrbStack or create a Docker context pointing to it." >&2
-    return 1
-  fi
-  export DOCKER_CONTEXT="$ctx"
-}
-
-# Locate a Colima Docker context and pin it via DOCKER_CONTEXT, or fail.
-_backend_use_colima_context() {
-  local ctx
-  ctx="$(docker context ls --format '{{.Name}}' 2>/dev/null \
-    | awk 'tolower($0) ~ /colima/ {print; exit}')"
-  if [[ -z "$ctx" ]]; then
-    echo "ERROR: Colima backend requires a Colima Docker context." >&2
-    echo "  Run: colima start" >&2
-    echo "  Or: docker context use colima" >&2
-    return 1
-  fi
-  export DOCKER_CONTEXT="$ctx"
-}
-
-# Read Colima's active runtime (docker/containerd/...) from `colima status`.
-_backend_colima_runtime() {
-  local status=""
-  # `colima status` writes its output to STDERR on current colima versions, so
-  # capture both streams (and tolerate the non-zero exit colima returns when the
-  # VM is down -- an empty result is handled below as "unknown runtime").
-  status="$(colima status 2>&1 || true)"
-  [[ -n "$status" ]] || return 1
-
-  local runtime=""
-  # `colima status` renders the runtime two ways across versions:
-  #   legacy:  `runtime: docker`
-  #   modern:  `time=".." level=info msg="runtime: docker"`  (logrus format)
-  # Splitting on ':' and matching the first field (the old approach) breaks on
-  # the modern form, where field $1 is the timestamp. Match the literal
-  # `runtime:` token anywhere in the line and capture the following word.
-  runtime="$(printf '%s\n' "$status" \
-    | sed -nE 's/.*runtime:[[:space:]]*([A-Za-z0-9._-]+).*/\1/p' \
-    | head -n1)"
-
-  [[ -n "$runtime" ]] || return 1
-  printf '%s\n' "${runtime,,}"
-}
-
-# Fail fast unless a Colima Docker context is active. DC Enclave drives
-# Colima through the docker CLI, so it must be pointed at Colima to work.
-_backend_require_colima_context() {
-  local context=""
-  context="$(_backend_docker_context_name)"
-
-  if _backend_context_is_colima "$context"; then
-    return 0
-  fi
-
-  echo "ERROR: Colima backend requires an active Colima Docker context." >&2
-  if [[ -n "$context" ]]; then
-    echo "  Current Docker context: $context" >&2
-  fi
-  echo "  Docker context is managed by Docker CLI configuration." >&2
-  echo "  Run: colima start" >&2
-  echo "  Or: docker context use colima" >&2
-  return 1
-}
-
-# Fail fast unless Colima is running with the docker runtime. Non-docker
-# runtimes (e.g. containerd) are unsupported and silently misbehave.
-_backend_require_colima_docker_runtime() {
-  local runtime=""
-  runtime="$(_backend_colima_runtime 2>/dev/null || true)"
-
-  if [[ -n "$runtime" && "$runtime" != "docker" ]]; then
-    echo "ERROR: Colima backend requires Colima runtime 'docker'." >&2
-    echo "  Current Colima runtime: $runtime" >&2
-    echo "  Recreate/start with Docker runtime: colima stop && colima start --runtime docker" >&2
-    return 1
-  fi
-
-  return 0
-}
-
-# Capability probe: does this Podman version understand --add-host host-gateway?
-# Result is cached in _DC_PODMAN_HOST_GATEWAY_SUPPORTED so we only probe once.
-_backend_podman_supports_host_gateway() {
-  if [[ -n "$_DC_PODMAN_HOST_GATEWAY_SUPPORTED" ]]; then
-    [[ "$_DC_PODMAN_HOST_GATEWAY_SUPPORTED" == "1" ]]
-    return $?
-  fi
-
-  if podman create --help 2>/dev/null | grep -q 'host-gateway'; then
-    _DC_PODMAN_HOST_GATEWAY_SUPPORTED="1"
-    return 0
-  fi
-
-  _DC_PODMAN_HOST_GATEWAY_SUPPORTED="0"
-  return 1
-}
 
 # Echo a human-readable version string for the active backend.
 backend_version() {
@@ -225,6 +87,7 @@ backend_version() {
     podman)
       podman --version 2>/dev/null || echo "podman version unknown"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -279,6 +142,7 @@ backend_system_start() {
       echo "  Try: podman machine start (macOS) or ensure rootless podman is installed and configured." >&2
       return 1
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -303,6 +167,7 @@ backend_system_info() {
     podman)
       podman info
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -327,6 +192,7 @@ backend_build_image() {
       # there; podman ignores DOCKER_BUILDKIT.
       DOCKER_BUILDKIT=1 "$(backend_cli)" build --tag "$tag" --file "$file" "$@" "$context"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -353,6 +219,7 @@ backend_image_exists() {
     docker|orbstack|colima|podman)
       _backend_image_list_has "$tag"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -374,6 +241,7 @@ backend_image_id() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" image inspect "$ref" --format '{{.Id}}' 2>/dev/null || true
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -391,6 +259,7 @@ backend_image_size() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" image inspect "$ref" --format '{{.Size}}' 2>/dev/null || true
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -408,6 +277,7 @@ backend_image_label() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" image inspect "$ref" --format "{{index .Config.Labels \"$key\"}}" 2>/dev/null || true
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -429,6 +299,7 @@ backend_container_image_id() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" inspect "$name" --format '{{.Image}}' 2>/dev/null || true
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -484,6 +355,7 @@ backend_list_images() {
       "$(backend_cli)" image ls --format '{{.Repository}}\t{{.Tag}}\t{{.ID}}' \
         | sed -E 's|^localhost/||'
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -498,6 +370,7 @@ backend_remove_image() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" image rm "$image_ref" >/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -520,6 +393,7 @@ backend_tag_image() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" tag "$src_ref" "$dst_ref"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -541,6 +415,7 @@ backend_list_volumes() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" volume ls --format '{{.Name}}' 2>/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -558,6 +433,7 @@ backend_remove_volume() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" volume rm "$volume_name" >/dev/null 2>&1
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -603,6 +479,7 @@ backend_volume_copy() {
         --mount type=volume,source="$dst",target=/to \
         dce-base:latest sh -c "$recipe" >/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -616,6 +493,7 @@ backend_list_running() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" ps
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -628,6 +506,7 @@ backend_list_all() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" ps -a
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -644,6 +523,7 @@ backend_exists() {
     docker|orbstack|colima|podman)
       _backend_list_contains "$name" "$(backend_cli)" ps -a --format '{{.Names}}'
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -658,6 +538,7 @@ backend_is_running() {
     docker|orbstack|colima|podman)
       _backend_list_contains "$name" "$(backend_cli)" ps --format '{{.Names}}'
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -731,6 +612,7 @@ backend_create() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" create --name "$name" "${create_args[@]}" "$image" >/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -767,6 +649,7 @@ backend_container_commit() {
     apple)
       _backend_apple_container_commit "$container_name" "$image_tag" "${label_kv[@]:-}"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -781,6 +664,7 @@ backend_start() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" start "$name" >/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -795,6 +679,7 @@ backend_stop() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" stop "$name" >/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -833,6 +718,7 @@ backend_logs() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" logs "${log_args[@]}" "$name"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -847,6 +733,7 @@ backend_delete() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" rm -f "$name" >/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -862,6 +749,7 @@ backend_exec() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" exec "$name" "$@"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -878,6 +766,7 @@ backend_exec_as_root() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" exec -u 0 "$name" "$@"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -894,6 +783,7 @@ backend_exec_stdin() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" exec -i "$name" "$@"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -912,6 +802,7 @@ backend_exec_stdin_as_root() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" exec -i -u 0 "$name" "$@"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -943,6 +834,7 @@ backend_exec_interactive() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" exec -it "${exec_args[@]}" "$name" "${command[@]}"
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -969,6 +861,7 @@ backend_network_create() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" network create "$name" "$@" >/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -984,6 +877,7 @@ backend_network_list() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" network ls --format '{{.Name}}' 2>/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -1016,6 +910,7 @@ backend_network_rm() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" network rm "$name" >/dev/null 2>&1 || true
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -1036,6 +931,7 @@ backend_network_connect() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" network connect "$@" "$name" "$container" >/dev/null
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
 
@@ -1052,5 +948,6 @@ backend_network_disconnect() {
     docker|orbstack|colima|podman)
       "$(backend_cli)" network disconnect "$name" "$container" >/dev/null 2>&1 || true
       ;;
+    *) dce_die "Unsupported backend '$(backend_name)'." ;;
   esac
 }
