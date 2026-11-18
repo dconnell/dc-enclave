@@ -64,7 +64,7 @@ _it_lc_new_config() {  # <backend> <case_id>
 
 # --repo: override the repo mount location.
 _it_lc_new_repo() {  # <backend> <case_id>
-  local b="$1" c="$2" path p out rc repo_name
+  local b="$1" c="$2" path p out rc repo_name canonical
   path="$IT_REPOS_DIR/$c-repo"
   mkdir -p "$path"
   p="$(it_project_name "$b" "$c")"
@@ -72,9 +72,12 @@ _it_lc_new_repo() {  # <backend> <case_id>
   [[ $rc -eq 0 ]] || { it_case_fail "dce new --repo exited $rc"; return 1; }
   it_register_project "$p" "$b"
   repo_name="$(basename "$path")"
+  # dce canonicalizes the --repo path when persisting it (macOS: /tmp -> /private/tmp
+  # symlink), and `repo list` reports the canonical form; assert like-for-like.
+  canonical="$(cd -P "$path" && pwd)"
   out="$(it_dce_capture "$b" "$c" repo list "$p")" && rc=0 || rc=$?
   [[ $rc -eq 0 ]] || { it_case_fail "repo list after --repo exited $rc"; return 1; }
-  [[ "$out" == *"$repo_name=$path"* ]] \
+  [[ "$out" == *"$repo_name=$canonical"* ]] \
     || { it_case_fail "repo list does not report the explicit --repo path (got: $out)"; return 1; }
   return 0
 }
